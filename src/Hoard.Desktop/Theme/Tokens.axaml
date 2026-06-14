@@ -1,0 +1,76 @@
+<!--
+  Design tokens — the single source of truth for Hoard's visual language (see /DESIGN.md for rationale).
+  Palette is shadcn/ui's neutral theme (pure greys, so it maps 1:1 to hex); light + dark via
+  ThemeDictionaries. Views must bind these via {DynamicResource ...} and never hardcode a colour/radius.
+
+  Not yet merged into App.axaml — wiring this in (replacing FluentTheme) happens when UI work begins.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ResourceDictionary.ThemeDictionaries>
+        <!-- ── Light ─────────────────────────────────────────────── -->
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="BackgroundBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="ForegroundBrush" Color="#0A0A0A"/>
+            <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="PopoverBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="MutedBrush" Color="#F5F5F5"/>
+            <SolidColorBrush x:Key="MutedForegroundBrush" Color="#737373"/>
+            <SolidColorBrush x:Key="AccentBrush" Color="#F5F5F5"/>
+            <SolidColorBrush x:Key="LineBrush" Color="#E5E5E5"/>
+            <SolidColorBrush x:Key="InputBrush" Color="#E5E5E5"/>
+            <SolidColorBrush x:Key="PrimaryBrush" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="RingBrush" Color="#A3A3A3"/>
+            <SolidColorBrush x:Key="DestructiveBrush" Color="#DC2626"/>
+            <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FAFAFA"/>
+        </ResourceDictionary>
+
+        <!-- ── Dark (primary for an image/GIF-heavy archive) ─────── -->
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="BackgroundBrush" Color="#0A0A0A"/>
+            <SolidColorBrush x:Key="ForegroundBrush" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="CardBrush" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="PopoverBrush" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="MutedBrush" Color="#262626"/>
+            <SolidColorBrush x:Key="MutedForegroundBrush" Color="#A3A3A3"/>
+            <SolidColorBrush x:Key="AccentBrush" Color="#262626"/>
+            <SolidColorBrush x:Key="LineBrush" Color="#26FFFFFF"/>   <!-- white @ 10% -->
+            <SolidColorBrush x:Key="InputBrush" Color="#26FFFFFF"/>  <!-- white @ 15% -->
+            <SolidColorBrush x:Key="PrimaryBrush" Color="#E5E5E5"/>
+            <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="RingBrush" Color="#737373"/>
+            <SolidColorBrush x:Key="DestructiveBrush" Color="#EF4444"/>
+            <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FAFAFA"/>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <!-- ── Variant-independent scalars ───────────────────────────── -->
+
+    <!-- Corner radius (shadcn default 0.625rem = 10px). -->
+    <CornerRadius x:Key="RadiusSm">6</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">10</CornerRadius>
+    <CornerRadius x:Key="RadiusLg">14</CornerRadius>
+    <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
+
+    <!-- Spacing scale (4-based). -->
+    <x:Double x:Key="Space1">4</x:Double>
+    <x:Double x:Key="Space2">8</x:Double>
+    <x:Double x:Key="Space3">12</x:Double>
+    <x:Double x:Key="Space4">16</x:Double>
+    <x:Double x:Key="Space6">24</x:Double>
+    <x:Double x:Key="Space8">32</x:Double>
+
+    <!-- Type scale (Inter; 14px base, matching shadcn's text-sm component default). -->
+    <x:Double x:Key="FontSizeXs">12</x:Double>
+    <x:Double x:Key="FontSizeSm">13</x:Double>
+    <x:Double x:Key="FontSizeBase">14</x:Double>
+    <x:Double x:Key="FontSizeLg">16</x:Double>
+    <x:Double x:Key="FontSizeXl">20</x:Double>
+    <x:Double x:Key="FontSize2Xl">24</x:Double>
+
+    <!-- Elevation — restrained (the one thing we borrow from Neumorphism). Subtle on raised surfaces only. -->
+    <BoxShadows x:Key="ShadowSm">0 1 2 0 #14000000</BoxShadows>
+    <BoxShadows x:Key="ShadowMd">0 6 20 0 #2E000000</BoxShadows>
+</ResourceDictionary>

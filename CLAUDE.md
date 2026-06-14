@@ -92,6 +92,21 @@ Concepts that span multiple files:
   Avalonia-free (e.g. `MasonryPacker`, `RefCountedCache`) is tested in `Hoard.Desktop.Tests` (which uses
   `InternalsVisibleTo`). Prefer extracting a pure, testable core over testing through Avalonia controls.
 
+## Design system
+
+**Read `DESIGN.md` before building or changing any UI.** Hoard uses its **own** Avalonia styles (no
+third-party UI library) with [shadcn/ui](https://ui.shadcn.com) as the design reference and
+[Lucide](https://lucide.dev) (ISC) icons embedded as geometries. The look is clean/minimal, dark-primary,
+and **mobile-first responsive** (design for the narrowest phone width, reflow up — uses Avalonia 12's
+`OnFormFactor` / container queries / `ItemsRepeater` reflow). Navigation is a back-stack, one job per screen
+(Projects → Library → Board → Image detail), replacing the current sidebar/overlay clutter.
+
+- **`Theme/Tokens.axaml` is the single source of truth** for colours (light/dark), radius, spacing, type, and
+  shadow. **Never hardcode** a colour/radius/spacing in a view — bind a token via `{DynamicResource ...}`; add
+  a token if one's missing. New components go under `Theme/Controls/` and into the dev component gallery.
+- The token layer exists but isn't wired into `App.axaml` yet (still `FluentTheme`); the existing
+  `accent`/`danger`/`overlay` button styles are placeholders the token-driven Button variants will replace.
+
 ## Working in this repo (environment realities)
 
 - **You cannot launch the GUI here.** Build + tests verify logic and that things compile/lay out; runtime

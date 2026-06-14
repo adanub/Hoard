@@ -40,7 +40,13 @@ user-facing model is in `README.md`. Keep this file current as work lands.
 
 ## Next up — finish Phase 2
 
-- **Manual collections** (user-created, not just source boards) — the most valuable remaining item.
+- **UI/UX redesign — do this first.** The current screens are cluttered, desktop-only master-detail. Move
+  to a clean, minimal, **mobile-first responsive** design with a back-stack (Projects → Library → Board →
+  Image detail), own Avalonia styles (no UI library), shadcn/ui reference + Lucide icons. Foundation laid:
+  see **`DESIGN.md`** + `Theme/Tokens.axaml` (token source of truth, not yet wired into `App.axaml`).
+  Suggested build order: tokens + Icon control + core component styles (Button/Card/Input/Row) → rebuild the
+  Projects screen as the first visual → roll the kit + nav stack across the remaining screens.
+- **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
 - ~~**Tag filtering**~~ — **deprioritised**: confirmed against real data (78 pins) that the Pinterest
