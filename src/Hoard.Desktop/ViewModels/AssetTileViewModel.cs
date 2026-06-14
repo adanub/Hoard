@@ -26,7 +26,6 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PlaySource))]
-    [NotifyPropertyChangedFor(nameof(ShowPlay))]
     private bool _isPlaying;
 
     public AssetTileViewModel(AssetView model, ThumbnailCache? cache = null)
@@ -35,14 +34,13 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
         _cache = cache;
     }
 
-    public string? Title => Model.Title;
     public bool IsImage => Model.Kind is MediaKind.Image or MediaKind.Gif;
     public bool IsGif => Model.Kind is MediaKind.Gif;
     public string KindLabel => Model.Kind.ToString();
 
-    /// <summary>The GIF to animate while this tile is "playing" (null otherwise). Set by clicking the tile.</summary>
+    /// <summary>The GIF to animate while this tile is "playing" (null otherwise). Set by clicking the tile.
+    /// Non-null also drives the GIF control's visibility, so a separate flag isn't needed.</summary>
     public string? PlaySource => IsPlaying && IsGif ? Model.AbsolutePath : null;
-    public bool ShowPlay => IsPlaying && IsGif;
 
     /// <summary>Height ÷ width, from the source metadata; 1 (square) when dimensions are unknown.</summary>
     public double AspectRatio =>

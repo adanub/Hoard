@@ -46,7 +46,7 @@ public sealed class ContentAddressedStore : IMediaStore
     private static string BuildRelativePath(string sha, string ext)
     {
         var name = string.IsNullOrEmpty(ext) ? sha : $"{sha}.{ext}";
-        return Path.Combine(sha[..2], sha.Substring(2, 2), name);
+        return Path.Combine(sha[..2], sha[2..4], name);
     }
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)

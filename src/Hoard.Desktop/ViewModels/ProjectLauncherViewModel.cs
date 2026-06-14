@@ -120,21 +120,23 @@ public partial class ProjectLauncherViewModel : ViewModelBase
 
     private async Task LoadCacheSizesAsync()
     {
-        foreach (var item in RecentProjects.ToArray())
-        {
-            var dir = HoardProject.ThumbnailsDir(item.Path);
-            var size = await Task.Run(() => DirectorySize(dir));
+        // Size each project's cache concurrently (independent directory walks, off the UI thread)...
+        var results = await Task.WhenAll(RecentProjects.ToArray().Select(item =>
+            Task.Run(() => (item, size: DirectorySize(HoardProject.ThumbnailsDir(item.Path))))));
+
+        // ...then update the labels back on the UI thread (the await resumes here).
+        foreach (var (item, size) in results)
             item.CacheSizeText = "Cache: " + ByteFormat.Format(size);
-        }
     }
 
     private static long DirectorySize(string dir)
     {
         if (!Directory.Exists(dir)) return 0;
         long total = 0;
-        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+        // Enumerate FileInfo directly: on Windows the length is already populated, avoiding a second stat.
+        foreach (var file in new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories))
         {
-            try { total += new FileInfo(file).Length; } catch { /* skip files that vanish mid-scan */ }
+            try { total += file.Length; } catch { /* skip files that vanish mid-scan */ }
         }
         return total;
     }

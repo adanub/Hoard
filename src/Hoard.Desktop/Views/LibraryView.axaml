@@ -131,7 +131,7 @@
 
                                     <!-- Animated GIF, played once the tile is clicked (kept while loaded) -->
                                     <ctrl:AnimatedImageControl Name="TileGif" Source="{Binding PlaySource}"
-                                                               IsVisible="{Binding ShowPlay}"/>
+                                                               IsVisible="{Binding PlaySource, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
                                     <!-- Loading spinner: thumbnail decode, or hover-GIF frame decode -->
                                     <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsThumbnailLoading}"
@@ -163,7 +163,8 @@
                                     </StackPanel>
 
                                     <!-- Unload-from-memory button, top-right (only while playing) -->
-                                    <Button IsVisible="{Binding ShowPlay}" Classes="overlay"
+                                    <Button IsVisible="{Binding PlaySource, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                            Classes="overlay"
                                             HorizontalAlignment="Right" VerticalAlignment="Top"
                                             Margin="6" Padding="6,1" FontSize="11"
                                             Content="⏏ Unload" Click="OnUnloadTile"
@@ -214,11 +215,11 @@
 
                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                             <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Opacity="0.85"
-                                       IsVisible="{Binding HasDescription}"/>
+                                       IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
                             <!-- Metadata rows -->
                             <StackPanel Spacing="8" Margin="0,4,0,0">
-                                <StackPanel IsVisible="{Binding HasDimensions}">
+                                <StackPanel IsVisible="{Binding Dimensions, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                     <TextBlock Text="Dimensions" FontSize="11" Opacity="0.55"/>
                                     <TextBlock Text="{Binding Dimensions}"/>
                                 </StackPanel>
@@ -234,15 +235,15 @@
                                     <TextBlock Text="Downloaded" FontSize="11" Opacity="0.55"/>
                                     <TextBlock Text="{Binding Downloaded}"/>
                                 </StackPanel>
-                                <StackPanel IsVisible="{Binding HasCreated}">
+                                <StackPanel IsVisible="{Binding Created, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                     <TextBlock Text="Saved on Pinterest" FontSize="11" Opacity="0.55"/>
                                     <TextBlock Text="{Binding Created}"/>
                                 </StackPanel>
-                                <StackPanel IsVisible="{Binding HasBoards}">
+                                <StackPanel IsVisible="{Binding Boards, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                     <TextBlock Text="Boards" FontSize="11" Opacity="0.55"/>
                                     <TextBlock Text="{Binding Boards}" TextWrapping="Wrap"/>
                                 </StackPanel>
-                                <StackPanel IsVisible="{Binding HasSourceId}">
+                                <StackPanel IsVisible="{Binding SourceId, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                     <TextBlock Text="Pin id" FontSize="11" Opacity="0.55"/>
                                     <TextBlock Text="{Binding SourceId}"/>
                                 </StackPanel>
@@ -250,9 +251,11 @@
 
                             <StackPanel Spacing="6" Margin="0,6,0,0">
                                 <Button Content="Open source on Pinterest" HorizontalAlignment="Stretch"
-                                        Click="OnOpenSource" IsVisible="{Binding HasSourceUrl}"/>
+                                        Click="OnOpenSource"
+                                        IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                 <Button Content="Open original link" HorizontalAlignment="Stretch"
-                                        Click="OnOpenOriginal" IsVisible="{Binding HasOriginalUrl}"/>
+                                        Click="OnOpenOriginal"
+                                        IsVisible="{Binding OriginalUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                 <Button Content="Open file" HorizontalAlignment="Stretch"
                                         Click="OnOpenImage"/>
                             </StackPanel>

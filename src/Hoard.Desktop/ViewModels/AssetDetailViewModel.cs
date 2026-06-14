@@ -1,4 +1,3 @@
-using System;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -24,7 +23,6 @@ public partial class AssetDetailViewModel : ViewModelBase
     }
 
     public string Title => string.IsNullOrWhiteSpace(Model.Title) ? "(untitled)" : Model.Title!;
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Model.Description);
     public string? Description => Model.Description;
     public bool IsImage => Model.Kind is MediaKind.Image or MediaKind.Gif;
     public bool IsGif => Model.Kind is MediaKind.Gif;
@@ -41,13 +39,6 @@ public partial class AssetDetailViewModel : ViewModelBase
     public string? SourceId => Model.SourceId;
     public string? SourceUrl => Model.SourceUrl;
     public string? OriginalUrl => Model.OriginalUrl;
-
-    public bool HasDimensions => Dimensions is not null;
-    public bool HasCreated => Created is not null;
-    public bool HasBoards => Boards is not null;
-    public bool HasSourceId => !string.IsNullOrWhiteSpace(SourceId);
-    public bool HasSourceUrl => !string.IsNullOrWhiteSpace(SourceUrl);
-    public bool HasOriginalUrl => !string.IsNullOrWhiteSpace(OriginalUrl);
 
     private async Task LoadPreviewAsync()
     {

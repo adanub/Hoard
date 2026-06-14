@@ -29,9 +29,6 @@ public sealed class ProjectManager
     /// <summary>Recently opened project folders, most-recent first.</summary>
     public IReadOnlyList<string> RecentProjects => _recent;
 
-    /// <summary>Raised after <see cref="Current"/> changes so the UI can reload.</summary>
-    public event Action? CurrentChanged;
-
     public HoardProject Create(string folder, string? name = null)
     {
         var project = HoardProject.Create(folder, name);
@@ -121,7 +118,6 @@ public sealed class ProjectManager
         if (_recent.Count > 10) _recent.RemoveRange(10, _recent.Count - 10);
         Save();
         _logger.LogInformation("Opened project '{Name}' at {Root}", project.Name, project.Root);
-        CurrentChanged?.Invoke();
     }
 
     private void Load()

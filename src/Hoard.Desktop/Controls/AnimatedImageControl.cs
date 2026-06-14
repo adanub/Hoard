@@ -100,11 +100,10 @@ public sealed class AnimatedImageControl : Control
 
     private void Apply(string path, GifAnimation? animation)
     {
-        StopAndClear(); // defensively drop any prior timer/lease before taking the new one
+        StopAndClear(); // defensively drop any prior timer/lease (also resets _index) before taking the new one
         _animation = animation;
         _leasedPath = animation is not null ? path : null; // released in StopAndClear
         LoadedSizeText = animation is null ? null : ByteFormat.Format(animation.Bytes);
-        _index = 0;
         InvalidateMeasure();
         InvalidateVisual();
         if (animation is { Frames.Count: > 1 })
