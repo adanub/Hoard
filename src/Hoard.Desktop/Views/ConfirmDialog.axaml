@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Hoard.Desktop.Views.ConfirmDialog"
+        Width="460" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Title="Confirm">
+
+    <Window.Styles>
+        <!-- Red destructive button (recolours the Fluent button's content presenter in each state). -->
+        <Style Selector="Button.danger /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#C0392B"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#E74C3C"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button.danger:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#A93226"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button.danger:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#7B241C"/>
+            <Setter Property="Foreground" Value="#E0E0E0"/>
+        </Style>
+    </Window.Styles>
+
+    <StackPanel Margin="18" Spacing="14">
+        <TextBlock Name="MessageText" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="Cancel" Click="OnCancel"/>
+            <Button Name="ConfirmButton" Content="OK" Click="OnConfirm"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

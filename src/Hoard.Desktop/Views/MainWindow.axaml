@@ -1,0 +1,17 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Hoard.Desktop.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+        x:Class="Hoard.Desktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Hoard — Media Archive" Width="1100" Height="700">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <!-- The shell hosts one page at a time; ViewLocator maps the page VM to its View. -->
+    <ContentControl Content="{Binding CurrentPage}"/>
+</Window>

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Hoard.Core/Hoard.Core.csproj" />
+    <Project Path="src/Hoard.Desktop/Hoard.Desktop.csproj" />
+    <Project Path="src/Hoard.Ingest.GalleryDl/Hoard.Ingest.GalleryDl.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Hoard.Core.Tests/Hoard.Core.Tests.csproj" />
+  </Folder>
+</Solution>

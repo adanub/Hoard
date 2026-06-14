@@ -1,0 +1,15 @@
+# Normalize line endings: store text as LF in the repo, check out native.
+* text=auto
+
+*.cs     text
+*.axaml  text
+*.csproj text
+*.slnx   text
+*.md     text
+*.ps1    text
+*.json   text
+
+# Binaries
+*.ico binary
+*.exe binary
+*.bin binary

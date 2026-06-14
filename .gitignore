@@ -1,0 +1,18 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Bundled downloader (24 MB binary; fetch via tools/fetch-gallery-dl.ps1 instead of committing)
+tools/gallery-dl/*.exe
+tools/gallery-dl/*.bin
+
+# Local Hoard library/project data, if a dev creates a project inside the repo
+**/hoard.db
+**/hoard.db-wal
+**/hoard.db-shm
+**/store/
+**/thumbnails/
+**/logs/
+**/download-archive.db
+hoard.project.json
