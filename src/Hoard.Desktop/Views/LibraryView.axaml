@@ -17,22 +17,6 @@
         <KeyBinding Gesture="Escape" Command="{Binding CloseDetailsCommand}"/>
     </UserControl.KeyBindings>
 
-    <UserControl.Styles>
-        <!-- Dark translucent overlay button (e.g. Unload) that stays visible in every state -->
-        <Style Selector="Button.overlay /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#B0000000"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-        <Style Selector="Button.overlay:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#D8000000"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-        <Style Selector="Button.overlay:pressed /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="#80000000"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-    </UserControl.Styles>
-
     <DockPanel>
         <!-- Project header -->
         <Border DockPanel.Dock="Top" Padding="10,8" Background="{DynamicResource SystemRegionBrush}"
@@ -148,7 +132,7 @@
                                     </Border>
 
                                     <!-- GIF badge + memory footprint, top-left -->
-                                    <StackPanel IsVisible="{Binding IsGif}" HorizontalAlignment="Left"
+                                    <StackPanel IsVisible="{Binding IsGifBadgeVisible}" HorizontalAlignment="Left"
                                                 VerticalAlignment="Top" Margin="6" Spacing="3">
                                         <Border Background="#B0000000" CornerRadius="4" Padding="5,1"
                                                 HorizontalAlignment="Left">
@@ -169,6 +153,20 @@
                                             Margin="6" Padding="6,1" FontSize="11"
                                             Content="⏏ Unload" Click="OnUnloadTile"
                                             ToolTip.Tip="Stop and free this GIF from memory"/>
+
+                                    <!-- Tombstone: the blob was deleted, so show the note instead of media -->
+                                    <Border IsVisible="{Binding IsDeleted}" Background="{DynamicResource SystemRegionBrush}"
+                                            BorderBrush="#80C0392B" BorderThickness="1" CornerRadius="6">
+                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                    Margin="10" Spacing="5">
+                                            <TextBlock Text="🗑" FontSize="22" Opacity="0.55" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="Deleted" FontSize="10" FontWeight="Bold" Opacity="0.55"
+                                                       HorizontalAlignment="Center"/>
+                                            <TextBlock Text="{Binding DeletionNote}" FontSize="11" Opacity="0.85"
+                                                       TextWrapping="Wrap" TextAlignment="Center" MaxLines="5"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Border>
                                 </Panel>
                             </Border>
                         </DataTemplate>
@@ -211,6 +209,15 @@
                             <Border CornerRadius="6" Background="#22000000" Padding="16" IsVisible="{Binding IsVideo}">
                                 <TextBlock Text="🎬  Video — use “Open file” to play" HorizontalAlignment="Center"
                                            Opacity="0.7"/>
+                            </Border>
+
+                            <!-- Tombstone: the media is gone; show why it was deleted + offer Restore below -->
+                            <Border CornerRadius="6" Background="#22C0392B" Padding="16" IsVisible="{Binding IsDeleted}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap" Opacity="0.85"
+                                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                                </StackPanel>
                             </Border>
 
                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
@@ -257,7 +264,15 @@
                                         Click="OnOpenOriginal"
                                         IsVisible="{Binding OriginalUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                 <Button Content="Open file" HorizontalAlignment="Stretch"
-                                        Click="OnOpenImage"/>
+                                        Click="OnOpenImage" IsVisible="{Binding IsLive}"/>
+                                <Button Content="♻ Restore from source" HorizontalAlignment="Stretch"
+                                        Classes="accent" Click="OnRestoreAsset" Margin="0,8,0,0"
+                                        IsVisible="{Binding IsDeleted}" IsEnabled="{Binding CanRestore}"
+                                        ToolTip.Tip="Re-download this item from its source and undelete it"/>
+                                <Button Content="🗑  Delete from archive" HorizontalAlignment="Stretch"
+                                        Classes="danger" Click="OnDeleteAsset" Margin="0,8,0,0"
+                                        IsVisible="{Binding IsLive}"
+                                        ToolTip.Tip="Remove this image from disk (kept as a restorable tombstone)"/>
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>

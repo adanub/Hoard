@@ -21,7 +21,20 @@ public sealed record ConnectorOptions
     /// board only pulls what's new. Null disables the optimisation (everything is re-fetched).
     /// </summary>
     public string? DownloadArchivePath { get; init; }
+
+    /// <summary>
+    /// The items the library already tracks (live <i>and</i> tombstoned), so the connector can rebuild
+    /// its skip-archive from this single source of truth before each run rather than trusting a separate
+    /// list that could silently drift. Null leaves any existing archive untouched (e.g. a restore, which
+    /// must re-fetch one item regardless of what's recorded).
+    /// </summary>
+    public IReadOnlyCollection<KnownSourceItem>? KnownItems { get; init; }
 }
+
+/// <summary>One source item the library already knows about, used to rebuild a connector's skip-archive.</summary>
+/// <param name="BoardId">The source board/section id the item was found under.</param>
+/// <param name="SourceId">The item's stable source id (e.g. the Pinterest pin id).</param>
+public readonly record struct KnownSourceItem(string BoardId, string SourceId);
 
 /// <summary>
 /// Throttling applied to a download so we don't hammer the source (and trip its abuse defences).

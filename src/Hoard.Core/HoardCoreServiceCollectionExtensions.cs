@@ -27,6 +27,7 @@ public static class HoardCoreServiceCollectionExtensions
 
         services.AddSingleton<IngestService>();
         services.AddSingleton<LibraryService>();
+        services.AddSingleton<CurationService>();
         return services;
     }
 }

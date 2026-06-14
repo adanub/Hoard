@@ -14,21 +14,24 @@ public partial class MainWindowViewModel : ViewModelBase
 {
     private readonly IngestService _ingest;
     private readonly LibraryService _library;
+    private readonly CurationService _curation;
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
 
     public MainWindowViewModel(
-        IngestService ingest, LibraryService library, ProjectManager projects, ProjectDbContextFactory dbFactory)
+        IngestService ingest, LibraryService library, CurationService curation,
+        ProjectManager projects, ProjectDbContextFactory dbFactory)
     {
         _ingest = ingest;
         _library = library;
+        _curation = curation;
         _projects = projects;
         _dbFactory = dbFactory;
         if (projects is not null) ShowLauncher(); // skip in the design-time (null) ctor
     }
 
     // Design-time constructor for the XAML previewer.
-    public MainWindowViewModel() : this(null!, null!, null!, null!) { }
+    public MainWindowViewModel() : this(null!, null!, null!, null!, null!) { }
 
     [ObservableProperty] private ViewModelBase? _currentPage;
 
@@ -36,5 +39,5 @@ public partial class MainWindowViewModel : ViewModelBase
         => CurrentPage = new ProjectLauncherViewModel(_projects, _dbFactory, onProjectOpened: ShowLibrary);
 
     private void ShowLibrary()
-        => CurrentPage = new LibraryViewModel(_ingest, _library, _projects, requestSwitchProject: ShowLauncher);
+        => CurrentPage = new LibraryViewModel(_ingest, _library, _curation, _projects, requestSwitchProject: ShowLauncher);
 }

@@ -3,6 +3,7 @@ using Hoard.Core.Domain;
 using Hoard.Core.Library;
 using Hoard.Core.Metadata;
 using Hoard.Core.Storage;
+using Hoard.Core.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -47,17 +48,36 @@ public sealed class IngestService
         var collections = new Dictionary<string, Collection>();
         var tags = new Dictionary<string, Tag>(StringComparer.OrdinalIgnoreCase);
 
-        int processed = 0, newAssets = 0, duplicates = 0;
+        int processed = 0, newAssets = 0, duplicates = 0, skippedDeleted = 0;
 
         var downloadLog = new Progress<string>(line =>
             progress?.Report(new IngestProgress(IngestPhase.Downloading, processed, 0, line)));
 
+        // Hand the connector the full set the library already tracks (live AND tombstoned) so it can
+        // rebuild its skip-archive from this single source of truth — the archive never drifts from the DB.
+        var effectiveOptions = options with { KnownItems = await GetKnownItemsAsync(db, ct).ConfigureAwait(false) };
+
         // Each item is ingested the moment the connector finishes downloading it, and the freshly
         // imported asset is reported so the UI can show it immediately (not after the whole batch).
-        await connector.DownloadAsync(url, options, downloadLog, async (item, itemCt) =>
+        await connector.DownloadAsync(url, effectiveOptions, downloadLog, async (item, itemCt) =>
         {
             var blob = await _store.PutAsync(item.FilePath, itemCt).ConfigureAwait(false);
-            var (asset, isNew) = await GetOrCreateAssetAsync(db, assetsBySha, blob, item, itemCt).ConfigureAwait(false);
+            var existing = await FindExistingAssetAsync(db, assetsBySha, blob.Sha256, itemCt).ConfigureAwait(false);
+
+            // Honour a tombstone: this content was deliberately deleted, so don't resurrect it (and drop
+            // the blob we just re-stored). The DB is the authority even if the skip-archive missed it.
+            if (existing is { DeletedAt: not null })
+            {
+                await _store.DeleteAsync(blob.RelativePath, itemCt).ConfigureAwait(false);
+                processed++;
+                skippedDeleted++;
+                progress?.Report(new IngestProgress(IngestPhase.Storing, processed, 0,
+                    $"Skipped (deleted): {item.Title ?? item.SourceId ?? Path.GetFileName(item.FilePath)}"));
+                return;
+            }
+
+            var isNew = existing is null;
+            var asset = existing ?? CreateAsset(db, assetsBySha, blob, item);
 
             var collection = await GetOrCreateCollectionAsync(db, collections, item, connector.Name, itemCt).ConfigureAwait(false);
             if (collection is not null)
@@ -76,28 +96,87 @@ public sealed class IngestService
                 $"Imported {processed} — {item.Title ?? item.SourceId ?? Path.GetFileName(item.FilePath)}", view));
         }, ct).ConfigureAwait(false);
 
+        var skippedNote = skippedDeleted > 0 ? $", {skippedDeleted} skipped (deleted)" : "";
         progress?.Report(new IngestProgress(IngestPhase.Done, processed, processed,
-            $"Imported {newAssets} new, {duplicates} already-had."));
+            $"Imported {newAssets} new, {duplicates} already-had{skippedNote}."));
         return new IngestResult(processed, newAssets, duplicates, collections.Count);
+    }
+
+    // One shared client for restore downloads (the recommended HttpClient usage).
+    private static readonly HttpClient RestoreHttp = new() { Timeout = TimeSpan.FromSeconds(100) };
+
+    /// <summary>
+    /// Un-delete a tombstoned asset by re-downloading its original media directly from the stored media URL
+    /// (the public CDN link gallery-dl saved — no cookies or subprocess needed), re-storing the blob,
+    /// clearing the tombstone, and logging an Add. Returns the restored <see cref="AssetView"/>, or null if
+    /// the asset is missing or not deleted.
+    /// </summary>
+    public async Task<AssetView?> RestoreAsync(int assetId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
+        if (asset is null || asset.DeletedAt is null) return null;
+
+        if (string.IsNullOrWhiteSpace(asset.SourceUrl)
+            || !Uri.TryCreate(asset.SourceUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            throw new InvalidOperationException("This item has no direct media URL, so it can't be restored.");
+
+        // Download to a temp file (preserving the extension so the store/MIME stay correct), then re-store
+        // it — identical content lands back at the same content-addressed path.
+        var ext = Path.GetExtension(uri.AbsolutePath);
+        var tempDir = Path.Combine(Path.GetTempPath(), "hoard-restore");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ext);
+        try
+        {
+            await using (var response = await RestoreHttp.GetStreamAsync(uri, ct).ConfigureAwait(false))
+            await using (var file = File.Create(tempPath))
+                await response.CopyToAsync(file, ct).ConfigureAwait(false);
+
+            var blob = await _store.PutAsync(tempPath, ct).ConfigureAwait(false);
+            asset.RelativePath = blob.RelativePath;
+            asset.Sha256 = blob.Sha256;
+            asset.Bytes = blob.Bytes;
+            asset.DeletedAt = null;
+            asset.DeletionNote = null;
+            SyncLog.RecordAdd(db, asset);
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            return ToView(asset);
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { /* temp cleanup is best-effort */ }
+        }
+    }
+
+    /// <summary>Every (board, pin) pair the library tracks — live or tombstoned — so a connector can rebuild
+    /// its skip-archive from the DB rather than a separate, drift-prone list.</summary>
+    private static async Task<IReadOnlyCollection<KnownSourceItem>> GetKnownItemsAsync(HoardDbContext db, CancellationToken ct)
+    {
+        var rows = await db.CollectionItems
+            .Where(ci => ci.Asset.SourceId != null && ci.Collection.SourceBoardId != null)
+            .Select(ci => new { Board = ci.Collection.SourceBoardId!, Source = ci.Asset.SourceId! })
+            .Distinct()
+            .ToListAsync(ct).ConfigureAwait(false);
+        return rows.Select(r => new KnownSourceItem(r.Board, r.Source)).ToList();
     }
 
     private AssetView ToView(Asset a) =>
         new(a.Id, _store.GetAbsolutePath(a.RelativePath), a.Kind, a.Title, a.Description,
-            a.SourceUrl, a.Width, a.Height, a.Sha256);
+            a.SourceUrl, a.Width, a.Height, a.Sha256, a.DeletedAt is not null, a.DeletionNote);
 
-    private async Task<(Asset asset, bool isNew)> GetOrCreateAssetAsync(
-        HoardDbContext db, Dictionary<string, Asset> cache, StoredBlob blob, SourceMediaItem item, CancellationToken ct)
+    private static async Task<Asset?> FindExistingAssetAsync(
+        HoardDbContext db, Dictionary<string, Asset> cache, string sha256, CancellationToken ct)
     {
-        if (cache.TryGetValue(blob.Sha256, out var cached))
-            return (cached, false);
+        if (cache.TryGetValue(sha256, out var cached)) return cached;
+        var existing = await db.Assets.FirstOrDefaultAsync(a => a.Sha256 == sha256, ct).ConfigureAwait(false);
+        if (existing is not null) cache[sha256] = existing;
+        return existing;
+    }
 
-        var existing = await db.Assets.FirstOrDefaultAsync(a => a.Sha256 == blob.Sha256, ct).ConfigureAwait(false);
-        if (existing is not null)
-        {
-            cache[blob.Sha256] = existing;
-            return (existing, false);
-        }
-
+    private Asset CreateAsset(HoardDbContext db, Dictionary<string, Asset> cache, StoredBlob blob, SourceMediaItem item)
+    {
         var (kind, mime) = MediaTypes.FromPath(item.FilePath);
         var asset = new Asset
         {
@@ -119,8 +198,11 @@ public sealed class IngestService
             ImportedAt = DateTimeOffset.UtcNow,
         };
         db.Assets.Add(asset);
+        // Log the add in the same SaveChanges as the asset, so the sync history can never drift from
+        // what's actually in the library.
+        SyncLog.RecordAdd(db, asset);
         cache[blob.Sha256] = asset;
-        return (asset, true);
+        return asset;
     }
 
     private async Task<Collection?> GetOrCreateCollectionAsync(

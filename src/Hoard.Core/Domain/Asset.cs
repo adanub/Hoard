@@ -42,6 +42,19 @@ public class Asset
     public DateTimeOffset? CreatedAt { get; set; }
     public DateTimeOffset ImportedAt { get; set; }
 
+    /// <summary>
+    /// When set, this asset has been curated out: its blob is deleted from disk but the row is kept as a
+    /// <b>tombstone</b> (so the removal is global, recorded, and undoable). The tile shows
+    /// <see cref="DeletionNote"/> instead of the missing media, and Restore re-fetches it from its source.
+    /// </summary>
+    public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <summary>Why this asset was deleted — required when tombstoning, shown on the tile.</summary>
+    public string? DeletionNote { get; set; }
+
+    /// <summary>True when this asset is a tombstone (deleted, blob gone, restorable).</summary>
+    public bool IsDeleted => DeletedAt is not null;
+
     public List<CollectionItem> CollectionItems { get; } = new();
     public List<AssetTag> AssetTags { get; } = new();
 }

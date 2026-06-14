@@ -12,6 +12,7 @@ public class HoardDbContext : DbContext
     public DbSet<CollectionItem> CollectionItems => Set<CollectionItem>();
     public DbSet<Tag> Tags => Set<Tag>();
     public DbSet<AssetTag> AssetTags => Set<AssetTag>();
+    public DbSet<SyncOp> SyncOps => Set<SyncOp>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -44,6 +45,14 @@ public class HoardDbContext : DbContext
                 .WithMany(a => a.CollectionItems)
                 .HasForeignKey(ci => ci.AssetId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<SyncOp>(e =>
+        {
+            // The log is read back in chronological order during sync replay; Id is monotonic with append
+            // order, and SQLite can't ORDER BY DateTimeOffset, so the index is on Id implicitly (PK).
+            e.Property(o => o.EntityKey).IsRequired();
+            e.HasIndex(o => o.EntityKey);
         });
 
         b.Entity<Tag>(e => e.HasIndex(t => t.Name).IsUnique());

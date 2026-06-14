@@ -22,6 +22,7 @@ public partial class LibraryViewModel : ViewModelBase
 {
     private readonly IngestService _ingest;
     private readonly LibraryService _library;
+    private readonly CurationService _curation;
     private readonly ProjectManager _projects;
     private readonly Action _requestSwitchProject;
     private readonly ThumbnailCache? _thumbnails;
@@ -32,10 +33,12 @@ public partial class LibraryViewModel : ViewModelBase
     private readonly LinkedList<AssetTileViewModel> _playing = new();
 
     public LibraryViewModel(
-        IngestService ingest, LibraryService library, ProjectManager projects, Action requestSwitchProject)
+        IngestService ingest, LibraryService library, CurationService curation,
+        ProjectManager projects, Action requestSwitchProject)
     {
         _ingest = ingest;
         _library = library;
+        _curation = curation;
         _projects = projects;
         _requestSwitchProject = requestSwitchProject;
         _thumbnails = projects?.Current is { } p ? new ThumbnailCache(p.ThumbnailsRoot) : null;
@@ -43,7 +46,7 @@ public partial class LibraryViewModel : ViewModelBase
     }
 
     // Design-time constructor for the XAML previewer.
-    public LibraryViewModel() : this(null!, null!, null!, () => { }) { }
+    public LibraryViewModel() : this(null!, null!, null!, null!, () => { }) { }
 
     [ObservableProperty] private string _boardUrl = "";
     [ObservableProperty] private string _cookiesBrowser = BrowserCookies.None;
@@ -103,6 +106,73 @@ public partial class LibraryViewModel : ViewModelBase
         // If the detail panel is showing this GIF it also holds a lease — close it so that one drops too.
         if (ReferenceEquals(SelectedAsset, tile)) SelectedAsset = null;
     }
+
+    /// <summary>
+    /// Tombstone the selected asset with the given note: its blob is freed and a Remove op logged, but the
+    /// tile stays in place — now showing the note — and can be restored. Updated in place (no grid reload)
+    /// so scroll position survives.
+    /// </summary>
+    public async Task DeleteSelectedAsync(string note)
+    {
+        if (_curation is null || SelectedAsset is not { } tile || tile.IsDeleted) return;
+
+        var sha = tile.Model.Sha256;
+        try
+        {
+            if (await _curation.DeleteAssetAsync(tile.Model.Id, note) is null) return; // already gone
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Delete failed: {ex.Message}";
+            return;
+        }
+
+        // Drop the GIF lease (if playing) so the frames are freed, then turn the tile into its tombstone
+        // in place (clears the thumbnail immediately) and refresh the open detail panel.
+        var node = _playing.Find(tile);
+        if (node is not null) _playing.Remove(node);
+        _thumbnails?.Evict(sha);
+
+        var title = tile.Model.Title ?? "image";
+        tile.ApplyUpdate(tile.Model with { IsDeleted = true, DeletionNote = note });
+        await ReloadDetailsAsync();
+        StatusText = $"Deleted “{title}”. It stays as a tombstone you can restore.";
+    }
+
+    /// <summary>Restore the selected tombstone by re-downloading its original media, then show it live again.</summary>
+    public async Task RestoreSelectedAsync()
+    {
+        if (_ingest is null || SelectedAsset is not { IsDeleted: true } tile) return;
+
+        IsImporting = true;
+        ProgressIndeterminate = true;
+        StatusText = "Restoring…";
+        AssetView? restored;
+        try
+        {
+            restored = await _ingest.RestoreAsync(tile.Model.Id);
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Restore failed: {ex.Message}";
+            return;
+        }
+        finally
+        {
+            IsImporting = false;
+            ProgressIndeterminate = false;
+        }
+
+        if (restored is null) { StatusText = "Could not restore — the item may no longer exist at the source."; return; }
+
+        tile.ApplyUpdate(restored);          // back to live in place
+        _ = tile.EnsureThumbnailAsync();     // decode the freshly re-fetched blob
+        await ReloadDetailsAsync();
+        StatusText = $"Restored “{restored.Title ?? "image"}”.";
+    }
+
+    /// <summary>Re-load the detail panel for the current selection (after its live/deleted state changed).</summary>
+    private Task ReloadDetailsAsync() => LoadDetailsAsync(SelectedAsset);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LibraryTitle))]

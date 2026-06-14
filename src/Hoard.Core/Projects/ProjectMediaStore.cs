@@ -36,4 +36,6 @@ public sealed class ProjectMediaStore : IMediaStore
     public string GetAbsolutePath(string relativePath) => Store.GetAbsolutePath(relativePath);
 
     public bool Exists(string sha256, string extension) => Store.Exists(sha256, extension);
+
+    public Task DeleteAsync(string relativePath, CancellationToken ct = default) => Store.DeleteAsync(relativePath, ct);
 }

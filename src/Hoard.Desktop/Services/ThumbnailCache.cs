@@ -46,6 +46,20 @@ public sealed class ThumbnailCache
         }
     }
 
+    /// <summary>Delete any cached thumbnails for a content hash (across widths). Best-effort.</summary>
+    public void Evict(string sha256)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(_root, $"{sha256}_*.png"))
+                File.Delete(file);
+        }
+        catch
+        {
+            // An orphaned thumbnail is harmless; it just wastes a little disk until the next clear.
+        }
+    }
+
     private static void TryWriteCache(Bitmap bitmap, string cachePath)
     {
         try

@@ -34,13 +34,11 @@ public sealed class ProjectDbContextFactory : IDbContextFactory<HoardDbContext>
         return new HoardDbContext(options);
     }
 
-    /// <summary>Ensure the current project's database schema exists. Call after opening/switching.</summary>
+    /// <summary>Ensure the current project's database exists and is upgraded to the current schema. Call
+    /// after opening/switching a project.</summary>
     public async Task EnsureCreatedAsync(CancellationToken ct = default)
     {
         await using var db = CreateDbContext();
-        await db.Database.EnsureCreatedAsync(ct);
-        // WAL lets a background import write while the UI reads, avoiding "database is locked".
-        // It's a persistent property of the file, so setting it once per open is enough.
-        await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", ct);
+        await SchemaInitializer.InitializeAsync(db, ct);
     }
 }

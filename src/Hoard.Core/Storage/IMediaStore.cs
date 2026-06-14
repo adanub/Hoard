@@ -16,4 +16,11 @@ public interface IMediaStore
     string GetAbsolutePath(string relativePath);
 
     bool Exists(string sha256, string extension);
+
+    /// <summary>
+    /// Delete a blob from the store by its store-relative path. A no-op if it's already gone. Because an
+    /// asset's SHA-256 is unique, one asset maps to exactly one blob, so deleting the asset's blob frees
+    /// it outright (no shared-reference counting needed).
+    /// </summary>
+    Task DeleteAsync(string relativePath, CancellationToken ct = default);
 }

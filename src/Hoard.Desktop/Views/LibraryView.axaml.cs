@@ -52,6 +52,22 @@ public partial class LibraryView : UserControl
             dialog.Show();
     }
 
+    private async void OnDeleteAsset(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not LibraryViewModel { SelectedAsset: { } tile } vm) return;
+        if (TopLevel.GetTopLevel(this) is not Window owner) return;
+
+        var dialog = new DeleteDialog(tile.Model.Title ?? "this image");
+        if (await dialog.ShowDialog<string?>(owner) is { Length: > 0 } note)
+            await vm.DeleteSelectedAsync(note);
+    }
+
+    private async void OnRestoreAsset(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is LibraryViewModel vm)
+            await vm.RestoreSelectedAsync();
+    }
+
     private void OnOpenSource(object? sender, RoutedEventArgs e) => _ = OpenAsync(Detail?.Model.SourceUrl);
     private void OnOpenOriginal(object? sender, RoutedEventArgs e) => _ = OpenAsync(Detail?.Model.OriginalUrl);
     private void OnOpenImage(object? sender, RoutedEventArgs e) => _ = OpenAsync(Detail?.Model.AbsolutePath);

@@ -61,6 +61,31 @@ public class IngestServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Ingest_logs_one_Add_op_per_new_asset_and_none_for_duplicates()
+    {
+        await new IngestService(_dbFactory, _store,
+                new[] { new FakeConnector(("AAA", "Nature"), ("BBB", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var ops = await db.SyncOps.ToListAsync();
+            Assert.Equal(2, ops.Count);
+            Assert.All(ops, o => Assert.Equal(Hoard.Core.Domain.SyncOpKind.Add, o.Op));
+            var shas = await db.Assets.Select(a => a.Sha256).ToListAsync();
+            Assert.Equal(shas.OrderBy(s => s), ops.Select(o => o.EntityKey).OrderBy(s => s));
+        }
+
+        // Re-importing the same content adds no new assets and therefore logs no new ops.
+        await new IngestService(_dbFactory, _store,
+                new[] { new FakeConnector(("AAA", "Nature"), ("BBB", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        await using (var db = _dbFactory.CreateDbContext())
+            Assert.Equal(2, await db.SyncOps.CountAsync());
+    }
+
+    [Fact]
     public async Task Same_image_in_two_boards_is_stored_once_linked_twice()
     {
         var ingest = new IngestService(_dbFactory, _store,
@@ -144,6 +169,58 @@ public class IngestServiceTests : IDisposable
         Assert.Null(await library.GetAssetDetailAsync(999_999)); // missing id
     }
 
+    [Fact]
+    public async Task Reimport_does_not_resurrect_a_tombstoned_asset()
+    {
+        await new IngestService(_dbFactory, _store,
+                new[] { new FakeConnector(("AAA", "Nature"), ("BBB", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        // Tombstone the first asset (frees its blob) the way the UI would.
+        int deletedId;
+        await using (var db = _dbFactory.CreateDbContext())
+            deletedId = await db.Assets.OrderBy(a => a.Id).Select(a => a.Id).FirstAsync();
+        await new CurationService(_dbFactory, _store).DeleteAssetAsync(deletedId, "unwanted");
+
+        // Re-import the same board: the deleted pin comes down again but must NOT be re-added.
+        var result = await new IngestService(_dbFactory, _store,
+                new[] { new FakeConnector(("AAA", "Nature"), ("BBB", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        Assert.Equal(0, result.NewAssets);
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            Assert.Equal(2, await db.Assets.CountAsync());                         // no resurrection as a new row
+            var deleted = await db.Assets.FirstAsync(a => a.Id == deletedId);
+            Assert.NotNull(deleted.DeletedAt);                                     // still a tombstone
+            Assert.False(File.Exists(_store.GetAbsolutePath(deleted.RelativePath))); // blob stayed gone
+        }
+    }
+
+    [Fact]
+    public async Task Import_hands_the_connector_the_known_items_to_rebuild_its_archive()
+    {
+        // First import populates the library.
+        await new IngestService(_dbFactory, _store,
+                new[] { new FakeConnector(("AAA", "Nature"), ("BBB", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        // Second import: capture the options the connector receives.
+        var spy = new FakeConnector(("CCC", "Nature"));
+        await new IngestService(_dbFactory, _store, new[] { spy })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        Assert.NotNull(spy.LastOptions?.KnownItems);
+        // Both already-imported pins are offered as known (board id + pin id), so the archive can be rebuilt.
+        Assert.Equal(2, spy.LastOptions!.KnownItems!.Count);
+        Assert.All(spy.LastOptions.KnownItems, k =>
+        {
+            Assert.Equal("Nature", k.BoardId);
+            Assert.StartsWith("pin", k.SourceId);
+        });
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch { }
@@ -155,6 +232,9 @@ public class IngestServiceTests : IDisposable
         private readonly (string Content, string Board)[] _items;
         public FakeConnector(params (string, string)[] items) => _items = items;
 
+        /// <summary>The options from the most recent call — lets tests assert what ingest passed in.</summary>
+        public ConnectorOptions? LastOptions { get; private set; }
+
         public string Name => "pinterest";
         public bool CanHandle(string url) => true;
 
@@ -162,6 +242,7 @@ public class IngestServiceTests : IDisposable
             string url, ConnectorOptions options, IProgress<string>? log,
             Func<SourceMediaItem, CancellationToken, Task> onItem, CancellationToken ct)
         {
+            LastOptions = options;
             var temp = Path.Combine(Path.GetTempPath(), "hoard-fake-dl", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(temp);
             try

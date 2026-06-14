@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 
 namespace Hoard.Core.Storage;
@@ -42,6 +43,32 @@ public sealed class ContentAddressedStore : IMediaStore
 
     public bool Exists(string sha256, string extension)
         => File.Exists(Path.Combine(_root, BuildRelativePath(sha256, extension.TrimStart('.').ToLowerInvariant())));
+
+    public Task DeleteAsync(string relativePath, CancellationToken ct = default)
+    {
+        var absolutePath = Path.Combine(_root, relativePath);
+        if (File.Exists(absolutePath))
+        {
+            File.Delete(absolutePath);
+            // Tidy now-empty shard directories so the store doesn't accumulate empty ab/cd folders.
+            PruneEmptyParents(Path.GetDirectoryName(absolutePath));
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Remove empty parent directories up to (but not including) the store root.</summary>
+    private void PruneEmptyParents(string? directory)
+    {
+        var root = Path.GetFullPath(_root);
+        while (directory is not null
+               && !string.Equals(Path.GetFullPath(directory), root, StringComparison.OrdinalIgnoreCase)
+               && Directory.Exists(directory)
+               && !Directory.EnumerateFileSystemEntries(directory).Any())
+        {
+            Directory.Delete(directory);
+            directory = Path.GetDirectoryName(directory);
+        }
+    }
 
     private static string BuildRelativePath(string sha, string ext)
     {

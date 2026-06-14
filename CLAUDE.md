@@ -42,11 +42,23 @@ Concepts that span multiple files:
   truth; `ProjectDbContextFactory` and `ProjectMediaStore` read it, so opening/switching a project re-points
   all storage with no other wiring. Only app settings + the global log live under `%APPDATA%/Hoard`. SQLite
   uses **WAL** and **`Pooling=False`** (so an idle project folder holds no file lock and stays movable/deletable).
+- **Schema versioning is additive, via `PRAGMA user_version` — not EF migrations.** `EnsureCreated` builds a
+  fresh project DB from the full current model; an existing DB (maybe from an older app version) is patched by
+  `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.
+  Each user owns many independent project DBs, so this is lighter than migrations. **When you change the model:
+  bump `SchemaInitializer.LatestSchemaVersion` and add a matching idempotent `CREATE … IF NOT EXISTS` upgrade
+  whose DDL matches what EF would generate** (verify with `db.Database.GenerateCreateScript()`). Non-additive
+  changes (renames/drops) would need a real migration — cross that bridge if it ever comes up.
 - **Ingest is a stream, not a batch.** `ISourceConnector.DownloadAsync` takes an `onItem` callback and invokes
   it per item as it lands; `IngestService` stores + upserts per item and reports the new `AssetView` via
   `IngestProgress.ImportedAsset`, which the library VM appends to the grid live. Dedup happens twice: gallery-dl's
   `--download-archive` skips already-fetched pins *before* download, and the content-addressed store dedups by
   hash *after*.
+- **The sync log is append-only and content-keyed.** Every add (`IngestService`, on a genuinely new asset)
+  and remove (`CurationService.DeleteAssetAsync`) writes a `SyncOp` via `Sync/SyncLog.cs`, in the *same*
+  `SaveChanges` as the change so the history can't drift. Ops are keyed by the asset's SHA-256, not its local
+  row id, so they replay on another device that holds the same content under a different id. This is the
+  Phase 3 (cloud sync) foundation; nothing reads it yet — keep it append-only (never mutate/delete ops).
 - **Shell navigation.** `MainWindowViewModel` swaps a single `CurrentPage` between `ProjectLauncherViewModel`
   and `LibraryViewModel`; the template `ViewLocator` maps each page VM to its `…View`.
 - **Decoded GIF frames are reference-counted, not cached-with-retention.** `RefCountedCache<T>` (in
@@ -63,6 +75,10 @@ Concepts that span multiple files:
 
 ## Conventions
 
+- **Don't commit until it's verified and asked for.** A green build + passing unit tests is **not** enough to
+  commit — runtime behaviour (GUI, GIF playback, delete, memory) can only be confirmed by running the app,
+  which only the user can do here. Implement → build → test → hand to the user to verify → **wait for them to
+  confirm and explicitly ask** before committing. Until then, leave changes uncommitted in the working tree.
 - **Commits: Conventional Commits** — `feat:`, `fix:`, `docs:`, `refactor:`, `perf:`, `chore:`, with optional
   scope and a `(wip)` marker for in-progress work (e.g. `perf(wip): …`). End commit messages with the
   `Co-Authored-By: Claude …` trailer.
@@ -86,4 +102,8 @@ Concepts that span multiple files:
   `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); Fluent `Button`
   backgrounds live on the template's `ContentPresenter`, so style `Button.<class> /template/ ContentPresenter#PART_ContentPresenter`
   across states (`:pointerover`/`:pressed`/`:disabled`) rather than setting `Background` directly — see the
-  `overlay`/`danger` button styles. SQLite **cannot `ORDER BY` a `DateTimeOffset`** — order by `Id` instead.
+  `overlay`/`danger` button styles. **Grid order is by Pinterest pin id (`SourceId`), descending** —
+  `LibraryService` fetches in `Id` order then sorts in memory by the numeric pin id, so order is deterministic
+  and survives re-import/restore (`Id` is the stable tiebreak; pinless rows sort last). The sidecar carries
+  **no per-pin date** (`CreatedAt` is null for Pinterest — only board-level timestamps exist), and SQLite
+  can't `ORDER BY` the id as a number anyway; page-aware sorting would need a stored numeric sort key.

@@ -19,7 +19,7 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     private readonly ThumbnailCache? _cache;
     private bool _thumbnailRequested;
 
-    public AssetView Model { get; }
+    public AssetView Model { get; private set; }
 
     [ObservableProperty] private Bitmap? _thumbnail;
     [ObservableProperty] private bool _isThumbnailLoading;
@@ -34,9 +34,30 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
         _cache = cache;
     }
 
+    /// <summary>
+    /// Swap this tile's model in place (e.g. after a delete/restore) and refresh its bindings. The held
+    /// thumbnail bitmap is dropped so the on-screen container updates immediately — rather than relying on
+    /// the repeater to re-realize a replaced item, which only happens on the next recycle (scroll/nav away).
+    /// </summary>
+    public void ApplyUpdate(AssetView updated)
+    {
+        Model = updated;
+        IsPlaying = false;
+        Thumbnail = null;            // release the bitmap and clear the Image
+        _thumbnailRequested = false; // allow a fresh decode if it becomes live again (restore)
+        OnPropertyChanged(string.Empty); // re-evaluate every derived binding (IsDeleted, IsGifBadgeVisible, …)
+    }
+
     public bool IsImage => Model.Kind is MediaKind.Image or MediaKind.Gif;
     public bool IsGif => Model.Kind is MediaKind.Gif;
     public string KindLabel => Model.Kind.ToString();
+
+    /// <summary>Tombstoned: the blob is gone, so the tile shows <see cref="DeletionNote"/> instead of media.</summary>
+    public bool IsDeleted => Model.IsDeleted;
+    public string? DeletionNote => Model.DeletionNote;
+
+    /// <summary>Show the "GIF" badge only on a live GIF (a tombstone shows its note, not media chrome).</summary>
+    public bool IsGifBadgeVisible => IsGif && !IsDeleted;
 
     /// <summary>The GIF to animate while this tile is "playing" (null otherwise). Set by clicking the tile.
     /// Non-null also drives the GIF control's visibility, so a separate flag isn't needed.</summary>
@@ -50,7 +71,7 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     {
         if (_thumbnailRequested) return;
         _thumbnailRequested = true;
-        if (!IsImage) return;
+        if (!IsImage || IsDeleted) return; // a tombstone has no blob to decode
 
         IsThumbnailLoading = true;
         try

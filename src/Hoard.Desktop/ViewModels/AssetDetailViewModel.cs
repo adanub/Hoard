@@ -24,10 +24,18 @@ public partial class AssetDetailViewModel : ViewModelBase
 
     public string Title => string.IsNullOrWhiteSpace(Model.Title) ? "(untitled)" : Model.Title!;
     public string? Description => Model.Description;
-    public bool IsImage => Model.Kind is MediaKind.Image or MediaKind.Gif;
-    public bool IsGif => Model.Kind is MediaKind.Gif;
-    public bool IsStaticImage => Model.Kind is MediaKind.Image;
-    public bool IsVideo => Model.Kind is MediaKind.Video;
+
+    /// <summary>A tombstone has no media on disk; the panel shows the deletion note + a Restore action instead.</summary>
+    public bool IsDeleted => Model.IsDeleted;
+    public bool IsLive => !Model.IsDeleted;
+    public string? DeletionNote => Model.DeletionNote;
+    public bool CanRestore => Model.IsDeleted && !string.IsNullOrWhiteSpace(Model.SourceUrl);
+
+    // Media kinds only drive the live preview; a deleted asset shows none of it.
+    public bool IsImage => IsLive && Model.Kind is MediaKind.Image or MediaKind.Gif;
+    public bool IsGif => IsLive && Model.Kind is MediaKind.Gif;
+    public bool IsStaticImage => IsLive && Model.Kind is MediaKind.Image;
+    public bool IsVideo => IsLive && Model.Kind is MediaKind.Video;
     public string FilePath => Model.AbsolutePath;
 
     public string? Dimensions => Model is { Width: > 0, Height: > 0 } ? $"{Model.Width} × {Model.Height}" : null;
