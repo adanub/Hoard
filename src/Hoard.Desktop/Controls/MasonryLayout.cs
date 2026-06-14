@@ -1,5 +1,5 @@
 using System;
-using System.Linq;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -14,9 +14,10 @@ public interface IMasonryItem
 
 /// <summary>
 /// A virtualizing Pinterest-style masonry layout for <c>ItemsRepeater</c>: fixed-width columns, each
-/// item's height derived from its aspect ratio, greedily packed into the shortest column. Positions
-/// are computed analytically from item metadata (no image decoding), so the whole list can be laid out
-/// while only the items intersecting the viewport are realized.
+/// item's height derived from its aspect ratio, greedily packed into the shortest column. The packing
+/// and visibility math lives in <see cref="MasonryPacker"/> (pure + unit-tested); this is just the
+/// Avalonia shell. Only the items intersecting the viewport are realized, found via per-column binary
+/// search rather than scanning every item each measure/scroll.
 /// </summary>
 public sealed class MasonryLayout : VirtualizingLayout
 {
@@ -42,80 +43,57 @@ public sealed class MasonryLayout : VirtualizingLayout
         set => SetValue(SpacingProperty, value);
     }
 
-    private Rect[]? _bounds;
-    private double _totalHeight;
+    private MasonryPacker? _packer;
     private double _cachedWidth = -1;
     private int _cachedCount = -1;
+    private readonly List<int> _visible = new(); // reused per pass to avoid per-frame allocation
 
     protected override Size MeasureOverride(VirtualizingLayoutContext context, Size availableSize)
     {
         var width = availableSize.Width;
         if (double.IsInfinity(width) || width <= 0) width = TargetColumnWidth;
 
-        var bounds = EnsureBounds(context, width);
-
+        var packer = EnsurePacker(context, width);
         var viewport = context.RealizationRect;
-        for (var i = 0; i < bounds.Length; i++)
+        packer.GetVisible(viewport.Top, viewport.Bottom, _visible);
+        foreach (var i in _visible)
         {
-            var b = bounds[i];
-            if (b.Bottom < viewport.Top || b.Top > viewport.Bottom) continue; // outside the viewport → leave unrealized
-            var element = context.GetOrCreateElementAt(i);
-            element.Measure(b.Size);
+            var tile = packer[i];
+            context.GetOrCreateElementAt(i).Measure(new Size(tile.Width, tile.Height));
         }
 
-        return new Size(width, _totalHeight);
+        return new Size(width, packer.TotalHeight);
     }
 
     protected override Size ArrangeOverride(VirtualizingLayoutContext context, Size finalSize)
     {
-        var bounds = _bounds;
-        if (bounds is null) return finalSize;
+        if (_packer is not { } packer) return finalSize;
 
         var viewport = context.RealizationRect;
-        for (var i = 0; i < bounds.Length; i++)
+        packer.GetVisible(viewport.Top, viewport.Bottom, _visible);
+        foreach (var i in _visible)
         {
-            var b = bounds[i];
-            if (b.Bottom < viewport.Top || b.Top > viewport.Bottom) continue;
-            var element = context.GetOrCreateElementAt(i);
-            element.Arrange(b);
+            var tile = packer[i];
+            context.GetOrCreateElementAt(i).Arrange(new Rect(tile.X, tile.Y, tile.Width, tile.Height));
         }
 
         return finalSize;
     }
 
-    private Rect[] EnsureBounds(VirtualizingLayoutContext context, double width)
+    private MasonryPacker EnsurePacker(VirtualizingLayoutContext context, double width)
     {
         var count = context.ItemCount;
-        if (_bounds is not null && _cachedWidth == width && _cachedCount == count)
-            return _bounds;
+        if (_packer is not null && _cachedWidth == width && _cachedCount == count)
+            return _packer;
 
-        var spacing = Spacing;
-        var columns = Math.Max(1, (int)Math.Floor((width + spacing) / (TargetColumnWidth + spacing)));
-        var columnWidth = (width - spacing * (columns - 1)) / columns;
-
-        var columnBottoms = new double[columns];
-        var bounds = new Rect[count];
+        var aspects = new double[count];
         for (var i = 0; i < count; i++)
-        {
-            var aspect = Math.Clamp(AspectRatioOf(context.GetItemAt(i)), MinAspect, MaxAspect);
-            var height = columnWidth * aspect;
+            aspects[i] = AspectRatioOf(context.GetItemAt(i));
 
-            // Place into the currently shortest column.
-            var col = 0;
-            for (var c = 1; c < columns; c++)
-                if (columnBottoms[c] < columnBottoms[col]) col = c;
-
-            var x = col * (columnWidth + spacing);
-            var y = columnBottoms[col];
-            bounds[i] = new Rect(x, y, columnWidth, height);
-            columnBottoms[col] = y + height + spacing;
-        }
-
-        _bounds = bounds;
-        _totalHeight = columnBottoms.Length == 0 ? 0 : Math.Max(0, columnBottoms.Max() - spacing);
+        _packer = new MasonryPacker(aspects, width, TargetColumnWidth, Spacing, MinAspect, MaxAspect);
         _cachedWidth = width;
         _cachedCount = count;
-        return bounds;
+        return _packer;
     }
 
     private static double AspectRatioOf(object? item)

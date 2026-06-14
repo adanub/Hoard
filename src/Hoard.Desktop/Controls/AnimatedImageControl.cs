@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Hoard.Desktop.Infrastructure;
 
 namespace Hoard.Desktop.Controls;
 
@@ -48,8 +49,8 @@ public sealed class AnimatedImageControl : Control
         private set => SetAndRaise(LoadedSizeTextProperty, ref _loadedSizeText, value);
     }
 
-    private GifAnimation? _animation;
-    private string? _leasedPath; // the path we currently hold a cache lease on
+    private ResourceLease<GifAnimation>? _lease; // the one piece of ownership: dispose to release frames
+    private GifAnimation? _animation;            // == _lease?.Value, cached for the render hot path
     private int _index;
     private DispatcherTimer? _timer;
     private int _loadId; // monotonic: only the latest load may apply its result
@@ -78,46 +79,43 @@ public sealed class AnimatedImageControl : Control
         if (string.IsNullOrEmpty(path)) { IsLoading = false; return; }
 
         // If something is already displaying this GIF, share its decoded frames (no re-decode).
-        if (GifFrameCache.TryAcquire(path) is { } cached)
+        if (GifFrameCache.TryAcquire(path) is { } cachedLease)
         {
-            if (id != _loadId) { GifFrameCache.Release(path); return; } // superseded already
+            if (id != _loadId) { cachedLease.Dispose(); return; } // superseded already
             IsLoading = false;
-            Apply(path, cached);
+            Apply(cachedLease);
             return;
         }
 
         IsLoading = true;
-        var animation = await Task.Run(() => GifFrameCache.Acquire(path));
+        var lease = await Task.Run(() => GifFrameCache.Acquire(path));
         if (id != _loadId)
         {
-            if (animation is not null) GifFrameCache.Release(path); // superseded; don't hold this lease
+            lease?.Dispose(); // superseded; don't hold this lease
             return;
         }
 
         IsLoading = false;
-        Apply(path, animation);
+        Apply(lease);
     }
 
-    private void Apply(string path, GifAnimation? animation)
+    private void Apply(ResourceLease<GifAnimation>? lease)
     {
-        StopAndClear(); // defensively drop any prior timer/lease (also resets _index) before taking the new one
-        _animation = animation;
-        _leasedPath = animation is not null ? path : null; // released in StopAndClear
-        LoadedSizeText = animation is null ? null : ByteFormat.Format(animation.Bytes);
+        StopAndClear(); // dispose any prior lease + stop the timer (also resets _index) before taking the new one
+        _lease = lease;
+        _animation = lease?.Value;
+        LoadedSizeText = _animation is null ? null : ByteFormat.Format(_animation.Bytes);
         InvalidateMeasure();
         InvalidateVisual();
-        if (animation is { Frames.Count: > 1 })
+        if (_animation is { Frames.Count: > 1 })
             StartTimer();
     }
 
     private void StopAndClear()
     {
         Stop();
-        if (_leasedPath is not null)
-        {
-            GifFrameCache.Release(_leasedPath);
-            _leasedPath = null;
-        }
+        _lease?.Dispose(); // the single release path
+        _lease = null;
         _animation = null;
         LoadedSizeText = null;
         _index = 0;

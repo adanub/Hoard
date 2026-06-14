@@ -10,6 +10,7 @@
   <ItemGroup>
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
+    <InternalsVisibleTo Include="Hoard.Desktop.Tests" />
   </ItemGroup>
 
   <!-- Bundle the gallery-dl downloader next to the app: <output>/tools/gallery-dl/gallery-dl.exe -->

@@ -6,5 +6,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Hoard.Core.Tests/Hoard.Core.Tests.csproj" />
+    <Project Path="tests/Hoard.Desktop.Tests/Hoard.Desktop.Tests.csproj" />
   </Folder>
 </Solution>
