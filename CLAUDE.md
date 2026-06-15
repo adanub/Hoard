@@ -106,6 +106,9 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   a token if one's missing. New components go under `Theme/Controls/` and into the dev component gallery.
 - The token layer exists but isn't wired into `App.axaml` yet (still `FluentTheme`); the existing
   `accent`/`danger`/`overlay` button styles are placeholders the token-driven Button variants will replace.
+- **Art/material assets follow `ASSETS.md`.** Committed + embedded under
+  `src/Hoard.Desktop/Assets/Materials/<Name>/`, each with a data-driven `material.json` manifest (no hardcoded
+  file names). Material/shader rendering code lives in `Hoard.Desktop/Rendering/` (Skia-specific; Core stays neutral).
 
 ## Working in this repo (environment realities)
 
