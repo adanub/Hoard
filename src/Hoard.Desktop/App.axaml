@@ -12,6 +12,11 @@
     <Application.Styles>
         <FluentTheme />
 
+        <!-- Hoard design system (tokens + icons + component styles). Layered over Fluent during the
+             migration; our component themes are opt-in (keyed/class-based), so existing screens are
+             untouched until they're moved over. See DESIGN.md. -->
+        <StyleInclude Source="avares://Hoard.Desktop/Theme/Theme.axaml"/>
+
         <!-- Shared button classes (Fluent recolours the template's content presenter, so style that
              across every state rather than setting Background directly). -->
 

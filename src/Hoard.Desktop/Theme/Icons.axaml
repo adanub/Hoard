@@ -1,0 +1,37 @@
+<!--
+  Lucide icons (https://lucide.dev, ISC licence), embedded as geometries on the 24×24 Lucide grid.
+  See DESIGN.md for how to add one. Each is keyed Icon.<name>; render via the <ctrl:Icon Data="..."/> control.
+  circle/rect elements are converted to equivalent arc/path commands so each icon is a single geometry.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ctrl="using:Hoard.Desktop.Controls">
+
+    <StreamGeometry x:Key="Icon.chevron-left">M15 18 L9 12 L15 6</StreamGeometry>
+    <StreamGeometry x:Key="Icon.plus">M5 12h14 M12 5v14</StreamGeometry>
+    <StreamGeometry x:Key="Icon.x">M18 6 L6 18 M6 6 L18 18</StreamGeometry>
+    <StreamGeometry x:Key="Icon.search">M3 11 A8 8 0 1 0 19 11 A8 8 0 1 0 3 11 M21 21 L16.66 16.66</StreamGeometry>
+    <StreamGeometry x:Key="Icon.trash-2">M10 11v6 M14 11v6 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6 M3 6h18 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2</StreamGeometry>
+    <StreamGeometry x:Key="Icon.rotate-ccw">M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5</StreamGeometry>
+    <StreamGeometry x:Key="Icon.image">M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M7 9a2 2 0 1 0 4 0 a2 2 0 1 0-4 0 M21 15l-3.086-3.086a2 2 0 0 0-2.828 0L6 21</StreamGeometry>
+    <StreamGeometry x:Key="Icon.folder">M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z</StreamGeometry>
+    <StreamGeometry x:Key="Icon.more-horizontal">M11 12a1 1 0 1 0 2 0 a1 1 0 1 0-2 0 M18 12a1 1 0 1 0 2 0 a1 1 0 1 0-2 0 M4 12a1 1 0 1 0 2 0 a1 1 0 1 0-2 0</StreamGeometry>
+    <StreamGeometry x:Key="Icon.download">M12 15V3 M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5</StreamGeometry>
+
+    <!-- The Icon control's look: a 24-grid Path stroked with Foreground, scaled to the control size. -->
+    <ControlTheme x:Key="{x:Type ctrl:Icon}" TargetType="ctrl:Icon">
+        <Setter Property="Width" Value="20"/>
+        <Setter Property="Height" Value="20"/>
+        <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Viewbox Stretch="Uniform">
+                    <Canvas Width="24" Height="24">
+                        <Path Data="{TemplateBinding Data}" Stroke="{TemplateBinding Foreground}"
+                              StrokeThickness="2" StrokeLineCap="Round" StrokeJoin="Round"/>
+                    </Canvas>
+                </Viewbox>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
+</ResourceDictionary>

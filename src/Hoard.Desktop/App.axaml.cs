@@ -49,10 +49,13 @@ public partial class App : Application
         // The shell opens on the project launcher; the DB is created when a project is opened there.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = provider.GetRequiredService<MainWindowViewModel>(),
-            };
+            // Dev-only: HOARD_GALLERY=1 opens the design-system gallery instead of the app (see DESIGN.md).
+            desktop.MainWindow = Environment.GetEnvironmentVariable("HOARD_GALLERY") == "1"
+                ? new GalleryWindow()
+                : new MainWindow
+                {
+                    DataContext = provider.GetRequiredService<MainWindowViewModel>(),
+                };
         }
 
         base.OnFrameworkInitializationCompleted();

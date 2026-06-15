@@ -8,6 +8,12 @@ We build our **own** lightweight Avalonia styles — no third-party UI library. 
 is the design *reference*, not a dependency (which is shadcn's own philosophy: copy the component, don't
 take the dependency).
 
+**The look blends two things:** shadcn's hard contrast (thin borders, clear fills, strong text, an accent
+colour) **and** Neumorphism's tactile depth (dual-tone bevels — a dark shadow plus a light highlight — so
+surfaces feel raised and controls press *in*). Depth and contrast each carry half the weight: bevels make it
+tactile, borders/fills/accent keep it legible. Base tones are deliberately **not** pure black/white, so the
+bevel can throw a highlight *and* a shadow.
+
 ## Principles
 
 - **Content-first, minimal.** The media is the interface; chrome recedes. Prefer fewer elements.
@@ -25,8 +31,9 @@ take the dependency).
 - **Lucide** (https://lucide.dev, **ISC licence**) — icon set (shadcn's). 24×24, stroke-based, stroke-width
   2, round caps/joins. Embedded as Avalonia geometries — **no SVG library**.
 - **Inter** — UI typeface, already bundled (`Avalonia.Fonts.Inter`).
-- **Neumorphism.Avalonia** — referenced for **one** thing only: a soft, subtle elevation shadow on raised
-  surfaces. We **reject** its heavy bevel / inset / gradient overuse.
+- **Neumorphism.Avalonia** — referenced for restrained **soft-UI depth**: a layered "raised" shadow with a
+  faint top-edge highlight on surfaces, and an **inset "pressed"** feel on controls. We **reject** its heavy,
+  overused bevel / gradient — depth is a subtle cue, never the whole aesthetic.
 
 ## Source of truth & file map
 
@@ -46,33 +53,47 @@ Colour roles (values authoritative in `Tokens.axaml`):
 
 | Role (brush key) | Light | Dark | Use |
 |---|---|---|---|
-| `BackgroundBrush` | `#FFFFFF` | `#0A0A0A` | page background |
-| `ForegroundBrush` | `#0A0A0A` | `#FAFAFA` | primary text/icons |
-| `CardBrush` / `PopoverBrush` | `#FFFFFF` | `#1A1A1A` | surfaces, sheets |
-| `MutedBrush` / `AccentBrush` | `#F5F5F5` | `#262626` | subtle fills, hover |
-| `MutedForegroundBrush` | `#737373` | `#A3A3A3` | secondary text |
-| `LineBrush` / `InputBrush` | `#E5E5E5` | white @10–15% | hairlines, input borders |
-| `PrimaryBrush` | `#1A1A1A` | `#E5E5E5` | primary button fill |
-| `PrimaryForegroundBrush` | `#FAFAFA` | `#1A1A1A` | text on primary |
-| `RingBrush` | `#A3A3A3` | `#737373` | focus ring |
+| `BackgroundBrush` | `#E8EBF1` | `#17171C` | page background (soft, not pure b/w) |
+| `ForegroundBrush` | `#1A1B22` | `#F3F3F7` | primary text/icons |
+| `CardBrush` / `PopoverBrush` | `#EDF0F6` | `#1F1F27` | raised surfaces, sheets |
+| `MutedBrush` | `#DEE2EB` | `#272730` | subtle fills, hover |
+| `MutedForegroundBrush` | `#646876` | `#9A9AA8` | secondary text |
+| `LineBrush` / `InputBrush` | black ~10% | white ~15% | thin borders, input borders |
+| `PrimaryBrush` | `#5B5BEF` | `#6D6DF5` | **accent** — primary button, accent text |
+| `PrimaryForegroundBrush` | `#FFFFFF` | `#FFFFFF` | text on accent |
+| `AccentBrush` | accent ~13% | accent ~19% | selected/active surfaces |
+| `RingBrush` | `#5B5BEF` | `#8385F7` | focus ring (accent) |
 | `DestructiveBrush` | `#DC2626` | `#EF4444` | delete |
+
+The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — change the indigo here to recolour the whole UI.
 
 - **Radius:** `RadiusSm` 6 · `RadiusMd` **10** (default) · `RadiusLg` 14 · `RadiusFull`.
 - **Spacing:** 4 / 8 / 12 / 16 / 24 / 32 (`Space1`…`Space8`).
 - **Type:** Inter; `FontSizeBase` **14** (shadcn component default), xs 12 · sm 13 · lg 16 · xl 20 · 2xl 24.
   Headings: semibold, slightly tight tracking. Secondary text uses `MutedForegroundBrush`.
-- **Shadow:** `ShadowSm` on raised surfaces only (cards, popovers, sheets); `ShadowMd` for transient
-  overlays. Flat list rows get **no** shadow — borders/hover do the work.
+- **Depth** (tuned per light/dark). The tactile look = a glossy **gradient fill** + **dark-only** shadows:
+  - **Gloss fills carry the "light":** `PrimaryGradientBrush` / `SecondaryGradientBrush` /
+    `DestructiveGradientBrush` — a bright top sheen → body → darker base gives buttons their glassy 3D look.
+  - **Box-shadows are DARK-only — never light.** Avalonia renders a colour fringe (a green hairline) on a
+    light-coloured box-shadow over a rounded corner (Avalonia #16010/#10539), so the highlight must come from
+    the gradient, not a light shadow. `ButtonRestShadow` = small even drop + soft dark inner base;
+    `ButtonPressedShadow` = dark inset (presses in); `ShadowRaised` = soft drop for cards; `ShadowInset` =
+    dark inset (recessed inputs); `ShadowMd` = overlays; `ShadowNone` = flat.
+  - **`EdgeBrush`** = dark border crisping a coloured button's edge; **`SelectionBrush`** = text selection.
+    Keep outer drops small so they never clip.
 
 ## Components (inventory + specs)
 
 Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new ones under `Theme/Controls/`.
 
-- **Button** — variants `default` (primary fill), `secondary` (muted fill), `outline` (border, transparent),
-  `ghost` (transparent, muted on hover), `destructive` (red). Sizes `sm` / default / `icon` (square). Radius
-  md, visible focus ring. **Replaces** the current ad-hoc `accent` / `danger` / `overlay` styles.
-- **Card / Surface** — `CardBrush`, `LineBrush` border, radius md, optional `ShadowSm`.
-- **Input** (`TextBox`) — `InputBrush` border, radius md, ring on focus, muted placeholder.
+- **Button** — variants `default` (accent fill), `secondary` (neutral **raised pill** — lighter than the
+  page, floats on its bevel), `outline` (border, flat), `ghost` (transparent, flat), `destructive` (red).
+  Sizes `sm` / default / `icon`. Solid variants sit raised (`ShadowSm`) and press *in* (`ShadowPressed`);
+  flat variants opt out (`ShadowNone`). Thin border, accent focus ring. **Replaces** the old ad-hoc
+  `accent` / `danger` / `overlay` styles.
+- **Card / Surface** — `CardBrush`, thin `LineBrush` border, radius lg, `ShadowRaised` (dual-tone bevel).
+- **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset` so it looks pressed into
+  the surface, thin border, accent focus ring, muted placeholder.
 - **Row** — list item (project / board / collection): transparent, hover `MutedBrush`, radius md, optional
   trailing count or `⋯` action.
 - **Badge / Tag** — small; muted or solid. GIF badge, item counts.

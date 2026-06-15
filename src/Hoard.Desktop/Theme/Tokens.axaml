@@ -1,60 +1,95 @@
 <!--
-  Design tokens — the single source of truth for Hoard's visual language (see /DESIGN.md for rationale).
-  Palette is shadcn/ui's neutral theme (pure greys, so it maps 1:1 to hex); light + dark via
-  ThemeDictionaries. Views must bind these via {DynamicResource ...} and never hardcode a colour/radius.
-
-  Not yet merged into App.axaml — wiring this in (replacing FluentTheme) happens when UI work begins.
+  Design tokens — the single source of truth for Hoard's visual language (see /DESIGN.md).
+  The look blends shadcn/ui's contrast (thin borders, clear fills, strong text, an accent colour) with a
+  glossy, tactile depth. IMPORTANT: the "light" of an element comes from its GLOSS GRADIENT (a bright top
+  sheen), NOT from a light-coloured box-shadow — Avalonia's box-shadow + corner-radius renders a colour
+  fringe on light shadows (Avalonia #16010/#10539), so all box-shadows here are DARK-only. Base tones are
+  not pure black/white. Light + dark via ThemeDictionaries. Bind via {DynamicResource ...}; never hardcode.
+  Accent is one token (Primary/Accent/Ring) — change it to recolour the UI.
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <ResourceDictionary.ThemeDictionaries>
-        <!-- ── Light ─────────────────────────────────────────────── -->
+        <!-- ── Light (soft-grey base, near-white raised surfaces) ── -->
         <ResourceDictionary x:Key="Light">
-            <SolidColorBrush x:Key="BackgroundBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="ForegroundBrush" Color="#0A0A0A"/>
-            <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="PopoverBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="MutedBrush" Color="#F5F5F5"/>
-            <SolidColorBrush x:Key="MutedForegroundBrush" Color="#737373"/>
-            <SolidColorBrush x:Key="AccentBrush" Color="#F5F5F5"/>
-            <SolidColorBrush x:Key="LineBrush" Color="#E5E5E5"/>
-            <SolidColorBrush x:Key="InputBrush" Color="#E5E5E5"/>
-            <SolidColorBrush x:Key="PrimaryBrush" Color="#1A1A1A"/>
-            <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FAFAFA"/>
-            <SolidColorBrush x:Key="RingBrush" Color="#A3A3A3"/>
+            <SolidColorBrush x:Key="BackgroundBrush" Color="#E4E8EF"/>
+            <SolidColorBrush x:Key="ForegroundBrush" Color="#1A1B22"/>
+            <SolidColorBrush x:Key="CardBrush" Color="#F6F8FC"/>
+            <SolidColorBrush x:Key="PopoverBrush" Color="#F8FAFD"/>
+            <SolidColorBrush x:Key="MutedBrush" Color="#DDE2EB"/>
+            <SolidColorBrush x:Key="MutedForegroundBrush" Color="#646876"/>
+            <SolidColorBrush x:Key="LineBrush" Color="#22000000"/>      <!-- black ~13% -->
+            <SolidColorBrush x:Key="InputBrush" Color="#26000000"/>
+            <SolidColorBrush x:Key="PrimaryBrush" Color="#5B5BEF"/>      <!-- accent (indigo) -->
+            <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="AccentBrush" Color="#285B5BEF"/>     <!-- accent @ ~16% — selected/active -->
+            <SolidColorBrush x:Key="RingBrush" Color="#5B5BEF"/>
             <SolidColorBrush x:Key="DestructiveBrush" Color="#DC2626"/>
-            <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SelectionBrush" Color="#B35B5BEF"/>  <!-- text selection (accent ~70%) -->
+
+            <!-- Glossy fills: a bright sheen sliver at the very top, then the body, then a darker base. -->
+            <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#8585FA"/><GradientStop Offset="0.10" Color="#6E6EF3"/><GradientStop Offset="1" Color="#5050EC"/>
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#FFFFFF"/><GradientStop Offset="0.10" Color="#FAFBFD"/><GradientStop Offset="1" Color="#E7EAF1"/>
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#F36F6F"/><GradientStop Offset="0.10" Color="#EA4D4D"/><GradientStop Offset="1" Color="#CF2020"/>
+            </LinearGradientBrush>
+
+            <!-- DARK-only shadows (no light component → no fringe). -->
+            <BoxShadows x:Key="ShadowMd">0 18 40 0 #2E000000</BoxShadows>
+            <BoxShadows x:Key="ShadowRaised">0 8 20 0 #22000000</BoxShadows>
+            <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #22000000</BoxShadows>
+            <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #1F000000, inset 0 -2 3 0 #16000000</BoxShadows>
+            <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #2E000000</BoxShadows>
         </ResourceDictionary>
 
-        <!-- ── Dark (primary for an image/GIF-heavy archive) ─────── -->
+        <!-- ── Dark (primary; raised surfaces clearly above bg) ──── -->
         <ResourceDictionary x:Key="Dark">
-            <SolidColorBrush x:Key="BackgroundBrush" Color="#0A0A0A"/>
-            <SolidColorBrush x:Key="ForegroundBrush" Color="#FAFAFA"/>
-            <SolidColorBrush x:Key="CardBrush" Color="#1A1A1A"/>
-            <SolidColorBrush x:Key="PopoverBrush" Color="#1A1A1A"/>
-            <SolidColorBrush x:Key="MutedBrush" Color="#262626"/>
-            <SolidColorBrush x:Key="MutedForegroundBrush" Color="#A3A3A3"/>
-            <SolidColorBrush x:Key="AccentBrush" Color="#262626"/>
-            <SolidColorBrush x:Key="LineBrush" Color="#26FFFFFF"/>   <!-- white @ 10% -->
-            <SolidColorBrush x:Key="InputBrush" Color="#26FFFFFF"/>  <!-- white @ 15% -->
-            <SolidColorBrush x:Key="PrimaryBrush" Color="#E5E5E5"/>
-            <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#1A1A1A"/>
-            <SolidColorBrush x:Key="RingBrush" Color="#737373"/>
+            <SolidColorBrush x:Key="BackgroundBrush" Color="#141419"/>
+            <SolidColorBrush x:Key="ForegroundBrush" Color="#F3F3F7"/>
+            <SolidColorBrush x:Key="CardBrush" Color="#23232D"/>
+            <SolidColorBrush x:Key="PopoverBrush" Color="#26262F"/>
+            <SolidColorBrush x:Key="MutedBrush" Color="#2B2B35"/>
+            <SolidColorBrush x:Key="MutedForegroundBrush" Color="#9A9AA8"/>
+            <SolidColorBrush x:Key="LineBrush" Color="#2EFFFFFF"/>       <!-- white ~18% -->
+            <SolidColorBrush x:Key="InputBrush" Color="#33FFFFFF"/>
+            <SolidColorBrush x:Key="PrimaryBrush" Color="#6D6DF5"/>      <!-- accent (indigo) -->
+            <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="AccentBrush" Color="#386D6DF5"/>     <!-- accent @ ~22% — selected/active -->
+            <SolidColorBrush x:Key="RingBrush" Color="#8385F7"/>
             <SolidColorBrush x:Key="DestructiveBrush" Color="#EF4444"/>
-            <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FAFAFA"/>
+            <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="SelectionBrush" Color="#B36D6DF5"/>  <!-- text selection (accent ~70%) -->
+
+            <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#9090FB"/><GradientStop Offset="0.10" Color="#7E7EF8"/><GradientStop Offset="1" Color="#5F5FF2"/>
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#34343F"/><GradientStop Offset="0.10" Color="#2C2C38"/><GradientStop Offset="1" Color="#1F1F28"/>
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+                <GradientStop Offset="0" Color="#F47373"/><GradientStop Offset="0.10" Color="#F25A5A"/><GradientStop Offset="1" Color="#DF2E2E"/>
+            </LinearGradientBrush>
+
+            <BoxShadows x:Key="ShadowMd">0 20 44 0 #99000000</BoxShadows>
+            <BoxShadows x:Key="ShadowRaised">0 8 22 0 #80000000</BoxShadows>
+            <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #80000000</BoxShadows>
+            <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #59000000, inset 0 -2 3 0 #40000000</BoxShadows>
+            <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #73000000</BoxShadows>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
     <!-- ── Variant-independent scalars ───────────────────────────── -->
-
-    <!-- Corner radius (shadcn default 0.625rem = 10px). -->
     <CornerRadius x:Key="RadiusSm">6</CornerRadius>
     <CornerRadius x:Key="RadiusMd">10</CornerRadius>
     <CornerRadius x:Key="RadiusLg">14</CornerRadius>
     <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
 
-    <!-- Spacing scale (4-based). -->
     <x:Double x:Key="Space1">4</x:Double>
     <x:Double x:Key="Space2">8</x:Double>
     <x:Double x:Key="Space3">12</x:Double>
@@ -62,7 +97,6 @@
     <x:Double x:Key="Space6">24</x:Double>
     <x:Double x:Key="Space8">32</x:Double>
 
-    <!-- Type scale (Inter; 14px base, matching shadcn's text-sm component default). -->
     <x:Double x:Key="FontSizeXs">12</x:Double>
     <x:Double x:Key="FontSizeSm">13</x:Double>
     <x:Double x:Key="FontSizeBase">14</x:Double>
@@ -70,7 +104,9 @@
     <x:Double x:Key="FontSizeXl">20</x:Double>
     <x:Double x:Key="FontSize2Xl">24</x:Double>
 
-    <!-- Elevation — restrained (the one thing we borrow from Neumorphism). Subtle on raised surfaces only. -->
-    <BoxShadows x:Key="ShadowSm">0 1 2 0 #14000000</BoxShadows>
-    <BoxShadows x:Key="ShadowMd">0 6 20 0 #2E000000</BoxShadows>
+    <!-- Edge: a dark overlay border defining a coloured (gradient) button's edge. Works on any fill. -->
+    <SolidColorBrush x:Key="EdgeBrush" Color="#33000000"/>
+
+    <!-- Flat (no elevation) — outline/ghost buttons. -->
+    <BoxShadows x:Key="ShadowNone">0 0 0 0 #00000000</BoxShadows>
 </ResourceDictionary>

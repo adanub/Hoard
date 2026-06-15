@@ -1,0 +1,143 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctrl="using:Hoard.Desktop.Controls"
+        x:Class="Hoard.Desktop.Views.GalleryWindow"
+        Width="760" Height="900"
+        RequestedThemeVariant="Dark"
+        Background="{DynamicResource BackgroundBrush}"
+        Title="Hoard — component gallery">
+
+    <DockPanel TextElement.Foreground="{DynamicResource ForegroundBrush}">
+        <!-- Header + theme toggle -->
+        <Border DockPanel.Dock="Top" Padding="24,18" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock Grid.Column="0" Classes="h1" Text="Component gallery" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="outline sm" Content="Light"
+                        Click="OnLight" Margin="0,0,8,0"/>
+                <Button Grid.Column="2" Theme="{StaticResource HoardButton}" Classes="outline sm" Content="Dark" Click="OnDark"/>
+            </Grid>
+        </Border>
+
+        <ScrollViewer>
+            <StackPanel Margin="24" Spacing="28" MaxWidth="700" HorizontalAlignment="Left">
+
+                <!-- Buttons -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Buttons"/>
+                    <WrapPanel>
+                        <WrapPanel.Styles>
+                            <Style Selector="Button"><Setter Property="Margin" Value="0,0,8,8"/></Style>
+                        </WrapPanel.Styles>
+                        <Button Theme="{StaticResource HoardButton}" Content="Primary"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Secondary"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Outline"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Ghost"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Destructive"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Small"/>
+                        <Button Theme="{StaticResource HoardButton}" IsEnabled="False" Content="Disabled"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="icon">
+                            <ctrl:Icon Data="{StaticResource Icon.plus}" Width="18" Height="18"
+                                       Foreground="{DynamicResource PrimaryForegroundBrush}"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="outline icon">
+                            <ctrl:Icon Data="{StaticResource Icon.search}" Width="18" Height="18"/>
+                        </Button>
+                    </WrapPanel>
+                </StackPanel>
+
+                <!-- Card -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Card"/>
+                    <Border Classes="card" MaxWidth="340" HorizontalAlignment="Left">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="HoardTest1" FontWeight="SemiBold"/>
+                            <TextBlock Classes="muted" Text="78 images · 12 MB cache"/>
+                            <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Open" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Input -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Input"/>
+                    <TextBox Theme="{StaticResource HoardInput}" Width="320" HorizontalAlignment="Left"
+                             Text="Select this text to test the highlight"/>
+                    <TextBox Theme="{StaticResource HoardInput}" Width="320" HorizontalAlignment="Left" Margin="0,8,0,0"
+                             PlaceholderText="Search title, description…"/>
+                </StackPanel>
+
+                <!-- Rows -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Rows"/>
+                    <StackPanel MaxWidth="360" HorizontalAlignment="Left">
+                        <Border Classes="row selected">
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.folder}" Width="18" Height="18"
+                                           Margin="0,0,10,0" Foreground="{DynamicResource PrimaryBrush}"/>
+                                <TextBlock Grid.Column="1" Classes="accent" Text="Favourites (selected)" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Classes="badge"><TextBlock Classes="muted" Text="12"/></Border>
+                            </Grid>
+                        </Border>
+                        <Border Classes="row">
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.folder}" Width="18" Height="18" Margin="0,0,10,0"/>
+                                <TextBlock Grid.Column="1" Text="animation-references" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Classes="badge"><TextBlock Classes="muted" Text="37"/></Border>
+                            </Grid>
+                        </Border>
+                        <Border Classes="row">
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.image}" Width="18" Height="18" Margin="0,0,10,0"/>
+                                <TextBlock Grid.Column="1" Text="All images" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Classes="badge"><TextBlock Classes="muted" Text="78"/></Border>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Icons -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Icons (Lucide)"/>
+                    <WrapPanel>
+                        <WrapPanel.Styles>
+                            <Style Selector="ctrl|Icon"><Setter Property="Margin" Value="0,0,16,12"/></Style>
+                        </WrapPanel.Styles>
+                        <ctrl:Icon Data="{StaticResource Icon.chevron-left}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.plus}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.search}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.x}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.trash-2}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.rotate-ccw}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.image}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.folder}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.more-horizontal}"/>
+                        <ctrl:Icon Data="{StaticResource Icon.download}"/>
+                    </WrapPanel>
+                </StackPanel>
+
+                <!-- Colour tokens -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Colour tokens"/>
+                    <WrapPanel>
+                        <WrapPanel.Styles>
+                            <Style Selector="Border.swatch">
+                                <Setter Property="Width" Value="96"/>
+                                <Setter Property="Height" Value="48"/>
+                                <Setter Property="CornerRadius" Value="{DynamicResource RadiusSm}"/>
+                                <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="Margin" Value="0,0,8,8"/>
+                            </Style>
+                        </WrapPanel.Styles>
+                        <StackPanel><Border Classes="swatch" Background="{DynamicResource CardBrush}"/><TextBlock Classes="muted" Text="card"/></StackPanel>
+                        <StackPanel><Border Classes="swatch" Background="{DynamicResource MutedBrush}"/><TextBlock Classes="muted" Text="muted"/></StackPanel>
+                        <StackPanel><Border Classes="swatch" Background="{DynamicResource PrimaryBrush}"/><TextBlock Classes="muted" Text="accent"/></StackPanel>
+                        <StackPanel><Border Classes="swatch" Background="{DynamicResource AccentBrush}"/><TextBlock Classes="muted" Text="accent tint"/></StackPanel>
+                        <StackPanel><Border Classes="swatch" Background="{DynamicResource DestructiveBrush}"/><TextBlock Classes="muted" Text="destructive"/></StackPanel>
+                    </WrapPanel>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>
