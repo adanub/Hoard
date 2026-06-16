@@ -1,7 +1,7 @@
 <!--
-  Surfaces & helpers — Card, Row, Badge, Input, and text styles (see DESIGN.md). Class-based and additive so
-  they coexist with FluentTheme. Card/Row/Badge are Border classes; Input is a light pass over the Fluent
-  TextBox (a full TextBox theme comes when we drop Fluent).
+  Surfaces & helpers — Card, Badge, and text-helper styles (see DESIGN.md). These are class-based styles on
+  plain Border/TextBlock, additive so they coexist with FluentTheme. Interactive controls (Button, Input,
+  Switch, and the tappable list Row) are ControlThemes under Theme/Controls/, not here.
 -->
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -16,39 +16,15 @@
         <Setter Property="BoxShadow" Value="{DynamicResource ShadowRaised}"/>
     </Style>
 
-    <!-- Row: a tappable list item (project / board / collection). Always a 1px border (transparent until
-         selected) so selecting it doesn't shift the layout. -->
-    <Style Selector="Border.row">
-        <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="BorderBrush" Value="Transparent"/>
-        <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="{DynamicResource RadiusMd}"/>
-        <Setter Property="Padding" Value="12"/>
-        <Setter Property="Cursor" Value="Hand"/>
-    </Style>
-    <!-- Hover — lift into a raised pill (same glossy bevel as buttons). -->
-    <Style Selector="Border.row:pointerover">
-        <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
-        <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
-    </Style>
-    <!-- Selected/active — accent tint, pressed *in*, with a thin border so the edge keeps contrast. -->
-    <Style Selector="Border.row.selected">
-        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
-        <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
-    </Style>
-    <!-- Selected wins over hover. -->
-    <Style Selector="Border.row.selected:pointerover">
-        <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
-        <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
-    </Style>
-
-    <!-- Badge: a small pill (counts, GIF tag). -->
+    <!-- Badge: a small floating pill (counts, GIF tag) — gloss-bevelled fill + thin border + drop shadow so
+         it reads as lifted off the row. -->
     <Style Selector="Border.badge">
-        <Setter Property="Background" Value="{DynamicResource MutedBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource SecondaryGradientBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="CornerRadius" Value="{DynamicResource RadiusFull}"/>
         <Setter Property="Padding" Value="8,2"/>
+        <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
     </Style>
 
     <!-- Typography helpers. -->

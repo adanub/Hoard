@@ -3,7 +3,11 @@
 Progress tracker so a fresh session can resume. Architecture/conventions are in `CLAUDE.md`; the
 user-facing model is in `README.md`. Keep this file current as work lands.
 
-**Status (2026-06-14):** Phase 1 complete. Phase 2 in progress. Tests: 47 (Core) + 19 (Desktop), green.
+**Status (2026-06-17):** Phase 1 complete. Phase 2 in progress — UI/UX **redesign underway**: the design-system
+component kit is largely built and dialled in (live gallery catalogue), but **everything past slice 1 is
+uncommitted** — a material-shader background was built then **dropped**, and the kit was heavily refined since.
+Tests: 47 (Core) + 23 (Desktop), green. Next: **slice 2** — rebuild the screens on the kit + the nav back-stack.
+⚠️ See "Uncommitted" + "Needs runtime verification" at the end before compacting/committing.
 
 ## Done
 
@@ -38,14 +42,44 @@ user-facing model is in `README.md`. Keep this file current as work lands.
   connector rebuilds `download-archive.db` from what the library tracks (live + tombstoned, via
   `ConnectorOptions.KnownItems`), so it can never drift from the DB or silently hide an item.
 
+**Design system / UI redesign (slice 1 committed; large refinement batch uncommitted)**
+- Own Avalonia styles, **no third-party UI library**; shadcn/ui reference + Lucide icons (embedded geometries).
+  Full spec in **`DESIGN.md`** (now reconciled to the tokens). Clean/minimal, **dark-primary**, glossy soft-UI
+  depth, indigo accent.
+- **Tokens = single source of truth** (`Theme/Tokens.axaml`, light/dark `ThemeDictionaries`), layered over
+  FluentTheme (opt-in via `Theme=`/class) so existing screens are untouched. Now include **control heights**
+  (`ControlHeight` 38 / Sm 28 / Lg 48 — the explicit button-size metric), radii (incl. `RadiusLgTop`), spacing,
+  type, gloss gradients, and **dark-tinted tight layered shadows** (kept tight to avoid 8-bit banding on the
+  dark surfaces). Dark neutral ramp **retoned** (bg `#212025`, card `#1F1F23`, …).
+- **Component kit** (ControlThemes under `Theme/Controls/`):
+  - **Button** — variants default/secondary/outline/ghost/destructive; sizes `sm`/default/`lg` (explicit
+    `Height`) + square `icon`; gloss fills, press scale+inset, locked inverse-luminance text-shadow;
+    ghost/outline lift into the secondary pill on hover (outline keeps a rest border).
+  - **Switch** (`HoardSwitch`, on `ToggleButton`) — real sliding-knob track switch (not a recoloured button).
+  - **Input** (`HoardInput`) — recessed TextBox, working selection/caret, `:focus` primary tint.
+  - **Row** (`HoardListItem`, on `ListBoxItem`) — tappable list row, native hover/press/selected; **replaces the
+    old `Border.row` class**; used via a `ListBox` `ItemContainerTheme`.
+  - **Card** (Border class) — raised surface; the project-board card has a 3-up **Pinterest collage cover**
+    (most-recent / median / oldest) + metadata. **Badge** = floating chip. Text helpers (h1/h2/muted/accent).
+  - **Pressable** (`PressableSurfaceTemplate`) — the **one shared press-surface template** (Border#root +
+    hit-transparent content + press transition) that Button and Row reference, so the scaffold lives in one place.
+  - `Icon` control + Lucide set (incl. sun/moon).
+- **Gallery** (`GalleryWindow`, `HOARD_GALLERY=1`) — live catalogue: full button matrix (every variant × size),
+  switch, input, selectable rows (ListBox), card-with-collage, icons, swatches; header **sun─switch─moon** theme
+  toggle.
+- **`FocusManagement`** (`Infrastructure/`) — reusable click-away-clears-focus behaviour; pure decision
+  unit-tested + an architecture test enforcing focus primitives stay centralised.
+- **Shell is fluid reflow** (real DIPs; masonry grows columns by width). An earlier uniform-scale `DesignSurface`
+  experiment was tried then **removed** (cropped content couldn't scroll). See DESIGN.md "Layout & responsive".
+- **Convention (CLAUDE.md):** custom interactive control templates set content `IsHitTestVisible=False` so the
+  fill Border is the single hover/hit surface (else `:pointerover`/`:pressed` flickers across the boundary).
+
 ## Next up — finish Phase 2
 
-- **UI/UX redesign — do this first.** The current screens are cluttered, desktop-only master-detail. Move
-  to a clean, minimal, **mobile-first responsive** design with a back-stack (Projects → Library → Board →
-  Image detail), own Avalonia styles (no UI library), shadcn/ui reference + Lucide icons. Foundation laid:
-  see **`DESIGN.md`** + `Theme/Tokens.axaml` (token source of truth, not yet wired into `App.axaml`).
-  Suggested build order: tokens + Icon control + core component styles (Button/Card/Input/Row) → rebuild the
-  Projects screen as the first visual → roll the kit + nav stack across the remaining screens.
+- **Finish the redesign (in progress).** Slice 1 (component kit + gallery) is built. Next: **slice 2 — rebuild
+  the Projects screen on the kit and introduce the navigation back-stack** (Projects → Library → Board → Image
+  detail), then roll the kit across the remaining screens and **retire FluentTheme + the placeholder
+  `accent`/`danger`/`overlay` styles**.
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
@@ -82,8 +116,31 @@ user-facing model is in `README.md`. Keep this file current as work lands.
   is full) — page when libraries get very large.
 - Optional: add an `.editorconfig` to enforce the C# formatting conventions documented in `CLAUDE.md`.
 
+## Uncommitted (working tree)
+
+Committed: `feat(ui): design-system slice 1` + `chore(assets): … Background material`. **Everything since is
+uncommitted** (left for the user's runtime sign-off) — a large batch:
+- **Dropped the material/shader background feature** (minor polish): `Rendering/`, `Assets/Materials/`,
+  `ASSETS.md`, and its gallery showcase are **deleted** — don't resurrect it.
+- **Component-kit build-out + refinement:** new `Theme/Controls/{Switch,ListItem,Pressable}.axaml`; heavily
+  edited `Button.axaml` (sizes/heights/`lg`/`icon`, ghost-outline hover, shared `PressableSurfaceTemplate`),
+  `Surfaces.axaml` (Row → `ListBoxItem`, floating Badge), `Input.axaml`, `Tokens.axaml` (dark retone,
+  control-height/radius tokens, tight layered shadows), `Icons.axaml` (sun/moon), `Theme.axaml` (Pressable +
+  Switch includes), large `GalleryWindow.*` expansion, `MainWindow.axaml` (fluid shell), `FocusManagement.*`
+  (+ tests). Also added then removed `Controls/DesignSurface.cs` + its tests (uniform-scale experiment).
+- **Docs:** `DESIGN.md` reconciled to the tokens (role-based table, control heights, fluid reflow);
+  `CLAUDE.md` hit-test convention added; this `ROADMAP.md`.
+Commit once the user signs off — likely as a few logical commits (feature-drop · component kit · docs).
+
 ## Needs runtime verification (can't launch the GUI in-session)
 
-Build + tests cover logic/compile/layout-math, but the user should confirm at runtime: masonry scroll feel
-+ recycling, GIF playback/animation correctness, and that memory drops when GIFs are stopped / unloaded /
-navigated away from. Diagnose via `hoard.log`.
+Build + 70 tests pass; the user should confirm at runtime:
+- **App (existing screens):** masonry scroll/recycling, GIF playback, memory drops; the **fluid shell** reflows
+  (grid gains columns as the window widens) and scrolls with no cropping.
+- **Design-system gallery (`HOARD_GALLERY=1`):** both themes (the **sun─switch─moon** toggle flips them);
+  button matrix (variants × `sm`/default/`lg`/`icon`, press scale+inset, ghost/outline hover-lift); **switch**
+  knob slides symmetrically; input focus/selection/caret; **rows** hover/press/select (+ keyboard nav); **card
+  collage** cover + the dark drop shadow reads raised **without banding**; and the shared
+  `PressableSurfaceTemplate` still renders Button/Row correctly (it's referenced cross-file). Click-away clears
+  focus — Tab must not land on the focus-sink root.
+Diagnose via `hoard.log`.

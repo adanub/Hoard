@@ -1,11 +1,10 @@
 <!--
   Design tokens — the single source of truth for Hoard's visual language (see /DESIGN.md).
   The look blends shadcn/ui's contrast (thin borders, clear fills, strong text, an accent colour) with a
-  glossy, tactile depth. IMPORTANT: the "light" of an element comes from its GLOSS GRADIENT (a bright top
-  sheen), NOT from a light-coloured box-shadow — Avalonia's box-shadow + corner-radius renders a colour
-  fringe on light shadows (Avalonia #16010/#10539), so all box-shadows here are DARK-only. Base tones are
-  not pure black/white. Light + dark via ThemeDictionaries. Bind via {DynamicResource ...}; never hardcode.
-  Accent is one token (Primary/Accent/Ring) — change it to recolour the UI.
+  glossy, tactile depth. Elevation reads from a GLOSS GRADIENT top sheen plus dark drop shadows. Shadows are
+  kept dark and fairly TIGHT (small blur): a wide soft falloff changes <1 level/px and bands at 8-bit, while a
+  steeper gradient changes several levels/px and stays clean. Base tones are not pure black/white. Light + dark
+  via ThemeDictionaries. Bind via {DynamicResource ...}; never hardcode. Accent is one token (Primary/Accent/Ring).
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -42,19 +41,21 @@
 
             <!-- DARK-only shadows (no light component → no fringe). -->
             <BoxShadows x:Key="ShadowMd">0 18 40 0 #2E000000</BoxShadows>
-            <BoxShadows x:Key="ShadowRaised">0 8 20 0 #22000000</BoxShadows>
+            <!-- Layered (contact + mid + ambient) so the soft falloff bands less than one long gradient. -->
+            <BoxShadows x:Key="ShadowRaised">0 1 2 0 #1F000000, 0 5 12 0 #16000000, 0 12 30 0 #0F000000</BoxShadows>
             <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #22000000</BoxShadows>
+            <BoxShadows x:Key="InputFocusShadow">inset 0 2 6 0 #22000000, inset 0 0 7 0 #4D5B5BEF</BoxShadows>
             <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #1F000000, inset 0 -2 3 0 #16000000</BoxShadows>
             <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #2E000000</BoxShadows>
         </ResourceDictionary>
 
         <!-- ── Dark (primary; raised surfaces clearly above bg) ──── -->
         <ResourceDictionary x:Key="Dark">
-            <SolidColorBrush x:Key="BackgroundBrush" Color="#141419"/>
+            <SolidColorBrush x:Key="BackgroundBrush" Color="#212025"/>
             <SolidColorBrush x:Key="ForegroundBrush" Color="#F3F3F7"/>
-            <SolidColorBrush x:Key="CardBrush" Color="#23232D"/>
-            <SolidColorBrush x:Key="PopoverBrush" Color="#26262F"/>
-            <SolidColorBrush x:Key="MutedBrush" Color="#2B2B35"/>
+            <SolidColorBrush x:Key="CardBrush" Color="#1F1F23"/>
+            <SolidColorBrush x:Key="PopoverBrush" Color="#2C2C33"/>
+            <SolidColorBrush x:Key="MutedBrush" Color="#302F37"/>
             <SolidColorBrush x:Key="MutedForegroundBrush" Color="#9A9AA8"/>
             <SolidColorBrush x:Key="LineBrush" Color="#2EFFFFFF"/>       <!-- white ~18% -->
             <SolidColorBrush x:Key="InputBrush" Color="#33FFFFFF"/>
@@ -70,17 +71,21 @@
                 <GradientStop Offset="0" Color="#9090FB"/><GradientStop Offset="0.10" Color="#7E7EF8"/><GradientStop Offset="1" Color="#5F5FF2"/>
             </LinearGradientBrush>
             <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
-                <GradientStop Offset="0" Color="#34343F"/><GradientStop Offset="0.10" Color="#2C2C38"/><GradientStop Offset="1" Color="#1F1F28"/>
+                <GradientStop Offset="0" Color="#35353D"/><GradientStop Offset="0.10" Color="#303039"/><GradientStop Offset="1" Color="#28272E"/>
             </LinearGradientBrush>
             <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
                 <GradientStop Offset="0" Color="#F47373"/><GradientStop Offset="0.10" Color="#F25A5A"/><GradientStop Offset="1" Color="#DF2E2E"/>
             </LinearGradientBrush>
 
-            <BoxShadows x:Key="ShadowMd">0 20 44 0 #99000000</BoxShadows>
-            <BoxShadows x:Key="ShadowRaised">0 8 22 0 #80000000</BoxShadows>
-            <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #80000000</BoxShadows>
-            <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #59000000, inset 0 -2 3 0 #40000000</BoxShadows>
-            <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #73000000</BoxShadows>
+            <BoxShadows x:Key="ShadowMd">0 20 44 0 #99131219</BoxShadows>
+            <!-- Dark drop, kept TIGHT (small blur): a wide soft falloff changes <1 level/px and bands at 8-bit;
+                 these small blurs change >1 level/px (no bands). Two close layers for a touch of softness, both
+                 still steep; alphas tuned to read clearly without being heavy. -->
+            <BoxShadows x:Key="ShadowRaised">0 3 8 0 #80000000, 0 6 11 0 #59000000</BoxShadows>
+            <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #80131219</BoxShadows>
+            <BoxShadows x:Key="InputFocusShadow">inset 0 2 6 0 #80131219, inset 0 0 8 0 #596D6DF5</BoxShadows>
+            <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #59131219, inset 0 -2 3 0 #40131219</BoxShadows>
+            <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #73131219</BoxShadows>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
@@ -88,7 +93,13 @@
     <CornerRadius x:Key="RadiusSm">6</CornerRadius>
     <CornerRadius x:Key="RadiusMd">10</CornerRadius>
     <CornerRadius x:Key="RadiusLg">14</CornerRadius>
+    <CornerRadius x:Key="RadiusLgTop">14,14,0,0</CornerRadius> <!-- RadiusLg on top corners only (card cover) -->
     <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
+
+    <!-- Control heights (the direct size metric for buttons etc.; the icon button is square at ControlHeight). -->
+    <x:Double x:Key="ControlHeight">38</x:Double>
+    <x:Double x:Key="ControlHeightSm">28</x:Double>
+    <x:Double x:Key="ControlHeightLg">48</x:Double>
 
     <x:Double x:Key="Space1">4</x:Double>
     <x:Double x:Key="Space2">8</x:Double>
@@ -106,6 +117,10 @@
 
     <!-- Edge: a dark overlay border defining a coloured (gradient) button's edge. Works on any fill. -->
     <SolidColorBrush x:Key="EdgeBrush" Color="#33000000"/>
+
+    <!-- Text shadow for white-on-colour text (primary/destructive): always dark — that text is light in
+         both themes, so the inverse-luminance shadow is always dark. -->
+    <DropShadowEffect x:Key="OnAccentTextShadowEffect" BlurRadius="0" OffsetX="0" OffsetY="1" Color="#000000" Opacity="0.5"/>
 
     <!-- Flat (no elevation) — outline/ghost buttons. -->
     <BoxShadows x:Key="ShadowNone">0 0 0 0 #00000000</BoxShadows>

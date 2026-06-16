@@ -19,8 +19,10 @@ bevel can throw a highlight *and* a shadow.
 - **Content-first, minimal.** The media is the interface; chrome recedes. Prefer fewer elements.
 - **One job per screen.** Navigate with a back-stack (Projects → Library → Board → Image detail), a back
   chevron to go up a level. No persistent sidebars or piled-on panels.
-- **Mobile-first responsive.** Design for the narrowest phone width first, then let the *same* screens reflow
-  up to desktop. No separate desktop layout. (Sets up the Phase 4 mobile head for free.)
+- **Mobile-first, fluid reflow (Pinterest-style).** Screens lay out in real pixels and scroll naturally; the
+  *same* screens reflow from the narrowest phone up to desktop — the grid gains columns as the window widens.
+  No global scaling, no separate desktop layout. (Sets up the Phase 4 mobile head for free.) See **Layout &
+  responsive** below.
 - **Own our styles.** shadcn/ui is the look; we reimplement it as Avalonia styles over standard controls.
 - **Dark-primary.** An image/GIF archive reads best on dark; light is fully supported as the alternate.
 
@@ -41,7 +43,9 @@ bevel can throw a highlight *and* a shadow.
   radius, spacing, type sizes, shadows. Views bind these with `{DynamicResource ...}` and **never hardcode**
   a colour, radius, or spacing value. Missing a value? Add a token; don't inline.
 - `Theme/Icons.axaml` — Lucide icon geometries, added on demand (keyed `Icon.<name>`).
-- `Theme/Controls/*.axaml` — one file per component's styles (`Button.axaml`, `Card.axaml`, …).
+- `Theme/Controls/*.axaml` — component ControlThemes (`Button`, `Input`, `Switch`, `ListItem`), the shared
+  `Pressable` template they reuse (one `Border#root` press-surface scaffold), and class-based `Surfaces`
+  (Card / Badge / text helpers). Tappable controls reference `PressableSurfaceTemplate` rather than re-declaring it.
 - `Theme/Theme.axaml` — merges Tokens + Icons + Controls; referenced from `App.axaml` (replaces
   `FluentTheme` when UI work begins).
 - **Component gallery** — a dev-only view listing every component, variant, and icon. Our Storybook
@@ -49,54 +53,73 @@ bevel can throw a highlight *and* a shadow.
 
 ## Tokens
 
-Colour roles (values authoritative in `Tokens.axaml`):
+**Values are authoritative in `Tokens.axaml`** (light + dark via `ThemeDictionaries`) — this table lists the
+*roles* only, so the doc can't drift from the code. The neutral ramp is a soft blue-violet grey (deliberately
+not pure black/white) with a single indigo **accent**.
 
-| Role (brush key) | Light | Dark | Use |
-|---|---|---|---|
-| `BackgroundBrush` | `#E8EBF1` | `#17171C` | page background (soft, not pure b/w) |
-| `ForegroundBrush` | `#1A1B22` | `#F3F3F7` | primary text/icons |
-| `CardBrush` / `PopoverBrush` | `#EDF0F6` | `#1F1F27` | raised surfaces, sheets |
-| `MutedBrush` | `#DEE2EB` | `#272730` | subtle fills, hover |
-| `MutedForegroundBrush` | `#646876` | `#9A9AA8` | secondary text |
-| `LineBrush` / `InputBrush` | black ~10% | white ~15% | thin borders, input borders |
-| `PrimaryBrush` | `#5B5BEF` | `#6D6DF5` | **accent** — primary button, accent text |
-| `PrimaryForegroundBrush` | `#FFFFFF` | `#FFFFFF` | text on accent |
-| `AccentBrush` | accent ~13% | accent ~19% | selected/active surfaces |
-| `RingBrush` | `#5B5BEF` | `#8385F7` | focus ring (accent) |
-| `DestructiveBrush` | `#DC2626` | `#EF4444` | delete |
+| Role (brush key) | Use |
+|---|---|
+| `BackgroundBrush` | page background |
+| `ForegroundBrush` | primary text / icons |
+| `CardBrush` / `PopoverBrush` | raised surfaces, sheets (on dark the card sits ≈ the page, lifted by its shadow + border) |
+| `MutedBrush` | subtle fills, hover, placeholder tiles |
+| `MutedForegroundBrush` | secondary text |
+| `LineBrush` / `InputBrush` | thin borders / input borders (alpha over the surface) |
+| `PrimaryBrush` | **accent** — primary button, accent text, focus-ring base |
+| `PrimaryForegroundBrush` | white text/icon on an accent or destructive fill |
+| `AccentBrush` | accent at low alpha — selected/active surfaces |
+| `RingBrush` | focus ring (accent) |
+| `DestructiveBrush` / `DestructiveForegroundBrush` | delete actions |
 
-The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — change the indigo here to recolour the whole UI.
+The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — change the indigo in `Tokens.axaml` to recolour the whole UI.
 
-- **Radius:** `RadiusSm` 6 · `RadiusMd` **10** (default) · `RadiusLg` 14 · `RadiusFull`.
+- **Radius:** `RadiusSm` 6 · `RadiusMd` 10 · `RadiusLg` 14 · `RadiusLgTop` (lg on top corners only — card covers) · `RadiusFull`. Buttons/cards use `RadiusLg`, list rows `RadiusMd`, pills/badges `RadiusFull`.
+- **Control heights** (the explicit size metric for buttons): `ControlHeight` 38 (default) · `ControlHeightSm` 28 · `ControlHeightLg` 48; the `sm`/`lg` classes set `Height`, the icon button is square at `ControlHeight`.
 - **Spacing:** 4 / 8 / 12 / 16 / 24 / 32 (`Space1`…`Space8`).
 - **Type:** Inter; `FontSizeBase` **14** (shadcn component default), xs 12 · sm 13 · lg 16 · xl 20 · 2xl 24.
   Headings: semibold, slightly tight tracking. Secondary text uses `MutedForegroundBrush`.
-- **Depth** (tuned per light/dark). The tactile look = a glossy **gradient fill** + **dark-only** shadows:
+- **Depth** (tuned per light/dark). The tactile look = a glossy **gradient fill** + box-shadows:
   - **Gloss fills carry the "light":** `PrimaryGradientBrush` / `SecondaryGradientBrush` /
     `DestructiveGradientBrush` — a bright top sheen → body → darker base gives buttons their glassy 3D look.
-  - **Box-shadows are DARK-only — never light.** Avalonia renders a colour fringe (a green hairline) on a
-    light-coloured box-shadow over a rounded corner (Avalonia #16010/#10539), so the highlight must come from
-    the gradient, not a light shadow. `ButtonRestShadow` = small even drop + soft dark inner base;
-    `ButtonPressedShadow` = dark inset (presses in); `ShadowRaised` = soft drop for cards; `ShadowInset` =
-    dark inset (recessed inputs); `ShadowMd` = overlays; `ShadowNone` = flat.
+  - **Box-shadows are dark-only** — the highlight/gloss comes from the gradient, not a light box-shadow.
+    `ButtonRestShadow` = small even drop + soft dark inner base; `ButtonPressedShadow` = dark inset (presses
+    *in*); `ShadowRaised` = soft drop for cards; `ShadowInset` = dark inset (recessed inputs); `ShadowMd` =
+    overlays; `ShadowNone` = flat. Keep outer drops small so they never clip.
+  - **🔒 RULE — a text/icon shadow, where used, is ALWAYS the inverse luminance of the text.** Dark text →
+    light shadow; light text → dark (black) shadow. **Never** same-luminance (light+light / dark+dark) — that's
+    blurry/unreadable. **Only apply it where the text sits on a *contrasting* fill** — i.e. white text on a
+    coloured button (primary/destructive), which uses the fixed-dark **`OnAccentTextShadowEffect`**. **Do not
+    apply it to neutral/near-background fills** (secondary/outline/ghost, list rows): a light emboss is
+    invisible on a near-white surface, so it can't be made consistent across themes (it would just add weight
+    in dark mode). ⚠️ When a shadow *does* need to flip per theme, swap the *entire* effect via
+    `DynamicResource` — `DynamicResource` on a sub-property *inside* a `DropShadowEffect` does **not**
+    re-resolve per theme (that was the earlier bug).
   - **`EdgeBrush`** = dark border crisping a coloured button's edge; **`SelectionBrush`** = text selection.
-    Keep outer drops small so they never clip.
 
 ## Components (inventory + specs)
 
 Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new ones under `Theme/Controls/`.
 
-- **Button** — variants `default` (accent fill), `secondary` (neutral **raised pill** — lighter than the
-  page, floats on its bevel), `outline` (border, flat), `ghost` (transparent, flat), `destructive` (red).
-  Sizes `sm` / default / `icon`. Solid variants sit raised (`ShadowSm`) and press *in* (`ShadowPressed`);
-  flat variants opt out (`ShadowNone`). Thin border, accent focus ring. **Replaces** the old ad-hoc
-  `accent` / `danger` / `overlay` styles.
-- **Card / Surface** — `CardBrush`, thin `LineBrush` border, radius lg, `ShadowRaised` (dual-tone bevel).
-- **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset` so it looks pressed into
-  the surface, thin border, accent focus ring, muted placeholder.
-- **Row** — list item (project / board / collection): transparent, hover `MutedBrush`, radius md, optional
-  trailing count or `⋯` action.
-- **Badge / Tag** — small; muted or solid. GIF badge, item counts.
+- **Pressable** (`PressableSurfaceTemplate`) — shared scaffold the tappable controls reuse: a `Border#root`
+  the press states transform (translate + `scale`) over a short transition, wrapping a **hit-transparent**
+  `ContentPresenter` (the fill is the single hover/hit surface). Button + Row reference it via `Template=`.
+- **Button** — variants `default` (accent fill), `secondary` (neutral **raised pill**), `outline` (border at
+  rest), `ghost` (bare), `destructive` (red). Sizes `sm` / default / `lg` set an explicit `Height`
+  (`ControlHeight*`); `icon` is square at `ControlHeight`. Solid variants sit raised (`ButtonRestShadow`) and
+  press *in* (`ButtonPressedShadow` + `scale(0.97)`; `ClipToBounds=False`). `ghost`/`outline` are flat at rest
+  and **lift into the secondary pill on hover**. Accent focus ring, inverse-luminance text shadow (locked rule
+  above). **Replaces** the old `accent` / `danger` / `overlay` styles.
+- **Switch** (`ToggleButton`, theme `HoardSwitch`) — a real on/off **slider switch**: a pill track that recolours
+  muted→accent with a knob that slides; no inner text (the label sits beside it).
+- **Card / Surface** — `CardBrush`, thin `LineBrush` border, radius lg, `ShadowRaised`. The **project-board
+  card** has a 3-up Pinterest **collage cover** (most-recent / median / oldest, rounded top via `RadiusLgTop`)
+  above the name / metadata / Open.
+- **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset`, thin border, accent focus
+  ring, muted placeholder.
+- **Row** (`ListBoxItem`, theme `HoardListItem`) — tappable list item (project / board / collection): bare at
+  rest, hover lifts into the raised pill, press sinks, `:selected` = accent tint. Used via a `ListBox`
+  `ItemContainerTheme`; replaces the old `Border.row` class.
+- **Badge / Tag** — small **floating** chip (gloss bevel + border + drop shadow): item counts, GIF tag.
 - **Separator**, **Sheet / Dialog** (card + `ShadowMd` + scrim), **Toast** (status messages).
 
 ## Icons
@@ -110,13 +133,16 @@ thickness ~1.5–2 scaled to size). Keep a NOTICE for the ISC licence. Initial s
 
 ## Layout & responsive
 
+- **Fluid reflow, real pixels (primary).** No global scaling. Screens lay out in real DIPs inside a
+  `ScrollViewer` and reflow by *actual* width — the **masonry grid spans the full window width and gains
+  columns as it widens** (columns = width ÷ `MasonryLayout.TargetColumnWidth`, ~200px → 2 on a phone, 6–8 on
+  desktop). This is the Pinterest model; the grid was already built for it (`MasonryPacker`).
 - **Breakpoints** (window / container width): compact `<600` (phone) · medium `600–1024` (tablet) ·
   expanded `≥1024` (desktop).
 - **Techniques** (Avalonia 12, no library): `OnFormFactor` for structural mobile/desktop differences;
   **container queries** (`Selector="Border[Width>=400]"`) for component-level reflow; a breakpoint view-model
-  observing window width for live changes; `ItemsRepeater` reflow for the grid (the masonry already does this
-  via `MasonryPacker`).
-- On expanded widths, centre content at a max width (~1100px). Touch targets ≥40px on compact.
+  observing window width for live changes; `ItemsRepeater`/masonry reflow for the grid.
+- Grid fills the viewport width edge-to-edge (no max-width cap); touch targets ≥40px on compact.
 
 ## Navigation
 

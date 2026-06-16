@@ -1,58 +1,134 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ctrl="using:Hoard.Desktop.Controls"
+        xmlns:inf="using:Hoard.Desktop.Infrastructure"
         x:Class="Hoard.Desktop.Views.GalleryWindow"
         Width="760" Height="900"
         RequestedThemeVariant="Dark"
         Background="{DynamicResource BackgroundBrush}"
         Title="Hoard — component gallery">
 
-    <DockPanel TextElement.Foreground="{DynamicResource ForegroundBrush}">
+    <DockPanel inf:FocusManagement.ClearFocusOnPointerPressed="True"
+               TextElement.Foreground="{DynamicResource ForegroundBrush}">
         <!-- Header + theme toggle -->
         <Border DockPanel.Dock="Top" Padding="24,18" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="*,Auto,Auto">
+            <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" Classes="h1" Text="Component gallery" VerticalAlignment="Center"/>
-                <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="outline sm" Content="Light"
-                        Click="OnLight" Margin="0,0,8,0"/>
-                <Button Grid.Column="2" Theme="{StaticResource HoardButton}" Classes="outline sm" Content="Dark" Click="OnDark"/>
+                <!-- Theme switch: sun (off/light) ─ switch ─ moon (on/dark); wired via OnThemeToggle. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <ctrl:Icon Data="{StaticResource Icon.sun}" Width="18" Height="18" Foreground="{DynamicResource MutedForegroundBrush}"/>
+                    <ToggleButton Theme="{StaticResource HoardSwitch}" IsChecked="True" IsCheckedChanged="OnThemeToggle"/>
+                    <ctrl:Icon Data="{StaticResource Icon.moon}" Width="18" Height="18" Foreground="{DynamicResource MutedForegroundBrush}"/>
+                </StackPanel>
             </Grid>
         </Border>
 
         <ScrollViewer>
             <StackPanel Margin="24" Spacing="28" MaxWidth="700" HorizontalAlignment="Left">
 
-                <!-- Buttons -->
-                <StackPanel Spacing="10">
+                <!-- Buttons: one row per size, each showing every variant (+ disabled) — full matrix. -->
+                <StackPanel Spacing="8">
+                    <StackPanel.Styles>
+                        <Style Selector="Button"><Setter Property="Margin" Value="0,0,8,8"/></Style>
+                    </StackPanel.Styles>
                     <TextBlock Classes="h2" Text="Buttons"/>
+
+                    <TextBlock Classes="muted" Text="Large (lg)"/>
                     <WrapPanel>
-                        <WrapPanel.Styles>
-                            <Style Selector="Button"><Setter Property="Margin" Value="0,0,8,8"/></Style>
-                        </WrapPanel.Styles>
+                        <Button Theme="{StaticResource HoardButton}" Classes="lg" Content="Primary"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary lg" Content="Secondary"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="outline lg" Content="Outline"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost lg" Content="Ghost"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="destructive lg" Content="Destructive"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="lg" IsEnabled="False" Content="Disabled"/>
+                    </WrapPanel>
+
+                    <TextBlock Classes="muted" Text="Default"/>
+                    <WrapPanel>
                         <Button Theme="{StaticResource HoardButton}" Content="Primary"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Secondary"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Outline"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Ghost"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Destructive"/>
-                        <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Small"/>
                         <Button Theme="{StaticResource HoardButton}" IsEnabled="False" Content="Disabled"/>
+                    </WrapPanel>
+
+                    <TextBlock Classes="muted" Text="Small (sm)"/>
+                    <WrapPanel>
+                        <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Primary"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary sm" Content="Secondary"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="outline sm" Content="Outline"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost sm" Content="Ghost"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="destructive sm" Content="Destructive"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="sm" IsEnabled="False" Content="Disabled"/>
+                    </WrapPanel>
+
+                    <TextBlock Classes="muted" Text="Icon"/>
+                    <WrapPanel>
+                        <WrapPanel.Styles>
+                            <Style Selector="ctrl|Icon"><Setter Property="Width" Value="18"/><Setter Property="Height" Value="18"/></Style>
+                        </WrapPanel.Styles>
                         <Button Theme="{StaticResource HoardButton}" Classes="icon">
-                            <ctrl:Icon Data="{StaticResource Icon.plus}" Width="18" Height="18"
-                                       Foreground="{DynamicResource PrimaryForegroundBrush}"/>
+                            <ctrl:Icon Data="{StaticResource Icon.plus}" Foreground="{DynamicResource PrimaryForegroundBrush}"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary icon">
+                            <ctrl:Icon Data="{StaticResource Icon.search}"/>
                         </Button>
                         <Button Theme="{StaticResource HoardButton}" Classes="outline icon">
-                            <ctrl:Icon Data="{StaticResource Icon.search}" Width="18" Height="18"/>
+                            <ctrl:Icon Data="{StaticResource Icon.folder}"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon">
+                            <ctrl:Icon Data="{StaticResource Icon.image}"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="destructive icon">
+                            <ctrl:Icon Data="{StaticResource Icon.trash-2}" Foreground="{DynamicResource DestructiveForegroundBrush}"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="icon" IsEnabled="False">
+                            <ctrl:Icon Data="{StaticResource Icon.plus}" Foreground="{DynamicResource PrimaryForegroundBrush}"/>
                         </Button>
                     </WrapPanel>
                 </StackPanel>
 
-                <!-- Card -->
+                <!-- Switch: real on/off toggle — knob slides + track recolours -->
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="h2" Text="Switch"/>
+                    <StackPanel Orientation="Horizontal" Spacing="20">
+                        <ToggleButton Theme="{StaticResource HoardSwitch}"/>
+                        <ToggleButton Theme="{StaticResource HoardSwitch}" IsChecked="True"/>
+                        <ToggleButton Theme="{StaticResource HoardSwitch}" IsEnabled="False"/>
+                        <ToggleButton Theme="{StaticResource HoardSwitch}" IsChecked="True" IsEnabled="False"/>
+                    </StackPanel>
+                    <!-- As used: switch + a label beside it. -->
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <ToggleButton Theme="{StaticResource HoardSwitch}" IsChecked="True"/>
+                        <TextBlock Text="Dark mode" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Card (project board): a 3-up collage cover + metadata -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Card"/>
-                    <Border Classes="card" MaxWidth="340" HorizontalAlignment="Left">
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="HoardTest1" FontWeight="SemiBold"/>
-                            <TextBlock Classes="muted" Text="78 images · 12 MB cache"/>
-                            <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Open" HorizontalAlignment="Left"/>
+                    <Border Classes="card" Padding="0" Width="240" HorizontalAlignment="Left">
+                        <StackPanel>
+                            <!-- Cover collage, Pinterest-style: big = most recent, then median (top), oldest (bottom).
+                                 Rounded-top via an inner clip Border so the card keeps its drop shadow. Tiles are
+                                 placeholders; real thumbnails bind in the launcher. -->
+                            <Border CornerRadius="{DynamicResource RadiusLgTop}" ClipToBounds="True">
+                                <Grid Height="150" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
+                                    <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}">
+                                        <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+                                    </Border>
+                                    <Border Grid.Column="2" Grid.Row="0" Background="{DynamicResource MutedBrush}"/>
+                                    <Border Grid.Column="2" Grid.Row="2" Background="{DynamicResource MutedBrush}"/>
+                                </Grid>
+                            </Border>
+                            <StackPanel Margin="14,12" Spacing="8">
+                                <TextBlock Text="HoardTest1" FontWeight="SemiBold"/>
+                                <TextBlock Classes="muted" Text="78 images · 12 MB cache"/>
+                                <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Open" HorizontalAlignment="Left"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -66,33 +142,34 @@
                              PlaceholderText="Search title, description…"/>
                 </StackPanel>
 
-                <!-- Rows -->
+                <!-- Rows — a real selectable, keyboard-navigable ListBox (hover / press / selected states). -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Rows"/>
-                    <StackPanel MaxWidth="360" HorizontalAlignment="Left">
-                        <Border Classes="row selected">
+                    <ListBox ItemContainerTheme="{StaticResource HoardListItem}" SelectedIndex="0"
+                             MaxWidth="360" HorizontalAlignment="Left"
+                             Background="Transparent" BorderThickness="0" Padding="0">
+                        <ListBoxItem>
                             <Grid ColumnDefinitions="Auto,*,Auto">
-                                <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.folder}" Width="18" Height="18"
-                                           Margin="0,0,10,0" Foreground="{DynamicResource PrimaryBrush}"/>
-                                <TextBlock Grid.Column="1" Classes="accent" Text="Favourites (selected)" VerticalAlignment="Center"/>
+                                <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.folder}" Width="18" Height="18" Margin="0,0,10,0"/>
+                                <TextBlock Grid.Column="1" Text="Favourites" VerticalAlignment="Center"/>
                                 <Border Grid.Column="2" Classes="badge"><TextBlock Classes="muted" Text="12"/></Border>
                             </Grid>
-                        </Border>
-                        <Border Classes="row">
+                        </ListBoxItem>
+                        <ListBoxItem>
                             <Grid ColumnDefinitions="Auto,*,Auto">
                                 <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.folder}" Width="18" Height="18" Margin="0,0,10,0"/>
                                 <TextBlock Grid.Column="1" Text="animation-references" VerticalAlignment="Center"/>
                                 <Border Grid.Column="2" Classes="badge"><TextBlock Classes="muted" Text="37"/></Border>
                             </Grid>
-                        </Border>
-                        <Border Classes="row">
+                        </ListBoxItem>
+                        <ListBoxItem>
                             <Grid ColumnDefinitions="Auto,*,Auto">
                                 <ctrl:Icon Grid.Column="0" Data="{StaticResource Icon.image}" Width="18" Height="18" Margin="0,0,10,0"/>
                                 <TextBlock Grid.Column="1" Text="All images" VerticalAlignment="Center"/>
                                 <Border Grid.Column="2" Classes="badge"><TextBlock Classes="muted" Text="78"/></Border>
                             </Grid>
-                        </Border>
-                    </StackPanel>
+                        </ListBoxItem>
+                    </ListBox>
                 </StackPanel>
 
                 <!-- Icons -->

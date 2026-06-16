@@ -1,0 +1,62 @@
+<!--
+  ListItem — a tappable list row (project / board / collection) built as a real ListBoxItem, so it carries
+  native hover / press / selected states + keyboard selection (see DESIGN.md). Flat at rest with a transparent
+  1px border (so selecting never shifts layout); hover lifts into the buttons' raised pill; press sinks in
+  (inset bevel + a 1px nudge); selected is an accent tint, pressed-in.
+  Apply via a ListBox's ItemContainerTheme="{StaticResource HoardListItem}" (or Theme= on a ListBoxItem).
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ControlTheme x:Key="HoardListItem" TargetType="ListBoxItem">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusMd}"/>
+        <Setter Property="Padding" Value="12"/>
+        <Setter Property="Margin" Value="0,2"/>
+        <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusAdorner" Value="{x:Null}"/>
+        <!-- Press nudges the row down a px; don't clip it to the bounds. -->
+        <Setter Property="ClipToBounds" Value="False"/>
+        <!-- Shared pressable-surface scaffold (Border#root + hit-transparent content + press transition). -->
+        <Setter Property="Template" Value="{StaticResource PressableSurfaceTemplate}"/>
+
+        <!-- Hover: raised pill (same glossy bevel as the buttons). -->
+        <Style Selector="^:pointerover /template/ Border#root">
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
+        </Style>
+        <!-- Press: sink in (inset bevel + 1px nudge). Must follow hover to win at equal specificity. -->
+        <Style Selector="^:pressed /template/ Border#root">
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
+            <Setter Property="RenderTransform" Value="translate(0px,1px) scale(1)"/>
+        </Style>
+        <!-- Selected: accent tint, pressed-in. -->
+        <Style Selector="^:selected /template/ Border#root">
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
+        </Style>
+        <Style Selector="^:selected:pointerover /template/ Border#root">
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
+        </Style>
+        <!-- Selected + pressed: keep the accent, add the sink. Must follow selected:pointerover to win. -->
+        <Style Selector="^:selected:pressed /template/ Border#root">
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
+            <Setter Property="RenderTransform" Value="translate(0px,1px) scale(1)"/>
+        </Style>
+
+        <Style Selector="^:disabled">
+            <Setter Property="Opacity" Value="0.45"/>
+        </Style>
+    </ControlTheme>
+</ResourceDictionary>

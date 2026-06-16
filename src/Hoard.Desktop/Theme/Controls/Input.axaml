@@ -54,8 +54,10 @@
             </ControlTemplate>
         </Setter>
 
-        <Style Selector="^:focus-visible /template/ Border#root">
-            <Setter Property="BorderBrush" Value="{DynamicResource RingBrush}"/>
+        <!-- Focused (clicked or tabbed): primary-tinted border + an indigo glow in the recessed bevel. -->
+        <Style Selector="^:focus /template/ Border#root">
+            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource InputFocusShadow}"/>
         </Style>
         <Style Selector="^:disabled">
             <Setter Property="Opacity" Value="0.5"/>

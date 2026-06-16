@@ -17,6 +17,8 @@
     <StreamGeometry x:Key="Icon.folder">M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z</StreamGeometry>
     <StreamGeometry x:Key="Icon.more-horizontal">M11 12a1 1 0 1 0 2 0 a1 1 0 1 0-2 0 M18 12a1 1 0 1 0 2 0 a1 1 0 1 0-2 0 M4 12a1 1 0 1 0 2 0 a1 1 0 1 0-2 0</StreamGeometry>
     <StreamGeometry x:Key="Icon.download">M12 15V3 M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5</StreamGeometry>
+    <StreamGeometry x:Key="Icon.sun">M8 12 A4 4 0 1 0 16 12 A4 4 0 1 0 8 12 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M6.34 17.66l-1.41 1.41 M19.07 4.93l-1.41 1.41</StreamGeometry>
+    <StreamGeometry x:Key="Icon.moon">M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z</StreamGeometry>
 
     <!-- The Icon control's look: a 24-grid Path stroked with Foreground, scaled to the control size. -->
     <ControlTheme x:Key="{x:Type ctrl:Icon}" TargetType="ctrl:Icon">

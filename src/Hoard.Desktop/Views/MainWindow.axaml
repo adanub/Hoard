@@ -6,12 +6,15 @@
         mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
         x:Class="Hoard.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
+        Background="{DynamicResource BackgroundBrush}"
         Title="Hoard — Media Archive" Width="1100" Height="700">
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <!-- The shell hosts one page at a time; ViewLocator maps the page VM to its View. -->
+    <!-- Fluid reflow (Pinterest-style): pages lay out in real pixels and scroll naturally; the masonry grid
+         gains columns as the window widens. The shell hosts one page at a time; ViewLocator maps the page VM
+         to its View. -->
     <ContentControl Content="{Binding CurrentPage}"/>
 </Window>

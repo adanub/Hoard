@@ -1,8 +1,9 @@
 <!--
-  Button — glossy, tactile, shadcn-meets-neumorphism (see DESIGN.md). The "light" is a gloss gradient (never
-  a light box-shadow — those fringe). On press the button shrinks slightly and the label nudges down to match
-  the bevel insetting. Text shadow flips with the text colour: dark shadow under light text, light emboss
-  under dark text. Opt-in via Theme="{StaticResource HoardButton}"; variants/sizes are classes:
+  Button — glossy, tactile, shadcn-meets-neumorphism (see DESIGN.md). The "light" comes from a gloss gradient
+  fill; box-shadows are dark-only. On press the button shrinks slightly (scale) and the bevel insets.
+  Text shadow only on white-on-colour text (primary/destructive) and always dark; neutral variants
+  (secondary/outline/ghost) carry no text shadow — see the locked inverse-luminance rule in DESIGN.md.
+  Opt-in via Theme="{StaticResource HoardButton}"; variants/sizes are classes:
     Classes="secondary | outline | ghost | destructive"   and   Classes="sm | icon"
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
@@ -14,7 +15,9 @@
         <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="CornerRadius" Value="{DynamicResource RadiusLg}"/>
-        <Setter Property="Padding" Value="16,9"/>
+        <!-- Height is the size metric (fixed); horizontal padding sets width, content centres vertically. -->
+        <Setter Property="Height" Value="{DynamicResource ControlHeight}"/>
+        <Setter Property="Padding" Value="16,0"/>
         <Setter Property="FontSize" Value="{DynamicResource FontSizeBase}"/>
         <Setter Property="FontWeight" Value="Medium"/>
         <Setter Property="HorizontalContentAlignment" Value="Center"/>
@@ -23,42 +26,27 @@
         <Setter Property="FocusAdorner" Value="{x:Null}"/>
         <!-- Don't clip the press transform (the button nudges down a px on press) to the control bounds. -->
         <Setter Property="ClipToBounds" Value="False"/>
-        <Setter Property="Template">
-            <ControlTemplate>
-                <Border Name="root" Background="{TemplateBinding Background}"
-                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                        CornerRadius="{TemplateBinding CornerRadius}"
-                        RenderTransform="translate(0px,0px) scale(1)" RenderTransformOrigin="50%,50%">
-                    <Border.Transitions>
-                        <Transitions>
-                            <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.08" Easing="CubicEaseOut"/>
-                        </Transitions>
-                    </Border.Transitions>
-                    <ContentPresenter Name="PART_ContentPresenter"
-                                      Content="{TemplateBinding Content}"
-                                      ContentTemplate="{TemplateBinding ContentTemplate}"
-                                      Padding="{TemplateBinding Padding}"
-                                      HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
-                </Border>
-            </ControlTemplate>
-        </Setter>
+        <!-- Shared pressable-surface scaffold (Border#root + hit-transparent content + press transition). -->
+        <Setter Property="Template" Value="{StaticResource PressableSurfaceTemplate}"/>
 
         <!-- Rest elevation (gloss bevel + small even drop). Set via style so flat variants can override. -->
         <Style Selector="^ /template/ Border#root">
             <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
         </Style>
 
-        <!-- Text shadow: dark under light text (primary/destructive default), … -->
+        <!-- Text shadow = inverse luminance of the text (locked rule, see DESIGN.md). White-on-colour text
+             (primary/destructive, light in both themes) → always-dark shadow. -->
         <Style Selector="^ /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Effect">
-                <DropShadowEffect BlurRadius="0" OffsetX="0" OffsetY="1" Color="#000000" Opacity="0.5"/>
-            </Setter>
+            <Setter Property="Effect" Value="{DynamicResource OnAccentTextShadowEffect}"/>
         </Style>
-        <!-- … light emboss under dark text (neutral variants), so it doesn't muddy legibility. -->
+        <!-- Neutral variants sit on a near-background fill, so an inverse-luminance shadow is invisible in
+             light mode (a light emboss can't show on a near-white surface) and only adds apparent weight in
+             dark mode. The consistent choice across themes is therefore no text shadow on these.
+             NOTE: this override must stay AFTER the base setter above and keep its higher specificity (the
+             class condition) — clearing the Effect here is what prevents a dark shadow under dark neutral
+             text; reordering or weakening this selector silently reintroduces that regression. -->
         <Style Selector="^.secondary /template/ ContentPresenter#PART_ContentPresenter, ^.outline /template/ ContentPresenter#PART_ContentPresenter, ^.ghost /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Effect">
-                <DropShadowEffect BlurRadius="0" OffsetX="0" OffsetY="1" Color="#FFFFFF" Opacity="0.6"/>
-            </Setter>
+            <Setter Property="Effect" Value="{x:Null}"/>
         </Style>
 
         <!-- Press: the whole button face sinks down + shrinks (label rides along, staying centred) and the
@@ -88,8 +76,11 @@
             <Setter Property="Background" Value="{DynamicResource DestructiveGradientBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource DestructiveForegroundBrush}"/>
         </Style>
+        <!-- Outline & ghost share one behaviour: bare and flat at rest, then on hover they lift into the
+             SAME glossy, bevelled neutral as Secondary (gradient fill + border + raised bevel). The only
+             difference is outline keeps a border at rest; ghost shows none until it lifts. -->
         <Style Selector="^.outline">
-            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
         </Style>
@@ -99,25 +90,41 @@
             <Setter Property="BorderBrush" Value="Transparent"/>
         </Style>
 
-        <!-- outline/ghost are flat (no raised bevel) and fill on hover instead of dimming -->
+        <!-- Flat at rest (no bevel). -->
         <Style Selector="^.outline /template/ Border#root, ^.ghost /template/ Border#root">
             <Setter Property="BoxShadow" Value="{DynamicResource ShadowNone}"/>
         </Style>
-        <Style Selector="^.outline:pressed /template/ Border#root, ^.ghost:pressed /template/ Border#root">
-            <Setter Property="BoxShadow" Value="{DynamicResource ShadowNone}"/>
+        <!-- Hover: become Secondary — glossy gradient fill, border, raised bevel (no dimming). -->
+        <Style Selector="^.outline:pointerover, ^.ghost:pointerover">
+            <Setter Property="Background" Value="{DynamicResource SecondaryGradientBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
         </Style>
         <Style Selector="^.outline:pointerover /template/ Border#root, ^.ghost:pointerover /template/ Border#root">
-            <Setter Property="Background" Value="{DynamicResource MutedBrush}"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
             <Setter Property="Opacity" Value="1"/>
         </Style>
-
-        <!-- Sizes -->
-        <Style Selector="^.sm">
-            <Setter Property="Padding" Value="12,6"/>
-            <Setter Property="FontSize" Value="{DynamicResource FontSizeSm}"/>
+        <!-- Press: inset like the other raised buttons. Must follow the hover rule above so it wins at equal
+             specificity (both are class + pseudo) when pressed-and-hovered. -->
+        <Style Selector="^.outline:pressed /template/ Border#root, ^.ghost:pressed /template/ Border#root">
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
         </Style>
+
+        <!-- Sizes: each sets an explicit Height (the size metric); padding/font fit within. -->
+        <Style Selector="^.sm">
+            <Setter Property="Height" Value="{DynamicResource ControlHeightSm}"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="FontSize" Value="{DynamicResource FontSizeXs}"/>
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusMd}"/>
+        </Style>
+        <Style Selector="^.lg">
+            <Setter Property="Height" Value="{DynamicResource ControlHeightLg}"/>
+            <Setter Property="Padding" Value="20,0"/>
+            <Setter Property="FontSize" Value="{DynamicResource FontSizeLg}"/>
+        </Style>
+        <!-- Icon: square at the default height. -->
         <Style Selector="^.icon">
-            <Setter Property="Padding" Value="9"/>
+            <Setter Property="Width" Value="{DynamicResource ControlHeight}"/>
+            <Setter Property="Padding" Value="0"/>
         </Style>
     </ControlTheme>
 </ResourceDictionary>

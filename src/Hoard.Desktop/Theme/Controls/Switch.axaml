@@ -1,0 +1,62 @@
+<!--
+  Switch — a real on/off toggle (not a recoloured button): a pill track with a knob that slides and the track
+  that recolours to the accent when on, so state is obvious at a glance (see DESIGN.md). Built on ToggleButton
+  (click toggles :checked) with a switch-shaped template. No label inside — put the label beside it.
+  Opt-in via Theme="{StaticResource HoardSwitch}".
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ControlTheme x:Key="HoardSwitch" TargetType="ToggleButton">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusAdorner" Value="{x:Null}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <!-- Track is the single hit surface; the knob is hit-transparent (see CLAUDE.md). -->
+                <Border Name="track" Width="44" Height="24" CornerRadius="{DynamicResource RadiusFull}"
+                        Background="{DynamicResource MutedBrush}"
+                        BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                        BoxShadow="{DynamicResource ShadowInset}">
+                    <Border.Transitions>
+                        <Transitions>
+                            <BrushTransition Property="Background" Duration="0:0:0.12"/>
+                        </Transitions>
+                    </Border.Transitions>
+                    <Border Name="knob" Width="18" Height="18" CornerRadius="{DynamicResource RadiusFull}"
+                            HorizontalAlignment="Left" VerticalAlignment="Center" Margin="3,0"
+                            Background="{DynamicResource PrimaryForegroundBrush}"
+                            BoxShadow="{DynamicResource ShadowRaised}"
+                            IsHitTestVisible="False"
+                            RenderTransform="translateX(0px)" RenderTransformOrigin="0%,0%">
+                        <Border.Transitions>
+                            <Transitions>
+                                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.13" Easing="CubicEaseOut"/>
+                            </Transitions>
+                        </Border.Transitions>
+                    </Border>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+
+        <!-- On: track goes accent, knob slides to the right. -->
+        <Style Selector="^:checked /template/ Border#track">
+            <Setter Property="Background" Value="{DynamicResource PrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+        </Style>
+        <Style Selector="^:checked /template/ Border#knob">
+            <!-- 18px travel = trackWidth 44 − 2×border 1 − knob 18 − 2×margin 3; gap stays symmetric (3px) both states. -->
+            <Setter Property="RenderTransform" Value="translateX(18px)"/>
+        </Style>
+
+        <Style Selector="^:pointerover /template/ Border#track">
+            <Setter Property="Opacity" Value="0.92"/>
+        </Style>
+        <Style Selector="^:disabled">
+            <Setter Property="Opacity" Value="0.45"/>
+        </Style>
+        <Style Selector="^:focus-visible /template/ Border#track">
+            <Setter Property="BorderBrush" Value="{DynamicResource RingBrush}"/>
+        </Style>
+    </ControlTheme>
+</ResourceDictionary>

@@ -1,0 +1,34 @@
+<!--
+  Pressable surface — the one shared template for tappable controls (Button, the list Row, …). A Border#root
+  that the press states transform (translate + scale) with a short transition, wrapping a hit-transparent
+  ContentPresenter so the fill Border is the SINGLE hover/press surface — otherwise the content (text/icon) is
+  its own hit target and dragging across the content↔fill boundary flickers :pointerover/:pressed (see CLAUDE.md).
+
+  Type-agnostic: every binding is a ContentControl property, so Button and ListBoxItem reference the same copy
+  (Template="{StaticResource PressableSurfaceTemplate}") and each theme supplies its own fills + state styles
+  (which target /template/ Border#root). Keep the rest transform's op list (translate + scale) matching what
+  the press states set, so the TransformOperationsTransition interpolates rather than snaps.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ControlTemplate x:Key="PressableSurfaceTemplate" TargetType="ContentControl">
+        <Border Name="root" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                RenderTransform="translate(0px,0px) scale(1)" RenderTransformOrigin="50%,50%">
+            <Border.Transitions>
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.08" Easing="CubicEaseOut"/>
+                </Transitions>
+            </Border.Transitions>
+            <ContentPresenter Name="PART_ContentPresenter"
+                              Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Padding="{TemplateBinding Padding}"
+                              IsHitTestVisible="False"
+                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
+        </Border>
+    </ControlTemplate>
+</ResourceDictionary>

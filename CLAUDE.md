@@ -106,9 +106,6 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   a token if one's missing. New components go under `Theme/Controls/` and into the dev component gallery.
 - The token layer exists but isn't wired into `App.axaml` yet (still `FluentTheme`); the existing
   `accent`/`danger`/`overlay` button styles are placeholders the token-driven Button variants will replace.
-- **Art/material assets follow `ASSETS.md`.** Committed + embedded under
-  `src/Hoard.Desktop/Assets/Materials/<Name>/`, each with a data-driven `material.json` manifest (no hardcoded
-  file names). Material/shader rendering code lives in `Hoard.Desktop/Rendering/` (Skia-specific; Core stays neutral).
 
 ## Working in this repo (environment realities)
 
@@ -120,7 +117,11 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); Fluent `Button`
   backgrounds live on the template's `ContentPresenter`, so style `Button.<class> /template/ ContentPresenter#PART_ContentPresenter`
   across states (`:pointerover`/`:pressed`/`:disabled`) rather than setting `Background` directly — see the
-  `overlay`/`danger` button styles. **Grid order is by Pinterest pin id (`SourceId`), descending** —
+  `overlay`/`danger` button styles. **In any custom interactive control template, make the inner
+  `ContentPresenter`/content `IsHitTestVisible="False"`** so the fill `Border` is the *single* hover/hit
+  surface — otherwise the content (text/icon) is its own hit target and dragging across the content↔fill
+  boundary fires enter/leave that flickers the control's `:pointerover`/`:pressed` (the fill `Border` must keep
+  a hit-testable background, even `Transparent`). See `Theme/Controls/Button.axaml`. **Grid order is by Pinterest pin id (`SourceId`), descending** —
   `LibraryService` fetches in `Id` order then sorts in memory by the numeric pin id, so order is deterministic
   and survives re-import/restore (`Id` is the stable tiebreak; pinless rows sort last). The sidecar carries
   **no per-pin date** (`CreatedAt` is null for Pinterest — only board-level timestamps exist), and SQLite
