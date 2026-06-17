@@ -1,14 +1,16 @@
-using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Hoard.Core.Ingest;
 using Hoard.Core.Library;
 using Hoard.Core.Projects;
+using Hoard.Desktop.Navigation;
+using Hoard.Desktop.Services;
 
 namespace Hoard.Desktop.ViewModels;
 
 /// <summary>
-/// Shell that hosts one page at a time: the project launcher, then the in-project library. Owns the
-/// navigation between them so the two page view models stay independent.
+/// Shell that hosts one page at a time via a <see cref="NavigationService"/> back-stack: the project
+/// launcher (root), then the in-project library, and (later slices) board + image-detail pushed above it.
+/// Acts as the page factory so the page view models stay independent and don't construct each other.
 /// </summary>
 public partial class MainWindowViewModel : ViewModelBase
 {
@@ -17,6 +19,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly CurationService _curation;
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
+
+    /// <summary>The shell binds <c>Navigation.Current</c> to show the active page.</summary>
+    public NavigationService Navigation { get; } = new();
+
+    /// <summary>App-wide transient toasts; the shell overlays a <c>ToastHost</c> bound to this.</summary>
+    public ToastService ToastService { get; } = new();
 
     public MainWindowViewModel(
         IngestService ingest, LibraryService library, CurationService curation,
@@ -33,11 +41,11 @@ public partial class MainWindowViewModel : ViewModelBase
     // Design-time constructor for the XAML previewer.
     public MainWindowViewModel() : this(null!, null!, null!, null!, null!) { }
 
-    [ObservableProperty] private ViewModelBase? _currentPage;
-
+    // The launcher is always the root, so opening/switching a project resets the stack to a fresh launcher
+    // (reloading the recents list). Opening a project pushes the library above it.
     private void ShowLauncher()
-        => CurrentPage = new ProjectLauncherViewModel(_projects, _dbFactory, onProjectOpened: ShowLibrary);
+        => Navigation.Reset(new ProjectLauncherViewModel(_projects, _dbFactory, ToastService, onProjectOpened: ShowLibrary));
 
     private void ShowLibrary()
-        => CurrentPage = new LibraryViewModel(_ingest, _library, _curation, _projects, requestSwitchProject: ShowLauncher);
+        => Navigation.Push(new LibraryViewModel(_ingest, _library, _curation, _projects, requestSwitchProject: ShowLauncher));
 }

@@ -27,6 +27,7 @@
             <SolidColorBrush x:Key="DestructiveBrush" Color="#DC2626"/>
             <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FFFFFF"/>
             <SolidColorBrush x:Key="SelectionBrush" Color="#B35B5BEF"/>  <!-- text selection (accent ~70%) -->
+            <SolidColorBrush x:Key="ScrimBrush" Color="#59000000"/>      <!-- modal sheet backdrop (~35% black) -->
 
             <!-- Glossy fills: a bright sheen sliver at the very top, then the body, then a darker base. -->
             <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
@@ -66,6 +67,7 @@
             <SolidColorBrush x:Key="DestructiveBrush" Color="#EF4444"/>
             <SolidColorBrush x:Key="DestructiveForegroundBrush" Color="#FFFFFF"/>
             <SolidColorBrush x:Key="SelectionBrush" Color="#B36D6DF5"/>  <!-- text selection (accent ~70%) -->
+            <SolidColorBrush x:Key="ScrimBrush" Color="#99000000"/>      <!-- modal sheet backdrop (~60% black on dark) -->
 
             <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
                 <GradientStop Offset="0" Color="#9090FB"/><GradientStop Offset="0.10" Color="#7E7EF8"/><GradientStop Offset="1" Color="#5F5FF2"/>

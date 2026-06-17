@@ -1,21 +1,37 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Core.Projects;
+using Hoard.Desktop.Services;
 
 namespace Hoard.Desktop.ViewModels;
 
-/// <summary>A recent project folder, shown in the launcher list (with its live thumbnail-cache size).</summary>
+/// <summary>Marker for the leading “+ New project” tile in the grid (rendered by its own data template).</summary>
+public sealed class NewProjectTile : ViewModelBase
+{
+    public static readonly NewProjectTile Instance = new();
+    private NewProjectTile() { }
+}
+
+/// <summary>
+/// A recent project, shown as a board card: name, cache size, and a 3-up collage cover built from the
+/// project's cached thumbnails (read straight off disk — no DB is opened).
+/// </summary>
 public partial class RecentProjectRef : ViewModelBase
 {
     public string Path { get; }
     public string Name { get; }
 
-    [ObservableProperty] private string _cacheSizeText = "Cache: …";
+    [ObservableProperty] private string _cacheSizeText = "Loading…";
+    [ObservableProperty] private Bitmap? _thumb0;
+    [ObservableProperty] private Bitmap? _thumb1;
+    [ObservableProperty] private Bitmap? _thumb2;
 
     public RecentProjectRef(string path, string name)
     {
@@ -25,51 +41,65 @@ public partial class RecentProjectRef : ViewModelBase
 }
 
 /// <summary>
-/// The start screen: pick a recent project, open an existing project folder, or create a new
-/// project by name + location (the folder is created for you). Raises a callback once a project
-/// is open so the shell can switch to the library view.
+/// The Projects screen: a grid of project-board cards led by a “+ New project” tile. Opening a card (or
+/// creating/adopting a project via the new-project sheet) raises a callback so the shell pushes the library.
+/// Per-project management (open / clear cache / remove / delete) acts on a specific card; feedback is toasted.
 /// </summary>
 public partial class ProjectLauncherViewModel : ViewModelBase
 {
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
+    private readonly ToastService _toasts;
     private readonly Action _onProjectOpened;
 
     public ProjectLauncherViewModel(
-        ProjectManager projects, ProjectDbContextFactory dbFactory, Action onProjectOpened)
+        ProjectManager projects, ProjectDbContextFactory dbFactory, ToastService toasts, Action onProjectOpened)
     {
         _projects = projects;
         _dbFactory = dbFactory;
+        _toasts = toasts;
         _onProjectOpened = onProjectOpened;
 
+        Tiles.Add(NewProjectTile.Instance);
         if (projects is not null) // skip in the design-time (null) ctor
         {
             foreach (var path in projects.RecentProjects)
-                RecentProjects.Add(new RecentProjectRef(path, new DirectoryInfo(path).Name));
-            _ = LoadCacheSizesAsync();
+                Tiles.Add(new RecentProjectRef(path, new DirectoryInfo(path).Name));
+            _ = LoadRecentsAsync();
         }
     }
 
     // Design-time constructor for the XAML previewer.
-    public ProjectLauncherViewModel() : this(null!, null!, () => { }) { }
+    public ProjectLauncherViewModel() : this(null!, null!, new ToastService(), () => { }) { }
 
-    public ObservableCollection<RecentProjectRef> RecentProjects { get; } = new();
+    /// <summary>The “+ New” tile followed by one card per recent project (both rendered in the same grid).</summary>
+    public ObservableCollection<ViewModelBase> Tiles { get; } = new();
 
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(OpenRecentCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ForgetCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ClearCacheCommand))]
-    private RecentProjectRef? _selectedRecent;
+    private IEnumerable<RecentProjectRef> Recents => Tiles.OfType<RecentProjectRef>();
 
+    // ── New-project sheet ────────────────────────────────────────────────────
+
+    [ObservableProperty] private bool _isNewProjectSheetOpen;
     [ObservableProperty] private string _newProjectName = "";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(CreateProjectCommand))]
     private string _newProjectLocation = "";
 
-    [ObservableProperty] private string _statusText = "";
+    /// <summary>An error from creating/opening shown inside the sheet (distinct from the live name validation).</summary>
+    [ObservableProperty] private string? _sheetError;
 
-    public bool HasRecents => RecentProjects.Count > 0;
+    [RelayCommand]
+    private void OpenNewProjectSheet()
+    {
+        NewProjectName = "";
+        NewProjectLocation = "";
+        SheetError = null;
+        IsNewProjectSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseNewProjectSheet() => IsNewProjectSheetOpen = false;
 
     /// <summary>A name validation message to show under the field, or null when the name is fine.</summary>
     public string? NameError => string.IsNullOrEmpty(NewProjectName) ? null : HoardProject.ValidateName(NewProjectName);
@@ -95,38 +125,131 @@ public partial class ProjectLauncherViewModel : ViewModelBase
     /// <summary>Called by the view's folder picker to set the parent location for a new project.</summary>
     public void SetNewProjectLocation(string parentFolder) => NewProjectLocation = parentFolder;
 
-    [RelayCommand(CanExecute = nameof(CanOpenRecent))]
-    private Task OpenRecentAsync() => OpenAsync(SelectedRecent!.Path);
-
-    private bool CanOpenRecent() => SelectedRecent is not null;
-
-    /// <summary>Clear the selected project's thumbnail cache (regenerated on demand, so this is safe).</summary>
-    [RelayCommand(CanExecute = nameof(CanOpenRecent))]
-    private async Task ClearCacheAsync()
+    [RelayCommand(CanExecute = nameof(CanCreate))]
+    private async Task CreateProjectAsync()
     {
-        var target = SelectedRecent;
-        if (target is null) return;
-        var dir = HoardProject.ThumbnailsDir(target.Path);
+        try
+        {
+            var folder = Path.Combine(NewProjectLocation, NewProjectName.Trim());
+            _projects.Create(folder, NewProjectName.Trim());
+            await _dbFactory.EnsureCreatedAsync();
+            IsNewProjectSheetOpen = false;
+            _onProjectOpened();
+        }
+        catch (Exception ex)
+        {
+            SheetError = "Couldn't create project: " + ex.Message;
+        }
+    }
+
+    private bool CanCreate() =>
+        !string.IsNullOrWhiteSpace(NewProjectLocation) && HoardProject.ValidateName(NewProjectName) is null;
+
+    /// <summary>Open an existing project folder chosen via the sheet's folder picker.</summary>
+    public async Task OpenExistingAsync(string folder)
+    {
+        var err = await TryOpenAsync(folder);
+        if (err is null) IsNewProjectSheetOpen = false;
+        else SheetError = "Couldn't open project: " + err;
+    }
+
+    // ── Per-project actions (card body + the ⋯ menu) ─────────────────────────
+
+    /// <summary>Open the project behind a card (the card body and the menu's "Open" both call this).</summary>
+    public async Task OpenProjectAsync(RecentProjectRef r)
+    {
+        var err = await TryOpenAsync(r.Path);
+        if (err is not null) _toasts.Show($"Couldn't open “{r.Name}”: {err}", isError: true);
+    }
+
+    private async Task<string?> TryOpenAsync(string folder)
+    {
+        try
+        {
+            _projects.Open(folder);
+            await _dbFactory.EnsureCreatedAsync();
+            _onProjectOpened();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>Clear a project's thumbnail cache (regenerated on demand, so this is safe).</summary>
+    public async Task ClearCacheAsync(RecentProjectRef r)
+    {
+        var dir = HoardProject.ThumbnailsDir(r.Path);
         var freed = await Task.Run(() =>
         {
             var size = DirectorySize(dir);
             ClearDirectory(dir);
             return size;
         });
-        target.CacheSizeText = "Cache: " + ByteFormat.Format(0);
-        StatusText = $"Cleared {ByteFormat.Format(freed)} of thumbnails for “{target.Name}” " +
-                     "(they rebuild automatically as you browse).";
+        r.CacheSizeText = ByteFormat.Format(0) + " cache";
+        r.Thumb0 = r.Thumb1 = r.Thumb2 = null; // the collage came from those thumbnails
+        _toasts.Show($"Cleared {ByteFormat.Format(freed)} of thumbnails for “{r.Name}” (they rebuild as you browse).");
     }
 
-    private async Task LoadCacheSizesAsync()
+    /// <summary>Remove a project from the list without deleting any files.</summary>
+    public void Forget(RecentProjectRef r)
     {
-        // Size each project's cache concurrently (independent directory walks, off the UI thread)...
-        var results = await Task.WhenAll(RecentProjects.ToArray().Select(item =>
-            Task.Run(() => (item, size: DirectorySize(HoardProject.ThumbnailsDir(item.Path))))));
+        _projects.RemoveFromRecents(r.Path);
+        Tiles.Remove(r);
+        _toasts.Show($"Removed “{r.Name}” from the list (files left untouched).");
+    }
 
-        // ...then update the labels back on the UI thread (the await resumes here).
-        foreach (var (item, size) in results)
-            item.CacheSizeText = "Cache: " + ByteFormat.Format(size);
+    /// <summary>Permanently delete a project's folder. Destructive — the view confirms first.</summary>
+    public void DeleteFromDisk(RecentProjectRef r)
+    {
+        try
+        {
+            _projects.DeleteProject(r.Path);
+            Tiles.Remove(r);
+            _toasts.Show($"Deleted “{r.Name}” and all its data.");
+        }
+        catch (Exception ex)
+        {
+            _toasts.Show($"Couldn't delete “{r.Name}”: {ex.Message}", isError: true);
+        }
+    }
+
+    // ── Loading recents (cache size + collage thumbnails), off the UI thread ──
+
+    private async Task LoadRecentsAsync()
+    {
+        foreach (var r in Recents.ToArray())
+        {
+            var (size, thumbs) = await Task.Run(() =>
+            {
+                var dir = HoardProject.ThumbnailsDir(r.Path);
+                var sz = DirectorySize(dir);
+                var files = Directory.Exists(dir)
+                    ? Directory.EnumerateFiles(dir, "*.png").Take(3).ToList()
+                    : new List<string>();
+                return (sz, files.Select(LoadThumbnail).ToList());
+            });
+
+            // Back on the UI thread (the await resumed here): publish to the card.
+            r.CacheSizeText = ByteFormat.Format(size) + " cache";
+            if (thumbs.Count > 0) r.Thumb0 = thumbs[0];
+            if (thumbs.Count > 1) r.Thumb1 = thumbs[1];
+            if (thumbs.Count > 2) r.Thumb2 = thumbs[2];
+        }
+    }
+
+    private static Bitmap? LoadThumbnail(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Bitmap.DecodeToWidth(stream, 240); // card width; the cached PNGs may be larger
+        }
+        catch
+        {
+            return null; // a missing/corrupt thumbnail just leaves a placeholder tile
+        }
     }
 
     private static long DirectorySize(string dir)
@@ -149,72 +272,4 @@ public partial class ProjectLauncherViewModel : ViewModelBase
             try { File.Delete(file); } catch { /* best-effort */ }
         }
     }
-
-    /// <summary>Remove the selected project from the list without deleting any files.</summary>
-    [RelayCommand(CanExecute = nameof(CanOpenRecent))]
-    private void Forget()
-    {
-        var target = SelectedRecent;
-        if (target is null) return;
-        _projects.RemoveFromRecents(target.Path);
-        RecentProjects.Remove(target);
-        OnPropertyChanged(nameof(HasRecents));
-        StatusText = $"Removed “{target.Name}” from the list (files left untouched).";
-    }
-
-    /// <summary>
-    /// Permanently delete the selected project's folder. Destructive — the view must confirm first.
-    /// </summary>
-    public void DeleteSelectedFromDisk()
-    {
-        var target = SelectedRecent;
-        if (target is null) return;
-        try
-        {
-            _projects.DeleteProject(target.Path);
-            RecentProjects.Remove(target);
-            OnPropertyChanged(nameof(HasRecents));
-            StatusText = $"Deleted “{target.Name}” and all its data.";
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Couldn't delete project: " + ex.Message;
-        }
-    }
-
-    /// <summary>Open an existing project folder chosen via the view's folder picker.</summary>
-    public Task OpenExistingAsync(string folder) => OpenAsync(folder);
-
-    private async Task OpenAsync(string folder)
-    {
-        try
-        {
-            _projects.Open(folder);
-            await _dbFactory.EnsureCreatedAsync();
-            _onProjectOpened();
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Couldn't open project: " + ex.Message;
-        }
-    }
-
-    [RelayCommand(CanExecute = nameof(CanCreate))]
-    private async Task CreateProjectAsync()
-    {
-        try
-        {
-            var folder = Path.Combine(NewProjectLocation, NewProjectName.Trim());
-            _projects.Create(folder, NewProjectName.Trim());
-            await _dbFactory.EnsureCreatedAsync();
-            _onProjectOpened();
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Couldn't create project: " + ex.Message;
-        }
-    }
-
-    private bool CanCreate() =>
-        !string.IsNullOrWhiteSpace(NewProjectLocation) && HoardProject.ValidateName(NewProjectName) is null;
 }

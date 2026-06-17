@@ -8,6 +8,7 @@
         Background="{DynamicResource BackgroundBrush}"
         Title="Hoard — component gallery">
 
+    <Panel>
     <DockPanel inf:FocusManagement.ClearFocusOnPointerPressed="True"
                TextElement.Foreground="{DynamicResource ForegroundBrush}">
         <!-- Header + theme toggle -->
@@ -105,32 +106,26 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Card (project board): a 3-up collage cover + metadata -->
+                <!-- Project card: 3-up collage cover + name + metadata + Open/Edit (both lg) -->
                 <StackPanel Spacing="10">
-                    <TextBlock Classes="h2" Text="Card"/>
-                    <Border Classes="card" Padding="0" Width="240" HorizontalAlignment="Left">
-                        <StackPanel>
-                            <!-- Cover collage, Pinterest-style: big = most recent, then median (top), oldest (bottom).
-                                 Rounded-top via an inner clip Border so the card keeps its drop shadow. Tiles are
-                                 placeholders; real thumbnails bind in the launcher. -->
-                            <Border CornerRadius="{DynamicResource RadiusLgTop}" ClipToBounds="True">
-                                <Grid Height="150" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
-                                    <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}">
-                                        <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource MutedForegroundBrush}"/>
-                                    </Border>
-                                    <Border Grid.Column="2" Grid.Row="0" Background="{DynamicResource MutedBrush}"/>
-                                    <Border Grid.Column="2" Grid.Row="2" Background="{DynamicResource MutedBrush}"/>
-                                </Grid>
-                            </Border>
-                            <StackPanel Margin="14,12" Spacing="8">
-                                <TextBlock Text="HoardTest1" FontWeight="SemiBold"/>
-                                <TextBlock Classes="muted" Text="78 images · 12 MB cache"/>
-                                <Button Theme="{StaticResource HoardButton}" Classes="sm" Content="Open" HorizontalAlignment="Left"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
+                    <TextBlock Classes="h2" Text="Project card"/>
+                    <ctrl:ProjectCard x:Name="DemoProjectCard" Title="HoardTest1"
+                                      MetaText="78 images · 12 MB cache" HorizontalAlignment="Left"/>
+                </StackPanel>
+
+                <!-- Sheet (in-app modal) -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Sheet"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Open sheet" HorizontalAlignment="Left" Click="OnOpenSheet"/>
+                </StackPanel>
+
+                <!-- Toast (transient messages) -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Toast"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Show toast" Click="OnShowToast"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Show error toast" Click="OnShowErrorToast"/>
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- Input -->
@@ -217,4 +212,26 @@
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
+
+        <!-- Overlays for the Sheet + Toast demos (sit above everything). -->
+        <ctrl:SheetHost x:Name="DemoSheet">
+            <StackPanel Margin="24" Spacing="14">
+                <TextBlock Classes="h2" Text="Example sheet"/>
+                <TextBlock Classes="muted" TextWrapping="Wrap"
+                           Text="A modal sheet: the scrim dims the screen and the card floats above it. Click the scrim or press Esc to dismiss."/>
+                <Button Theme="{StaticResource HoardButton}" Content="Close" HorizontalAlignment="Right" Click="OnCloseSheet"/>
+            </StackPanel>
+        </ctrl:SheetHost>
+        <ctrl:ToastHost x:Name="DemoToasts"/>
+
+        <!-- Project card's Edit popup (opened by the card's Edit button). -->
+        <ctrl:SheetHost x:Name="ProjectEditDemoSheet">
+            <ctrl:ProjectEditSheet ProjectName="HoardTest1"
+                                   FolderPath="D:\Archive\HoardTest1"
+                                   CountsText="Images 64   ·   GIFs 9   ·   Videos 5"
+                                   BoardsText="Boards 4"
+                                   CacheText="Cache 12 MB" OnDiskText="On disk 318 MB"
+                                   AddedText="Added 2026-05-01" ModifiedText="Modified 2026-06-17"/>
+        </ctrl:SheetHost>
+    </Panel>
 </Window>

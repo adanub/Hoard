@@ -1,0 +1,49 @@
+<!--
+  ProjectCard — the project board card (see Controls/ProjectCard.cs). Verbatim the gallery card: a 3-up collage
+  cover (big tile + two stacked; muted placeholder with the picture icon where a thumbnail is missing) over the
+  name and metadata line, then Open (primary) + Edit (secondary) buttons, both large. Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.ProjectCard"
+             x:Name="Root" ClipToBounds="False">
+
+    <!-- Reserve room for the card's BoxShadow inside the control's own bounds (it draws OUTSIDE the Border's
+         box, so a tight parent would crop it). Margin covers the larger light-theme ShadowRaised extent
+         (~30px sides, 42px below); ClipToBounds=False keeps the control from self-clipping. -->
+    <Border Classes="card" Padding="0" Width="240" Margin="30,18,30,42">
+        <StackPanel>
+            <!-- Collage cover, rounded-top via an inner clip so the card keeps its drop shadow. -->
+            <Border CornerRadius="{DynamicResource RadiusLgTop}" ClipToBounds="True">
+                <Grid Height="150" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
+                    <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                        <Panel>
+                            <Image Source="{Binding #Root.Thumb0}" Stretch="UniformToFill"/>
+                            <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource MutedForegroundBrush}"
+                                       IsVisible="{Binding #Root.Thumb0, Converter={x:Static ObjectConverters.IsNull}}"/>
+                        </Panel>
+                    </Border>
+                    <Border Grid.Column="2" Grid.Row="0" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                        <Image Source="{Binding #Root.Thumb1}" Stretch="UniformToFill"/>
+                    </Border>
+                    <Border Grid.Column="2" Grid.Row="2" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                        <Image Source="{Binding #Root.Thumb2}" Stretch="UniformToFill"/>
+                    </Border>
+                </Grid>
+            </Border>
+            <StackPanel Margin="14,12" Spacing="8">
+                <TextBlock Text="{Binding #Root.Title}" FontWeight="SemiBold"/>
+                <TextBlock Classes="muted" Text="{Binding #Root.MetaText}"/>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="lg" Content="Open"
+                            Command="{Binding #Root.OpenCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Classes="secondary lg" Content="Edit"
+                            Command="{Binding #Root.EditCommand}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

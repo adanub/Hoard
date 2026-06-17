@@ -70,6 +70,7 @@ not pure black/white) with a single indigo **accent**.
 | `AccentBrush` | accent at low alpha — selected/active surfaces |
 | `RingBrush` | focus ring (accent) |
 | `DestructiveBrush` / `DestructiveForegroundBrush` | delete actions |
+| `ScrimBrush` | modal sheet backdrop (dims the page) |
 
 The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — change the indigo in `Tokens.axaml` to recolour the whole UI.
 
@@ -112,15 +113,22 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
 - **Switch** (`ToggleButton`, theme `HoardSwitch`) — a real on/off **slider switch**: a pill track that recolours
   muted→accent with a knob that slides; no inner text (the label sits beside it).
 - **Card / Surface** — `CardBrush`, thin `LineBrush` border, radius lg, `ShadowRaised`. The **project-board
-  card** has a 3-up Pinterest **collage cover** (most-recent / median / oldest, rounded top via `RadiusLgTop`)
-  above the name / metadata / Open.
+  card** has a 3-up Pinterest **collage cover** (rounded top via `RadiusLgTop`, built from the project's cached
+  thumbnails; muted tiles fill any gaps) above the name + cache size and a **⋯ manage menu** (open / clear
+  cache / remove / delete); the card body opens the project.
 - **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset`, thin border, accent focus
   ring, muted placeholder.
 - **Row** (`ListBoxItem`, theme `HoardListItem`) — tappable list item (project / board / collection): bare at
   rest, hover lifts into the raised pill, press sinks, `:selected` = accent tint. Used via a `ListBox`
   `ItemContainerTheme`; replaces the old `Border.row` class.
 - **Badge / Tag** — small **floating** chip (gloss bevel + border + drop shadow): item counts, GIF tag.
-- **Separator**, **Sheet / Dialog** (card + `ShadowMd` + scrim), **Toast** (status messages).
+- **Sheet** (`Controls/SheetHost.cs`, theme in `Sheet.axaml`) — reusable in-app modal: a `ScrimBrush` backdrop
+  dims the page and centres `Content` in a floating card (`ShadowMd`); scrim-click / Esc dismiss. Hosts
+  new-project now; import / new-collection later.
+- **Toast** (`Services/ToastService.cs` + `Controls/ToastHost.axaml`) — transient, auto-dismissing status
+  messages, bottom-right; the host is shell-mounted in `MainWindow` and hit-test-invisible. Error toasts edge
+  in `DestructiveBrush`.
+- **Separator**, **Dialog window** (`ConfirmDialog`/`MessageDialog` — used for the destructive delete confirm).
 
 ## Icons
 

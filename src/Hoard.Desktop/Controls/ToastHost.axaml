@@ -1,0 +1,37 @@
+<!--
+  ToastHost — renders a ToastService's live toasts as a stack of floating cards in the bottom-right corner.
+  Hit-test invisible so toasts never block the UI underneath. Set DataContext to a ToastService.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:svc="using:Hoard.Desktop.Services"
+             x:Class="Hoard.Desktop.Controls.ToastHost"
+             x:DataType="svc:ToastService"
+             IsHitTestVisible="False">
+
+    <ItemsControl ItemsSource="{Binding Toasts}"
+                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="20">
+        <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+                <StackPanel Spacing="8"/>
+            </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="svc:ToastItem">
+                <Border Classes.error="{Binding IsError}"
+                        Background="{DynamicResource PopoverBrush}"
+                        BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                        CornerRadius="{DynamicResource RadiusMd}" Padding="14,10"
+                        BoxShadow="{DynamicResource ShadowMd}" MaxWidth="360" HorizontalAlignment="Right">
+                    <Border.Styles>
+                        <Style Selector="Border.error">
+                            <Setter Property="BorderBrush" Value="{DynamicResource DestructiveBrush}"/>
+                        </Style>
+                    </Border.Styles>
+                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                               Foreground="{DynamicResource ForegroundBrush}"/>
+                </Border>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+    </ItemsControl>
+</UserControl>

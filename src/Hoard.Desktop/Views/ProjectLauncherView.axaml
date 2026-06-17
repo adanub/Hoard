@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Hoard.Desktop.ViewModels"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
@@ -11,72 +12,137 @@
         <vm:ProjectLauncherViewModel/>
     </Design.DataContext>
 
-    <Grid RowDefinitions="Auto,*,Auto" MaxWidth="820" Margin="24">
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Spacing="2" Margin="0,12,0,18">
-            <TextBlock Text="Hoard" FontSize="32" FontWeight="Bold"/>
-            <TextBlock Text="Open a project, or create one to start archiving." Opacity="0.7"/>
-        </StackPanel>
+    <!-- Panel so the new-project sheet overlays the whole screen. -->
+    <Panel>
+        <ScrollViewer>
+            <StackPanel Margin="28,24" Spacing="20" MaxWidth="1040" HorizontalAlignment="Left">
+                <TextBlock Classes="h1" Text="Projects"/>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,24,*">
-            <!-- Recent projects -->
-            <DockPanel Grid.Column="0">
-                <TextBlock DockPanel.Dock="Top" Text="Recent projects" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                    <Button Content="Open existing folder…" Click="OnOpenExisting"/>
-                    <Button Content="Clear cache" Command="{Binding ClearCacheCommand}"/>
-                    <Button Content="Remove from list" Command="{Binding ForgetCommand}"/>
-                    <Button Content="Delete from disk…" Click="OnDeleteFromDisk"
-                            IsEnabled="{Binding SelectedRecent, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-                </StackPanel>
-                <Border BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="1" CornerRadius="6">
-                    <Panel>
-                        <TextBlock Text="No recent projects yet." Opacity="0.5" Margin="12"
-                                   IsVisible="{Binding !HasRecents}"/>
-                        <ListBox ItemsSource="{Binding RecentProjects}" SelectedItem="{Binding SelectedRecent}"
-                                 DoubleTapped="OnRecentDoubleTapped" Background="Transparent">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="vm:RecentProjectRef">
-                                    <StackPanel Spacing="1">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                        <TextBlock Text="{Binding Path}" Opacity="0.55" FontSize="11"
-                                                   TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding CacheSizeText}" Opacity="0.45" FontSize="11"/>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </Panel>
-                </Border>
-            </DockPanel>
+                <!-- The “+ New project” tile + one card per recent project, reflowing by width. -->
+                <ItemsControl ItemsSource="{Binding Tiles}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.DataTemplates>
 
-            <!-- New project -->
-            <StackPanel Grid.Column="2" Spacing="8">
-                <TextBlock Text="New project" FontWeight="SemiBold"/>
-                <TextBlock Text="Name" Opacity="0.7" Margin="0,4,0,0"/>
-                <TextBox Text="{Binding NewProjectName}" PlaceholderText="e.g. Pinterest Archive"/>
-                <TextBlock Text="{Binding NameError}" Foreground="#E06C75" FontSize="11" TextWrapping="Wrap"
-                           IsVisible="{Binding HasNameError}"/>
-                <TextBlock Text="Location" Opacity="0.7" Margin="0,4,0,0"/>
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <TextBox Grid.Column="0" Text="{Binding NewProjectLocation}" IsReadOnly="True"
-                             PlaceholderText="Choose a parent folder…"/>
-                    <Button Grid.Column="1" Content="Browse…" Click="OnBrowseLocation"/>
-                </Grid>
-                <TextBlock Text="{Binding NewProjectPreviewPath}" Opacity="0.55" FontSize="11"
-                           TextWrapping="Wrap"
-                           IsVisible="{Binding NewProjectPreviewPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                <Button Content="Create project" Classes="accent" HorizontalAlignment="Left"
-                        Margin="0,4,0,0" Command="{Binding CreateProjectCommand}"/>
+                        <!-- Leading action tile: opens the new-project sheet. -->
+                        <DataTemplate DataType="vm:NewProjectTile">
+                            <Border Width="240" MinHeight="224" Margin="0,0,16,16" Cursor="Hand"
+                                    Background="{DynamicResource CardBrush}"
+                                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                                    CornerRadius="{DynamicResource RadiusLg}"
+                                    Tapped="OnNewProjectTileTapped">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                                    <Border Width="52" Height="52" CornerRadius="{DynamicResource RadiusFull}"
+                                            Background="{DynamicResource MutedBrush}" HorizontalAlignment="Center">
+                                        <ctrl:Icon Data="{StaticResource Icon.plus}" Width="24" Height="24"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource ForegroundBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="New project" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+
+                        <!-- Project board card: 3-up collage cover + name (with ⋯ menu) + cache size. -->
+                        <DataTemplate DataType="vm:RecentProjectRef">
+                            <Border Classes="card" Padding="0" Width="240" Margin="0,0,16,16" Cursor="Hand"
+                                    Tapped="OnProjectCardTapped">
+                                <StackPanel>
+                                    <!-- Collage: big = first thumbnail, then two stacked on the right. Rounded top via
+                                         an inner clip so the card keeps its drop shadow. Missing tiles stay muted. -->
+                                    <Border CornerRadius="{DynamicResource RadiusLgTop}" ClipToBounds="True">
+                                        <Grid Height="150" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
+                                            <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                                                <Panel>
+                                                    <Image Source="{Binding Thumb0}" Stretch="UniformToFill"/>
+                                                    <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource MutedForegroundBrush}"
+                                                               IsVisible="{Binding Thumb0, Converter={x:Static ObjectConverters.IsNull}}"/>
+                                                </Panel>
+                                            </Border>
+                                            <Border Grid.Column="2" Grid.Row="0" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                                                <Image Source="{Binding Thumb1}" Stretch="UniformToFill"/>
+                                            </Border>
+                                            <Border Grid.Column="2" Grid.Row="2" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                                                <Image Source="{Binding Thumb2}" Stretch="UniformToFill"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                    <Grid Margin="14,12" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}" FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                        <!-- ⋯ manage menu. Its taps are ignored by the card-open handler (it's a Button). -->
+                                        <Button Grid.Row="0" Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
+                                                Width="30" Height="30" Padding="0" VerticalAlignment="Center">
+                                            <ctrl:Icon Data="{StaticResource Icon.more-horizontal}" Width="18" Height="18"/>
+                                            <Button.Flyout>
+                                                <MenuFlyout>
+                                                    <MenuItem Header="Open" Click="OnManageOpen"/>
+                                                    <MenuItem Header="Clear cache" Click="OnManageClearCache"/>
+                                                    <MenuItem Header="Remove from list" Click="OnManageForget"/>
+                                                    <Separator/>
+                                                    <MenuItem Header="Delete from disk…" Click="OnManageDelete"/>
+                                                </MenuFlyout>
+                                            </Button.Flyout>
+                                        </Button>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Classes="muted"
+                                                   Text="{Binding CacheSizeText}" Margin="0,4,0,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+
+                    </ItemsControl.DataTemplates>
+                </ItemsControl>
             </StackPanel>
-        </Grid>
+        </ScrollViewer>
 
-        <!-- Footer / status -->
-        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,16,0,0">
-            <TextBlock Grid.Column="0" Text="{Binding StatusText}"
-                       VerticalAlignment="Center" TextWrapping="Wrap"/>
-            <Button Grid.Column="1" Content="Open project" Classes="accent"
-                    Command="{Binding OpenRecentCommand}"/>
-        </Grid>
-    </Grid>
+        <!-- New-project sheet: create a project, or adopt an existing folder. -->
+        <ctrl:SheetHost IsOpen="{Binding IsNewProjectSheetOpen}" DismissCommand="{Binding CloseNewProjectSheetCommand}">
+            <StackPanel Margin="24" Spacing="16">
+                <TextBlock Classes="h2" Text="New project"/>
+
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Name"/>
+                    <TextBox Theme="{StaticResource HoardInput}"
+                             Text="{Binding NewProjectName}" PlaceholderText="e.g. Pinterest Archive"/>
+                    <TextBlock Text="{Binding NameError}" Foreground="{DynamicResource DestructiveBrush}"
+                               FontSize="11" TextWrapping="Wrap" IsVisible="{Binding HasNameError}"/>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Location"/>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox Grid.Column="0" Theme="{StaticResource HoardInput}"
+                                 Text="{Binding NewProjectLocation}" IsReadOnly="True"
+                                 PlaceholderText="Choose a parent folder…"/>
+                        <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary"
+                                Content="Browse…" Click="OnBrowseLocation"/>
+                    </Grid>
+                    <TextBlock Text="{Binding NewProjectPreviewPath}" Classes="muted" FontSize="11" TextWrapping="Wrap"
+                               IsVisible="{Binding NewProjectPreviewPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                </StackPanel>
+
+                <TextBlock Text="{Binding SheetError}" Foreground="{DynamicResource DestructiveBrush}"
+                           FontSize="12" TextWrapping="Wrap"
+                           IsVisible="{Binding SheetError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseNewProjectSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Create project"
+                            Command="{Binding CreateProjectCommand}"/>
+                </StackPanel>
+
+                <Border Height="1" Background="{DynamicResource LineBrush}" Margin="0,2"/>
+                <TextBlock Classes="muted" Text="Already have a project folder?" HorizontalAlignment="Center"/>
+                <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Open existing folder…"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Click="OnOpenExisting"/>
+            </StackPanel>
+        </ctrl:SheetHost>
+    </Panel>
 </UserControl>

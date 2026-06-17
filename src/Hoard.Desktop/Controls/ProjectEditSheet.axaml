@@ -1,0 +1,73 @@
+<!--
+  ProjectEditSheet — contents of the project Edit popup (see Controls/ProjectEditSheet.cs). Goes inside a
+  SheetHost. Name row toggles read-only ↔ editable via Rename ↔ ✓/✕. No fixed width (the SheetHost sizes it).
+  Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.ProjectEditSheet"
+             x:Name="Root">
+
+    <StackPanel Margin="24" Spacing="14">
+        <TextBlock Classes="h2" Text="Edit project"/>
+
+        <!-- Name + rename toggle. Read state = plain text; only Rename swaps in the editable field. -->
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <Panel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock Text="{Binding #Root.ProjectName}" FontWeight="Medium" FontSize="{DynamicResource FontSizeLg}"
+                           VerticalAlignment="Center" IsVisible="{Binding !#Root.IsEditing}"/>
+                <TextBox x:Name="NameBox" Theme="{StaticResource HoardInput}"
+                         Text="{Binding #Root.ProjectName}" IsVisible="{Binding #Root.IsEditing}"/>
+            </Panel>
+            <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary" Content="Rename"
+                    IsVisible="{Binding !#Root.IsEditing}" Click="OnRename"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding #Root.IsEditing}">
+                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Width="38" Height="38" Padding="0"
+                        Click="OnConfirmRename">
+                    <ctrl:Icon Data="{StaticResource Icon.check}" Width="18" Height="18"/>
+                </Button>
+                <Button Theme="{StaticResource HoardButton}" Classes="outline" Width="38" Height="38" Padding="0"
+                        Click="OnCancelRename">
+                    <ctrl:Icon Data="{StaticResource Icon.x}" Width="18" Height="18"/>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- Folder path + open in file explorer -->
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox Grid.Column="0" Theme="{StaticResource HoardInput}" IsReadOnly="True"
+                     Text="{Binding #Root.FolderPath}"/>
+            <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary" Width="38" Height="38"
+                    Padding="0" Command="{Binding #Root.OpenFolderCommand}">
+                <ctrl:Icon Data="{StaticResource Icon.folder}" Width="18" Height="18"/>
+            </Button>
+        </Grid>
+
+        <!-- Info -->
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="{Binding #Root.CountsText}"/>
+            <TextBlock Classes="muted" Text="{Binding #Root.BoardsText}"/>
+            <Grid ColumnDefinitions="*,*">
+                <TextBlock Grid.Column="0" Classes="muted" Text="{Binding #Root.CacheText}"/>
+                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding #Root.OnDiskText}"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,*">
+                <TextBlock Grid.Column="0" Classes="muted" Text="{Binding #Root.AddedText}"/>
+                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding #Root.ModifiedText}"/>
+            </Grid>
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource LineBrush}"/>
+
+        <!-- Actions: one group that fills the row, wrapping one button at a time when space runs out. -->
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Clear cache"
+                    Command="{Binding #Root.ClearCacheCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Remove from list"
+                    Command="{Binding #Root.RemoveCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete project…"
+                    Command="{Binding #Root.DeleteCommand}"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

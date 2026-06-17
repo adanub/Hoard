@@ -1,0 +1,39 @@
+<!--
+  SheetHost — the in-app modal sheet (scrim + centred card). The whole host is collapsed while closed
+  (IsVisible follows IsOpen). The scrim (PART_Scrim) is the click-away surface; the card floats above it.
+  Responsive: the card is bounded to the inset region (a Grid with margin), so on a small window its content
+  SCROLLS instead of overflowing, and its width STRETCHES down to fit (capped at MaxWidth). Content placed in
+  a SheetHost must therefore not set a fixed Width. See DESIGN.md "Sheet / Dialog" and Controls/SheetHost.cs.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ctrl="using:Hoard.Desktop.Controls">
+
+    <ControlTheme x:Key="{x:Type ctrl:SheetHost}" TargetType="ctrl:SheetHost">
+        <Setter Property="IsVisible" Value="{Binding IsOpen, RelativeSource={RelativeSource Self}}"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Panel>
+                    <!-- Backdrop: dims the page and catches click-away. -->
+                    <Border Name="PART_Scrim" Background="{DynamicResource ScrimBrush}"/>
+                    <!-- Inset region: the margin keeps the card off the screen edges and bounds its size. -->
+                    <Grid Margin="24">
+                        <Border MaxWidth="440" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                MaxHeight="{Binding $parent[Grid].Bounds.Height}"
+                                Background="{DynamicResource PopoverBrush}"
+                                BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                                CornerRadius="{DynamicResource RadiusLg}"
+                                BoxShadow="{DynamicResource ShadowMd}">
+                            <!-- Tall content scrolls within the bounded card; width never overflows. -->
+                            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                          VerticalScrollBarVisibility="Auto">
+                                <ContentPresenter Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Panel>
+            </ControlTemplate>
+        </Setter>
+    </ControlTheme>
+</ResourceDictionary>

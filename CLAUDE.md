@@ -59,8 +59,11 @@ Concepts that span multiple files:
   `SaveChanges` as the change so the history can't drift. Ops are keyed by the asset's SHA-256, not its local
   row id, so they replay on another device that holds the same content under a different id. This is the
   Phase 3 (cloud sync) foundation; nothing reads it yet — keep it append-only (never mutate/delete ops).
-- **Shell navigation.** `MainWindowViewModel` swaps a single `CurrentPage` between `ProjectLauncherViewModel`
-  and `LibraryViewModel`; the template `ViewLocator` maps each page VM to its `…View`.
+- **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a page back-stack
+  (`Reset`/`Push`/`Pop`/`CanGoBack`) — and acts as the page factory (`Reset` to the launcher root, `Push` the
+  library above it; switch-project `Reset`s to a fresh launcher so recents reload). The shell binds
+  `Navigation.Current`; the template `ViewLocator` maps each page VM to its `…View`. The stack is the spine for
+  the deeper Projects → Library → Board → Image-detail flow.
 - **Decoded GIF frames are reference-counted, not cached-with-retention.** `RefCountedCache<T>` (in
   `Infrastructure/`) does single-flight load per key and hands out disposable `ResourceLease<T>` handles; frames
   are freed when the **last** lease is disposed. `AnimatedImageControl` holds exactly one lease and disposes it
@@ -121,7 +124,13 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   `ContentPresenter`/content `IsHitTestVisible="False"`** so the fill `Border` is the *single* hover/hit
   surface — otherwise the content (text/icon) is its own hit target and dragging across the content↔fill
   boundary fires enter/leave that flickers the control's `:pointerover`/`:pressed` (the fill `Border` must keep
-  a hit-testable background, even `Transparent`). See `Theme/Controls/Button.axaml`. **Grid order is by Pinterest pin id (`SourceId`), descending** —
+  a hit-testable background, even `Transparent`). See `Theme/Controls/Button.axaml`. **A `BoxShadow` draws
+  OUTSIDE the element's layout box, so any surface with one (cards, the `.card` style, badges) must reserve
+  room for its shadow and not be self-clipped — else it crops at the element's edge.** Bake a `Margin` ≥ the
+  shadow's blur+offset extent onto the shadowed element itself (size it for the *largest* theme — light
+  `ShadowRaised` reaches ~30px sideways and ~42px below) and set `ClipToBounds="False"` on its container;
+  reserve the room on the component so callers can't forget (a `UserControl` whose bounds equal the card is the
+  classic trap). See `Controls/ProjectCard.axaml`. **Grid order is by Pinterest pin id (`SourceId`), descending** —
   `LibraryService` fetches in `Id` order then sorts in memory by the numeric pin id, so order is deterministic
   and survives re-import/restore (`Id` is the stable tiebreak; pinless rows sort last). The sidecar carries
   **no per-pin date** (`CreatedAt` is null for Pinterest — only board-level timestamps exist), and SQLite

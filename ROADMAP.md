@@ -4,10 +4,12 @@ Progress tracker so a fresh session can resume. Architecture/conventions are in 
 user-facing model is in `README.md`. Keep this file current as work lands.
 
 **Status (2026-06-17):** Phase 1 complete. Phase 2 in progress — UI/UX **redesign underway**: the design-system
-component kit is largely built and dialled in (live gallery catalogue), but **everything past slice 1 is
-uncommitted** — a material-shader background was built then **dropped**, and the kit was heavily refined since.
-Tests: 47 (Core) + 23 (Desktop), green. Next: **slice 2** — rebuild the screens on the kit + the nav back-stack.
-⚠️ See "Uncommitted" + "Needs runtime verification" at the end before compacting/committing.
+component kit is **built, dialled in, and committed** (`4f62109`; live gallery catalogue). A material-shader
+background was built then **dropped** along the way (don't resurrect it). **Slice 2 in progress** — the nav
+back-stack (`NavigationService`) + a **redesigned Projects screen** (collage-card grid, "+ New" tile,
+new-project **sheet**, **toasts**) are done but **uncommitted** (await runtime sign-off). Tests: 47 (Core) +
+29 (Desktop), green. Next in slice 2: rebuild `LibraryView` on the kit, add the deeper Library→Board→Image
+back-stack, then retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles.
 
 ## Done
 
@@ -76,10 +78,11 @@ Tests: 47 (Core) + 23 (Desktop), green. Next: **slice 2** — rebuild the screen
 
 ## Next up — finish Phase 2
 
-- **Finish the redesign (in progress).** Slice 1 (component kit + gallery) is built. Next: **slice 2 — rebuild
-  the Projects screen on the kit and introduce the navigation back-stack** (Projects → Library → Board → Image
-  detail), then roll the kit across the remaining screens and **retire FluentTheme + the placeholder
-  `accent`/`danger`/`overlay` styles**.
+- **Finish the redesign (in progress).** Slice 1 (component kit + gallery) is built + committed. Slice 2 is
+  underway: the **navigation back-stack** (`Navigation/NavigationService.cs` — `Reset`/`Push`/`Pop`/`CanGoBack`,
+  shell binds `Navigation.Current`) and the **Projects launcher rebuilt on the kit** are done (uncommitted).
+  Remaining slice-2 work: **rebuild `LibraryView` on the kit**, wire a visible back affordance for the deeper
+  Board → Image-detail pushes, then **retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles**.
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
@@ -116,31 +119,46 @@ Tests: 47 (Core) + 23 (Desktop), green. Next: **slice 2** — rebuild the screen
   is full) — page when libraries get very large.
 - Optional: add an `.editorconfig` to enforce the C# formatting conventions documented in `CLAUDE.md`.
 
-## Uncommitted (working tree)
+## Recently landed (committed `4f62109`)
 
-Committed: `feat(ui): design-system slice 1` + `chore(assets): … Background material`. **Everything since is
-uncommitted** (left for the user's runtime sign-off) — a large batch:
+The design-system component kit + gallery (and the drop of the material-shader background) shipped in
+`4f62109 feat: ui design components`, after the user verified the gallery at runtime. The kit is the
+foundation slice 2 builds on:
 - **Dropped the material/shader background feature** (minor polish): `Rendering/`, `Assets/Materials/`,
-  `ASSETS.md`, and its gallery showcase are **deleted** — don't resurrect it.
-- **Component-kit build-out + refinement:** new `Theme/Controls/{Switch,ListItem,Pressable}.axaml`; heavily
-  edited `Button.axaml` (sizes/heights/`lg`/`icon`, ghost-outline hover, shared `PressableSurfaceTemplate`),
-  `Surfaces.axaml` (Row → `ListBoxItem`, floating Badge), `Input.axaml`, `Tokens.axaml` (dark retone,
-  control-height/radius tokens, tight layered shadows), `Icons.axaml` (sun/moon), `Theme.axaml` (Pressable +
-  Switch includes), large `GalleryWindow.*` expansion, `MainWindow.axaml` (fluid shell), `FocusManagement.*`
-  (+ tests). Also added then removed `Controls/DesignSurface.cs` + its tests (uniform-scale experiment).
-- **Docs:** `DESIGN.md` reconciled to the tokens (role-based table, control heights, fluid reflow);
-  `CLAUDE.md` hit-test convention added; this `ROADMAP.md`.
-Commit once the user signs off — likely as a few logical commits (feature-drop · component kit · docs).
+  `ASSETS.md`, and its gallery showcase are **gone** — don't resurrect it.
+- **Component kit:** `Theme/Controls/{Button,Input,Switch,ListItem,Pressable}.axaml` + `Surfaces.axaml`
+  (Row → `ListBoxItem`, floating Badge, Card), `Tokens.axaml` (dark retone, control-height/radius tokens,
+  tight layered shadows), `Icons.axaml` (incl. sun/moon), `GalleryWindow.*` catalogue, `MainWindow.axaml`
+  (fluid shell), `FocusManagement.*`.
 
-## Needs runtime verification (can't launch the GUI in-session)
+## Working tree (uncommitted — await runtime sign-off)
 
-Build + 70 tests pass; the user should confirm at runtime:
-- **App (existing screens):** masonry scroll/recycling, GIF playback, memory drops; the **fluid shell** reflows
-  (grid gains columns as the window widens) and scrolls with no cropping.
-- **Design-system gallery (`HOARD_GALLERY=1`):** both themes (the **sun─switch─moon** toggle flips them);
-  button matrix (variants × `sm`/default/`lg`/`icon`, press scale+inset, ghost/outline hover-lift); **switch**
-  knob slides symmetrically; input focus/selection/caret; **rows** hover/press/select (+ keyboard nav); **card
-  collage** cover + the dark drop shadow reads raised **without banding**; and the shared
-  `PressableSurfaceTemplate` still renders Button/Row correctly (it's referenced cross-file). Click-away clears
-  focus — Tab must not land on the focus-sink root.
+Slice-2 work, on top of committed `4f62109`:
+- **Nav back-stack:** new `Navigation/NavigationService.cs` (`Reset`/`Push`/`Pop`/`CanGoBack`, `ObservableObject`);
+  `MainWindowViewModel` now owns it as the page factory (launcher = `Reset` root, library = `Push`;
+  switch-project resets to a fresh launcher so recents reload) instead of the old swap callbacks;
+  `MainWindow.axaml` binds `Navigation.Current`. New `NavigationServiceTests` (+6).
+- **Projects screen redesigned** (per DESIGN.md "one job per screen" — replaced the old two-column
+  recent-list + new-project form, *not* a restyle): `ProjectLauncherView.axaml` is now a reflowing grid of
+  **project-board collage cards** led by a "+ New project" tile. Each card shows a 3-up collage built from
+  **3 thumbnails read off the project's `thumbnails/` folder** (no DB opened; missing tiles stay muted) +
+  name + cache size, with a **⋯ menu** (Open / Clear cache / Remove / Delete — delete keeps the 10s
+  `ConfirmDialog`); the card body opens the project. `ProjectLauncherViewModel` rewritten accordingly
+  (`Tiles` = `NewProjectTile` marker + `RecentProjectRef` cards; per-card actions; collage loading).
+- **New components (reusable):** `Controls/SheetHost.cs` + `Theme/Controls/Sheet.axaml` — in-app modal
+  **sheet** (scrim + floating card, Esc/scrim dismiss); `Services/ToastService.cs` + `Controls/ToastHost.*`
+  — auto-dismissing **toasts** (shell-hosted in `MainWindow`, owned by `MainWindowViewModel`, passed to the
+  launcher VM). New-project + "Open existing folder…" live in the sheet; all per-project feedback is toasted.
+  New token `ScrimBrush`. Both added to the **gallery** (`GalleryWindow`) with live demos.
+Commit after the user verifies (suggested split: nav spine · sheet+toast components · Projects redesign).
+
+**Needs runtime verification (can't launch the GUI in-session):**
+- **Projects screen (both themes):** the "+ New" tile + project cards reflow as the window widens; each card's
+  3-up collage shows real cached thumbnails (muted tiles where a project has <3); card body opens the project;
+  the ⋯ menu's Open/Clear cache/Remove/Delete all act on the right card (Delete still shows the 10s confirm).
+- **New-project sheet:** "+ New" opens it; scrim/Esc/Cancel dismiss; name validation + path preview; Create
+  opens the new project; "Open existing folder…" adopts a folder; errors show inline in the sheet.
+- **Toasts:** clear-cache / remove / delete / open-failure show a toast bottom-right that auto-dismisses;
+  errors read in the destructive colour. Gallery (`HOARD_GALLERY=1`) has Sheet + Toast demo sections.
+- **Navigation:** open/create → library; **Switch project** returns to a fresh launcher with up-to-date recents.
 Diagnose via `hoard.log`.
