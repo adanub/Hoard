@@ -1,19 +1,27 @@
 <!--
   ToastHost — renders a ToastService's live toasts as a stack of floating cards in the bottom-right corner.
   Hit-test invisible so toasts never block the UI underneath. Set DataContext to a ToastService.
+  ClipToBounds=False at every level (UserControl / ItemsControl / item ContentPresenter / panel) so each
+  toast's drop shadow isn't cropped at its bounds; the 40px margin keeps the corner shadow off the window edge.
 -->
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:svc="using:Hoard.Desktop.Services"
              x:Class="Hoard.Desktop.Controls.ToastHost"
              x:DataType="svc:ToastService"
-             IsHitTestVisible="False">
+             IsHitTestVisible="False" ClipToBounds="False">
 
-    <ItemsControl ItemsSource="{Binding Toasts}"
-                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="20">
+    <ItemsControl ItemsSource="{Binding Toasts}" ClipToBounds="False"
+                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="40">
+        <ItemsControl.Styles>
+            <!-- The generated per-item container; stop it cropping the toast's shadow. -->
+            <Style Selector="ContentPresenter">
+                <Setter Property="ClipToBounds" Value="False"/>
+            </Style>
+        </ItemsControl.Styles>
         <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
-                <StackPanel Spacing="8"/>
+                <StackPanel Spacing="12" ClipToBounds="False"/>
             </ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>

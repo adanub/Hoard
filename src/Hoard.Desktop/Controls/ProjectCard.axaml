@@ -7,15 +7,18 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ctrl="using:Hoard.Desktop.Controls"
              x:Class="Hoard.Desktop.Controls.ProjectCard"
-             x:Name="Root" ClipToBounds="False">
+             x:Name="Root">
 
-    <!-- Reserve room for the card's BoxShadow inside the control's own bounds (it draws OUTSIDE the Border's
-         box, so a tight parent would crop it). Margin covers the larger light-theme ShadowRaised extent
-         (~30px sides, 42px below); ClipToBounds=False keeps the control from self-clipping. -->
-    <Border Classes="card" Padding="0" Width="240" Margin="30,18,30,42">
-        <StackPanel>
-            <!-- Collage cover, rounded-top via an inner clip so the card keeps its drop shadow. -->
-            <Border CornerRadius="{DynamicResource RadiusLgTop}" ClipToBounds="True">
+    <!-- The project card isn't clickable, so it reads as a CONCAVE INSET (recessed) panel rather than a
+         floating card: no drop shadow, fill matching the page, and an inner dark-top + light-bottom bevel
+         (ShadowInsetBevel) carving it in. Inner shadows need no outer room, so there's no reserve margin. -->
+    <Border Padding="10" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+            Background="{DynamicResource RecessedBrush}" BoxShadow="{DynamicResource ShadowInsetBevel}">
+        <StackPanel Spacing="10">
+            <!-- Collage sits INSIDE the well (padded) so the recessed beveled rim frames it; rounded all round.
+                 It also gets its own concave inset bevel (overlaid — see below). -->
+            <Border CornerRadius="{DynamicResource RadiusMd}" ClipToBounds="True">
+                <Panel>
                 <Grid Height="150" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
                     <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
                         <Panel>
@@ -33,16 +36,24 @@
                         <Image Source="{Binding #Root.Thumb2}" Stretch="UniformToFill"/>
                     </Border>
                 </Grid>
+                    <!-- Inset bevel drawn OVER the collage: inset shadows render behind a Border's own child,
+                         so the recessed look must be an overlay on top of the images. -->
+                    <Border CornerRadius="{DynamicResource RadiusMd}" IsHitTestVisible="False"
+                            BoxShadow="{DynamicResource ShadowInsetBevel}"/>
+                </Panel>
             </Border>
-            <StackPanel Margin="14,12" Spacing="8">
+            <StackPanel Spacing="8">
                 <TextBlock Text="{Binding #Root.Title}" FontWeight="SemiBold"/>
                 <TextBlock Classes="muted" Text="{Binding #Root.MetaText}"/>
-                <ctrl:FlexWrapPanel Spacing="8">
-                    <Button Theme="{StaticResource HoardButton}" Classes="lg" Content="Open"
+                <!-- Open fills the row; the pencil (Edit) stays a fixed square beside it. -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Button Grid.Column="0" Theme="{StaticResource HoardButton}" Classes="lg" Content="Open"
                             Command="{Binding #Root.OpenCommand}"/>
-                    <Button Theme="{StaticResource HoardButton}" Classes="secondary lg" Content="Edit"
-                            Command="{Binding #Root.EditCommand}"/>
-                </ctrl:FlexWrapPanel>
+                    <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary"
+                            Width="48" Height="48" Padding="0" Command="{Binding #Root.EditCommand}">
+                        <ctrl:Icon Data="{StaticResource Icon.pencil}" Width="18" Height="18"/>
+                    </Button>
+                </Grid>
             </StackPanel>
         </StackPanel>
     </Border>

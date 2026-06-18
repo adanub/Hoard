@@ -113,6 +113,14 @@
                                       MetaText="78 images · 12 MB cache" HorizontalAlignment="Left"/>
                 </StackPanel>
 
+                <!-- Board card: collage + name + metadata, no Open button (card body opens), floating pencil -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Board card"/>
+                    <ctrl:BoardCard x:Name="DemoBoardCard"
+                                    Title="animation-references-and-other-very-long-board-name"
+                                    MetaText="37 images · 5 MB cache" HorizontalAlignment="Left"/>
+                </StackPanel>
+
                 <!-- Sheet (in-app modal) -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Sheet"/>

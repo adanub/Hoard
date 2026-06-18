@@ -18,7 +18,8 @@
             <SolidColorBrush x:Key="PopoverBrush" Color="#F8FAFD"/>
             <SolidColorBrush x:Key="MutedBrush" Color="#DDE2EB"/>
             <SolidColorBrush x:Key="MutedForegroundBrush" Color="#646876"/>
-            <SolidColorBrush x:Key="LineBrush" Color="#22000000"/>      <!-- black ~13% -->
+            <SolidColorBrush x:Key="RecessedBrush" Color="#E4E8EF"/>   <!-- inset well; = bg in light (bevel carries it) -->
+            <SolidColorBrush x:Key="LineBrush" Color="#2E000000"/>      <!-- black ~18% (matches dark's 18% white) -->
             <SolidColorBrush x:Key="InputBrush" Color="#26000000"/>
             <SolidColorBrush x:Key="PrimaryBrush" Color="#5B5BEF"/>      <!-- accent (indigo) -->
             <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FFFFFF"/>
@@ -29,25 +30,34 @@
             <SolidColorBrush x:Key="SelectionBrush" Color="#B35B5BEF"/>  <!-- text selection (accent ~70%) -->
             <SolidColorBrush x:Key="ScrimBrush" Color="#59000000"/>      <!-- modal sheet backdrop (~35% black) -->
 
-            <!-- Glossy fills: a bright sheen sliver at the very top, then the body, then a darker base. -->
-            <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+            <!-- Glossy fills (light source top-left): a bright sheen in the top-left, then the body, then a
+                 darker base toward the bottom-right (diagonal gradient). -->
+            <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#8585FA"/><GradientStop Offset="0.10" Color="#6E6EF3"/><GradientStop Offset="1" Color="#5050EC"/>
             </LinearGradientBrush>
-            <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+            <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#FFFFFF"/><GradientStop Offset="0.10" Color="#FAFBFD"/><GradientStop Offset="1" Color="#E7EAF1"/>
             </LinearGradientBrush>
-            <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+            <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#F36F6F"/><GradientStop Offset="0.10" Color="#EA4D4D"/><GradientStop Offset="1" Color="#CF2020"/>
             </LinearGradientBrush>
 
             <!-- DARK-only shadows (no light component → no fringe). -->
-            <BoxShadows x:Key="ShadowMd">0 18 40 0 #2E000000</BoxShadows>
+            <BoxShadows x:Key="ShadowMd">4 8 26 0 #2E000000</BoxShadows>
             <!-- Layered (contact + mid + ambient) so the soft falloff bands less than one long gradient. -->
-            <BoxShadows x:Key="ShadowRaised">0 1 2 0 #1F000000, 0 5 12 0 #16000000, 0 12 30 0 #0F000000</BoxShadows>
-            <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #22000000</BoxShadows>
-            <BoxShadows x:Key="InputFocusShadow">inset 0 2 6 0 #22000000, inset 0 0 7 0 #4D5B5BEF</BoxShadows>
-            <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #1F000000, inset 0 -2 3 0 #16000000</BoxShadows>
-            <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #2E000000</BoxShadows>
+            <BoxShadows x:Key="ShadowRaised">1 1 2 0 #1F000000, 3 5 12 0 #16000000, 6 12 30 0 #0F000000</BoxShadows>
+            <!-- Convex raised bevel (inverse of ShadowInsetBevel): light highlight top-left, dark shadow
+                 bottom-right — gives a clickable raised surface (e.g. the board card) the buttons' tactile edge. -->
+            <BoxShadows x:Key="ShadowRaisedBevel">inset 5 5 10 0 #73FFFFFF, inset -5 -5 10 0 #1A000000</BoxShadows>
+            <BoxShadows x:Key="ShadowInset">inset 2 2 6 0 #22000000</BoxShadows>
+            <!-- Concave bevel for a recessed (non-interactive) card. Diagonal (light source top-left): dark on
+                 the top-left two sides, light highlight on the bottom-right two sides — the horizontal offset
+                 keeps each on its own two sides (a pure vertical pair would bleed light onto three sides). The
+                 light inset is a deliberate exception to "dark-only", needed to carve the neumorphism inset. -->
+            <BoxShadows x:Key="ShadowInsetBevel">inset 5 5 12 0 #30000000, inset -5 -5 11 0 #66FFFFFF</BoxShadows>
+            <BoxShadows x:Key="InputFocusShadow">inset 2 2 6 0 #22000000, inset 0 0 7 0 #4D5B5BEF</BoxShadows>
+            <BoxShadows x:Key="ButtonRestShadow">2 2 4 0 #1F000000, inset -2 -2 3 0 #16000000</BoxShadows>
+            <BoxShadows x:Key="ButtonPressedShadow">inset 2 2 5 0 #2E000000</BoxShadows>
         </ResourceDictionary>
 
         <!-- ── Dark (primary; raised surfaces clearly above bg) ──── -->
@@ -58,6 +68,7 @@
             <SolidColorBrush x:Key="PopoverBrush" Color="#2C2C33"/>
             <SolidColorBrush x:Key="MutedBrush" Color="#302F37"/>
             <SolidColorBrush x:Key="MutedForegroundBrush" Color="#9A9AA8"/>
+            <SolidColorBrush x:Key="RecessedBrush" Color="#18171E"/>   <!-- inset well; darker than bg so dark reads recessed -->
             <SolidColorBrush x:Key="LineBrush" Color="#2EFFFFFF"/>       <!-- white ~18% -->
             <SolidColorBrush x:Key="InputBrush" Color="#33FFFFFF"/>
             <SolidColorBrush x:Key="PrimaryBrush" Color="#6D6DF5"/>      <!-- accent (indigo) -->
@@ -69,25 +80,31 @@
             <SolidColorBrush x:Key="SelectionBrush" Color="#B36D6DF5"/>  <!-- text selection (accent ~70%) -->
             <SolidColorBrush x:Key="ScrimBrush" Color="#99000000"/>      <!-- modal sheet backdrop (~60% black on dark) -->
 
-            <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+            <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#9090FB"/><GradientStop Offset="0.10" Color="#7E7EF8"/><GradientStop Offset="1" Color="#5F5FF2"/>
             </LinearGradientBrush>
-            <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+            <LinearGradientBrush x:Key="SecondaryGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#35353D"/><GradientStop Offset="0.10" Color="#303039"/><GradientStop Offset="1" Color="#28272E"/>
             </LinearGradientBrush>
-            <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+            <LinearGradientBrush x:Key="DestructiveGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#F47373"/><GradientStop Offset="0.10" Color="#F25A5A"/><GradientStop Offset="1" Color="#DF2E2E"/>
             </LinearGradientBrush>
 
-            <BoxShadows x:Key="ShadowMd">0 20 44 0 #99131219</BoxShadows>
+            <BoxShadows x:Key="ShadowMd">5 9 28 0 #99131219</BoxShadows>
             <!-- Dark drop, kept TIGHT (small blur): a wide soft falloff changes <1 level/px and bands at 8-bit;
                  these small blurs change >1 level/px (no bands). Two close layers for a touch of softness, both
                  still steep; alphas tuned to read clearly without being heavy. -->
-            <BoxShadows x:Key="ShadowRaised">0 3 8 0 #80000000, 0 6 11 0 #59000000</BoxShadows>
-            <BoxShadows x:Key="ShadowInset">inset 0 2 6 0 #80131219</BoxShadows>
-            <BoxShadows x:Key="InputFocusShadow">inset 0 2 6 0 #80131219, inset 0 0 8 0 #596D6DF5</BoxShadows>
-            <BoxShadows x:Key="ButtonRestShadow">0 2 4 0 #59131219, inset 0 -2 3 0 #40131219</BoxShadows>
-            <BoxShadows x:Key="ButtonPressedShadow">inset 0 2 5 0 #73131219</BoxShadows>
+            <BoxShadows x:Key="ShadowRaised">2 3 8 0 #80000000, 3 6 11 0 #59000000</BoxShadows>
+            <!-- Convex raised bevel (inverse of ShadowInsetBevel): light highlight top-left, dark shadow
+                 bottom-right — the buttons' tactile edge on a clickable raised surface (the board card). -->
+            <BoxShadows x:Key="ShadowRaisedBevel">inset 5 5 10 0 #1FFFFFFF, inset -5 -5 10 0 #80131219</BoxShadows>
+            <BoxShadows x:Key="ShadowInset">inset 2 2 6 0 #80131219</BoxShadows>
+            <!-- Concave bevel (diagonal, light source top-left): dark on the top-left two sides, light highlight
+                 on the bottom-right two sides (subtle on dark). The one deliberate light box-shadow. -->
+            <BoxShadows x:Key="ShadowInsetBevel">inset 5 5 12 0 #B3131219, inset -5 -5 11 0 #0AFFFFFF</BoxShadows>
+            <BoxShadows x:Key="InputFocusShadow">inset 2 2 6 0 #80131219, inset 0 0 8 0 #596D6DF5</BoxShadows>
+            <BoxShadows x:Key="ButtonRestShadow">2 2 4 0 #59131219, inset -2 -2 3 0 #40131219</BoxShadows>
+            <BoxShadows x:Key="ButtonPressedShadow">inset 2 2 5 0 #73131219</BoxShadows>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 

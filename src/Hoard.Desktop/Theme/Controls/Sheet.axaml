@@ -16,8 +16,10 @@
                 <Panel>
                     <!-- Backdrop: dims the page and catches click-away. -->
                     <Border Name="PART_Scrim" Background="{DynamicResource ScrimBrush}"/>
-                    <!-- Inset region: the margin keeps the card off the screen edges and bounds its size. -->
-                    <Grid Margin="24">
+                    <!-- Inset region: the margin keeps the card off the screen edges, bounds its size, AND
+                         reserves room for the card's ShadowMd so it never clips (even a full-height popup on a
+                         small window). Must stay ≥ the ShadowMd extent. -->
+                    <Grid Margin="40">
                         <Border MaxWidth="440" HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                 MaxHeight="{Binding $parent[Grid].Bounds.Height}"
                                 Background="{DynamicResource PopoverBrush}"

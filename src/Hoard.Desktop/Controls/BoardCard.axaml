@@ -1,0 +1,88 @@
+<!--
+  BoardCard — a board's card (see Controls/BoardCard.cs). The 3-up collage IS the card (full-bleed, all corners
+  rounded); clicking it opens the board, with expand-on-hover / shrink-on-press feedback. The name + metadata sit
+  BELOW the card with the Edit (pencil) button to their right. The card reserves shadow room (Margin) +
+  ClipToBounds=False per the CLAUDE.md rule; an inner clip Border rounds the collage without cropping the shadow.
+  Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.BoardCard"
+             x:Name="Root" ClipToBounds="False">
+
+    <UserControl.Styles>
+        <!-- Rest: normal. Hover: expand. Pressed: shrink (+ tighter shadow). Base transform comes from a style,
+             not a local value (a local value would override the state styles). -->
+        <Style Selector="Border#CardRoot">
+            <Setter Property="RenderTransform" Value="scale(1)"/>
+        </Style>
+        <Style Selector="Border#CardRoot:pointerover">
+            <Setter Property="RenderTransform" Value="scale(1.03)"/>
+        </Style>
+        <Style Selector="Border#CardRoot.pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
+        </Style>
+    </UserControl.Styles>
+
+    <!-- Width matches the card so the name column is bounded and a long board name ellipsizes (rather than
+         growing the layout). The full name is still readable in the Edit popup. -->
+    <!-- Flush (no reserve margin) so the card lines up with other content; ClipToBounds=False (on the root)
+         lets the drop shadow render into the surrounding gutter. In a grid, the grid's spacing/padding gives
+         the shadow its room. -->
+    <StackPanel Width="240" Spacing="10">
+        <!-- The collage IS the card. Outer Border carries the shadow (not clipped); inner clip rounds the collage. -->
+        <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+                Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
+                BorderThickness="1" BoxShadow="{DynamicResource ShadowRaised}" Cursor="Hand"
+                RenderTransformOrigin="50%,50%"
+                Tapped="OnCardTapped" PointerPressed="OnCardPressed" PointerReleased="OnCardReleased"
+                PointerExited="OnCardExited" PointerCaptureLost="OnCardCaptureLost">
+            <Border.Transitions>
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.10" Easing="CubicEaseOut"/>
+                </Transitions>
+            </Border.Transitions>
+            <Border CornerRadius="{DynamicResource RadiusLg}" ClipToBounds="True">
+                <Panel>
+                <Grid Height="170" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
+                    <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                        <Panel>
+                            <Image Source="{Binding #Root.Thumb0}" Stretch="UniformToFill"/>
+                            <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource MutedForegroundBrush}"
+                                       IsVisible="{Binding #Root.Thumb0, Converter={x:Static ObjectConverters.IsNull}}"/>
+                        </Panel>
+                    </Border>
+                    <Border Grid.Column="2" Grid.Row="0" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                        <Image Source="{Binding #Root.Thumb1}" Stretch="UniformToFill"/>
+                    </Border>
+                    <Border Grid.Column="2" Grid.Row="2" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
+                        <Image Source="{Binding #Root.Thumb2}" Stretch="UniformToFill"/>
+                    </Border>
+                </Grid>
+                    <!-- Raised bevel over the collage (light top-left / dark bottom-right) so the clickable
+                         card has the buttons' tactile edge. Overlay because inset shadows render behind content. -->
+                    <Border CornerRadius="{DynamicResource RadiusLg}" IsHitTestVisible="False"
+                            BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
+                </Panel>
+            </Border>
+        </Border>
+
+        <!-- Name / metadata below the card, with the Edit (pencil) to the right. Inset by the card's corner
+             radius (RadiusLg = 14) so the text/button start where the corner rounding ends. -->
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="14,0">
+            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                <TextBlock Text="{Binding #Root.Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Classes="muted" Text="{Binding #Root.MetaText}"/>
+            </StackPanel>
+            <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary"
+                    Width="40" Height="40" Padding="0" VerticalAlignment="Center"
+                    Command="{Binding #Root.EditCommand}">
+                <ctrl:Icon Data="{StaticResource Icon.pencil}" Width="16" Height="16"/>
+            </Button>
+        </Grid>
+    </StackPanel>
+</UserControl>

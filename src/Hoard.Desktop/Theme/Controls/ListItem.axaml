@@ -25,15 +25,16 @@
         <!-- Shared pressable-surface scaffold (Border#root + hit-transparent content + press transition). -->
         <Setter Property="Template" Value="{StaticResource PressableSurfaceTemplate}"/>
 
-        <!-- Hover: raised pill (same glossy bevel as the buttons). -->
+        <!-- Hover: raised pill (the SAME raised neutral as the secondary button — lighter than bg in BOTH
+             themes; CardBrush is lighter in light but darker in dark, which read inconsistent). -->
         <Style Selector="^:pointerover /template/ Border#root">
-            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource SecondaryGradientBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
             <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
         </Style>
         <!-- Press: sink in (inset bevel + 1px nudge). Must follow hover to win at equal specificity. -->
         <Style Selector="^:pressed /template/ Border#root">
-            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource SecondaryGradientBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
             <Setter Property="BoxShadow" Value="{DynamicResource ButtonPressedShadow}"/>
             <Setter Property="RenderTransform" Value="translate(0px,1px) scale(1)"/>

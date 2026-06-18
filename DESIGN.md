@@ -62,7 +62,8 @@ not pure black/white) with a single indigo **accent**.
 | `BackgroundBrush` | page background |
 | `ForegroundBrush` | primary text / icons |
 | `CardBrush` / `PopoverBrush` | raised surfaces, sheets (on dark the card sits ≈ the page, lifted by its shadow + border) |
-| `MutedBrush` | subtle fills, hover, placeholder tiles |
+| `MutedBrush` | subtle fills, placeholder tiles |
+| `RecessedBrush` | inset/recessed well (the concave project card); darker than the page in dark so it reads sunken |
 | `MutedForegroundBrush` | secondary text |
 | `LineBrush` / `InputBrush` | thin borders / input borders (alpha over the surface) |
 | `PrimaryBrush` | **accent** — primary button, accent text, focus-ring base |
@@ -79,13 +80,19 @@ The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — c
 - **Spacing:** 4 / 8 / 12 / 16 / 24 / 32 (`Space1`…`Space8`).
 - **Type:** Inter; `FontSizeBase` **14** (shadcn component default), xs 12 · sm 13 · lg 16 · xl 20 · 2xl 24.
   Headings: semibold, slightly tight tracking. Secondary text uses `MutedForegroundBrush`.
-- **Depth** (tuned per light/dark). The tactile look = a glossy **gradient fill** + box-shadows:
+- **Depth** (tuned per light/dark). The tactile look = a glossy **gradient fill** + box-shadows. **One light
+  source: top-left.** Raised elements catch light at the top-left and drop their shadow toward the bottom-right;
+  recessed elements (inset card, inputs) invert it — dark inner shadow at the top-left, light highlight at the
+  bottom-right.
   - **Gloss fills carry the "light":** `PrimaryGradientBrush` / `SecondaryGradientBrush` /
-    `DestructiveGradientBrush` — a bright top sheen → body → darker base gives buttons their glassy 3D look.
-  - **Box-shadows are dark-only** — the highlight/gloss comes from the gradient, not a light box-shadow.
-    `ButtonRestShadow` = small even drop + soft dark inner base; `ButtonPressedShadow` = dark inset (presses
-    *in*); `ShadowRaised` = soft drop for cards; `ShadowInset` = dark inset (recessed inputs); `ShadowMd` =
-    overlays; `ShadowNone` = flat. Keep outer drops small so they never clip.
+    `DestructiveGradientBrush` — a diagonal bright **top-left sheen** → body → darker bottom-right base gives
+    buttons their glassy 3D look.
+  - **Box-shadows are dark-only, EXCEPT the inset bevel.** The highlight/gloss otherwise comes from the
+    gradient, not a light box-shadow. `ButtonRestShadow` = small bottom-right drop + soft dark inner base;
+    `ButtonPressedShadow` = dark top-left inset (presses *in*); `ShadowRaised` = soft drop for raised cards;
+    `ShadowInset` = dark inset (recessed inputs); `ShadowInsetBevel` = the concave card's diagonal dark-top-left
+    + **light**-bottom-right bevel (the one deliberate light shadow); `ShadowMd` = overlays; `ShadowNone` = flat.
+    Keep outer drops small so they never clip.
   - **🔒 RULE — a text/icon shadow, where used, is ALWAYS the inverse luminance of the text.** Dark text →
     light shadow; light text → dark (black) shadow. **Never** same-luminance (light+light / dark+dark) — that's
     blurry/unreadable. **Only apply it where the text sits on a *contrasting* fill** — i.e. white text on a

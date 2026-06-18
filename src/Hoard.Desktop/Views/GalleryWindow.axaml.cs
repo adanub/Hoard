@@ -25,6 +25,10 @@ public partial class GalleryWindow : Window
         // The project card's Edit button opens its Edit popup.
         DemoProjectCard.EditCommand = new RelayCommand(() => ProjectEditDemoSheet.IsOpen = true);
         ProjectEditDemoSheet.DismissCommand = new RelayCommand(() => ProjectEditDemoSheet.IsOpen = false);
+
+        // Board card: body opens the board, pencil edits it (popup comes next). Toasts demo the two targets.
+        DemoBoardCard.OpenCommand = new RelayCommand(() => _toasts.Show("Open board"));
+        DemoBoardCard.EditCommand = new RelayCommand(() => _toasts.Show("Edit board (popup next)"));
     }
 
     // Theme switch: checked (knob to the moon) = dark, unchecked (knob to the sun) = light.
