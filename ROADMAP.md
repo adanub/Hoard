@@ -3,13 +3,16 @@
 Progress tracker so a fresh session can resume. Architecture/conventions are in `CLAUDE.md`; the
 user-facing model is in `README.md`. Keep this file current as work lands.
 
-**Status (2026-06-17):** Phase 1 complete. Phase 2 in progress — UI/UX **redesign underway**: the design-system
-component kit is **built, dialled in, and committed** (`4f62109`; live gallery catalogue). A material-shader
-background was built then **dropped** along the way (don't resurrect it). **Slice 2 in progress** — the nav
-back-stack (`NavigationService`) + a **redesigned Projects screen** (collage-card grid, "+ New" tile,
-new-project **sheet**, **toasts**) are done but **uncommitted** (await runtime sign-off). Tests: 47 (Core) +
-29 (Desktop), green. Next in slice 2: rebuild `LibraryView` on the kit, add the deeper Library→Board→Image
-back-stack, then retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles.
+**Status (2026-06-17):** Phase 1 complete. Phase 2 — UI/UX redesign. The design-system **component kit + a full
+card/popup set** are built and live in the dev gallery (`HOARD_GALLERY=1`): **ProjectCard** (concave inset),
+**BoardCard** (raised, clickable, scale feedback), their **Edit popups** (`ProjectEditSheet` / `BoardEditSheet`,
+the latter with the merge source-list), the cooldown **`ConfirmSheet`**, plus **`SheetHost`** (modal),
+**`ToastHost`**, **`FlexWrapPanel`**, the nav **`NavigationService`**, and a **top-left-light-source** token pass
+(diagonal gloss + bevels). Material-shader background was dropped earlier (don't resurrect). Mostly committed
+(`10b8106` card designs, `b64514a` UI improvements); **uncommitted:** `BoardEditSheet`, `ConfirmSheet`, their
+gallery wiring, new icons, **`ItemCard`** (masonry media tile). **These are GALLERY components — not yet wired
+into the real Projects/Library screens.** Tests: 47 (Core) + 29 (Desktop), green. Next: **integrate the cards
+into the screens** (see "Decided, pending integration").
 
 ## Done
 
@@ -65,10 +68,30 @@ back-stack, then retire FluentTheme + the placeholder `accent`/`danger`/`overlay
     (most-recent / median / oldest) + metadata. **Badge** = floating chip. Text helpers (h1/h2/muted/accent).
   - **Pressable** (`PressableSurfaceTemplate`) — the **one shared press-surface template** (Border#root +
     hit-transparent content + press transition) that Button and Row reference, so the scaffold lives in one place.
-  - `Icon` control + Lucide set (incl. sun/moon).
+  - `Icon` control + Lucide set (incl. sun/moon/pencil/check/external-link).
+- **Cards + popups** (`Theme/Controls/` are styles; these are `Controls/*.{cs,axaml}` UserControls/controls):
+  - **`ProjectCard`** — **concave inset** panel (recessed, not floating): `RecessedBrush` fill + `ShadowInsetBevel`
+    (diagonal dark-top-left / light-bottom-right), no drop shadow; 3-up collage (also inset) + name + meta +
+    **Open** (primary) / **Edit** (pencil) both `lg`.
+  - **`BoardCard`** — **raised, clickable** (card body opens; scale-on-hover / shrink-on-press + `ShadowRaisedBevel`
+    convex bevel, the buttons' tactile edge). Collage IS the card (full-bleed); name/meta + floating pencil **below**.
+  - **`ProjectEditSheet` / `BoardEditSheet`** — Edit-popup contents (in a `SheetHost`): rename toggle (read-only ↔
+    editable with ✓/✕), info rows, action group. BoardEditSheet has the **merge source-board list** (open / remove
+    / add) — see decisions below.
+  - **`ConfirmSheet`** — reusable confirm popup: title/message + Cancel/Confirm (`lg`, `FlexWrapPanel`) with an
+    optional **N-second cooldown** (Confirm disabled, countdown a subscript under the centred label).
+  - **`SheetHost`** (`Controls/SheetHost.cs` + `Theme/Controls/Sheet.axaml`) — in-app modal: scrim + responsive
+    centred card (40px inset reserves `ShadowMd` room; content scrolls/shrinks, no fixed width).
+  - **`ToastService` + `ToastHost`** — auto-dismiss toasts, bottom-right, `ClipToBounds=False` throughout so
+    shadows aren't cropped.
+  - **`FlexWrapPanel`** (`Controls/`) — flex-wrap-with-grow button group: items share the row equally, wrap one at
+    a time when narrow. Used by every action button group.
+- **One light source: top-left** — gloss gradients run diagonally; raised drops fall bottom-right, recessed/inset
+  bevels are dark-top-left + light-bottom-right. New tokens: `ShadowInsetBevel`, `ShadowRaisedBevel`, `RecessedBrush`
+  (darker-than-bg in dark so the inset reads sunken), `ScrimBrush`; light `LineBrush` bumped to ~18% to match dark.
 - **Gallery** (`GalleryWindow`, `HOARD_GALLERY=1`) — live catalogue: full button matrix (every variant × size),
-  switch, input, selectable rows (ListBox), card-with-collage, icons, swatches; header **sun─switch─moon** theme
-  toggle.
+  switch, input, selectable rows (ListBox), **project/board cards + their Edit popups + ConfirmSheet**, sheet/toast
+  demos, icons, swatches; header **sun─switch─moon** theme toggle.
 - **`FocusManagement`** (`Infrastructure/`) — reusable click-away-clears-focus behaviour; pure decision
   unit-tested + an architecture test enforcing focus primitives stay centralised.
 - **Shell is fluid reflow** (real DIPs; masonry grows columns by width). An earlier uniform-scale `DesignSurface`
@@ -78,11 +101,13 @@ back-stack, then retire FluentTheme + the placeholder `accent`/`danger`/`overlay
 
 ## Next up — finish Phase 2
 
-- **Finish the redesign (in progress).** Slice 1 (component kit + gallery) is built + committed. Slice 2 is
-  underway: the **navigation back-stack** (`Navigation/NavigationService.cs` — `Reset`/`Push`/`Pop`/`CanGoBack`,
-  shell binds `Navigation.Current`) and the **Projects launcher rebuilt on the kit** are done (uncommitted).
-  Remaining slice-2 work: **rebuild `LibraryView` on the kit**, wire a visible back affordance for the deeper
-  Board → Image-detail pushes, then **retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles**.
+- **Finish the redesign (in progress).** The component kit + the full card/popup set (incl. the **ItemCard**
+  media tile) are built **as gallery components**. Remaining: **integrate the cards into the real screens** — the
+  Projects screen (grid of `ProjectCard`s), the Library/Board screens (grids of `BoardCard`s + `ItemCard` masonry
+  tiles, the Edit popups
+  wired to real data + the merge/recycle/rename backends below), the nav back-stack (Projects → Library → Board
+  → Image-detail), then **retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles**. The cards
+  currently carry pre-formatted display strings + `ICommand`s (host supplies real data/commands at integration).
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
@@ -119,46 +144,39 @@ back-stack, then retire FluentTheme + the placeholder `accent`/`danger`/`overlay
   is full) — page when libraries get very large.
 - Optional: add an `.editorconfig` to enforce the C# formatting conventions documented in `CLAUDE.md`.
 
-## Recently landed (committed `4f62109`)
+## Decided, pending integration (the card/popup backends)
 
-The design-system component kit + gallery (and the drop of the material-shader background) shipped in
-`4f62109 feat: ui design components`, after the user verified the gallery at runtime. The kit is the
-foundation slice 2 builds on:
-- **Dropped the material/shader background feature** (minor polish): `Rendering/`, `Assets/Materials/`,
-  `ASSETS.md`, and its gallery showcase are **gone** — don't resurrect it.
-- **Component kit:** `Theme/Controls/{Button,Input,Switch,ListItem,Pressable}.axaml` + `Surfaces.axaml`
-  (Row → `ListBoxItem`, floating Badge, Card), `Tokens.axaml` (dark retone, control-height/radius tokens,
-  tight layered shadows), `Icons.axaml` (incl. sun/moon), `GalleryWindow.*` catalogue, `MainWindow.axaml`
-  (fluid shell), `FocusManagement.*`.
+The cards/popups are built as **gallery components with placeholder data** — these product decisions are
+settled and must be honoured when wiring them into the real screens:
+- **A board merges multiple Pinterest source boards.** A local "board" holds a **list of source-board refs**, so
+  several Pinterest boards can be composed into one. The `BoardEditSheet` is where you manage that list (open /
+  remove / **add** sources). Needs a data-model change (board ↔ many `SourceBoardRef`).
+- **Rename = local display-name override.** Renaming a board/project sets a local name; the original Pinterest
+  source name is kept underneath so a future import won't clobber the rename.
+- **Delete → OS recycle bin, not permanent.** Deleting a board/project hard-removes it **but moves the files to
+  the platform recycle bin** (cross-platform "move to trash" — not yet implemented).
+- **Confirm everything destructive** via `ConfirmSheet` (cooldown on board/project delete; no cooldown on
+  remove-source). The old per-image delete still uses the `ConfirmDialog` **window** — migrate it to
+  `ConfirmSheet` for consistency at integration.
+- **`ProjectLauncherView` already has an *older* inline collage-card grid** (from the first Projects-screen pass:
+  cards with a ⋯ menu, the new-project `SheetHost`, toasts — committed). At integration, **replace its inline
+  cards with the newer `ProjectCard` component** (the inset design supersedes it).
 
-## Working tree (uncommitted — await runtime sign-off)
+## Committed this phase
 
-Slice-2 work, on top of committed `4f62109`:
-- **Nav back-stack:** new `Navigation/NavigationService.cs` (`Reset`/`Push`/`Pop`/`CanGoBack`, `ObservableObject`);
-  `MainWindowViewModel` now owns it as the page factory (launcher = `Reset` root, library = `Push`;
-  switch-project resets to a fresh launcher so recents reload) instead of the old swap callbacks;
-  `MainWindow.axaml` binds `Navigation.Current`. New `NavigationServiceTests` (+6).
-- **Projects screen redesigned** (per DESIGN.md "one job per screen" — replaced the old two-column
-  recent-list + new-project form, *not* a restyle): `ProjectLauncherView.axaml` is now a reflowing grid of
-  **project-board collage cards** led by a "+ New project" tile. Each card shows a 3-up collage built from
-  **3 thumbnails read off the project's `thumbnails/` folder** (no DB opened; missing tiles stay muted) +
-  name + cache size, with a **⋯ menu** (Open / Clear cache / Remove / Delete — delete keeps the 10s
-  `ConfirmDialog`); the card body opens the project. `ProjectLauncherViewModel` rewritten accordingly
-  (`Tiles` = `NewProjectTile` marker + `RecentProjectRef` cards; per-card actions; collage loading).
-- **New components (reusable):** `Controls/SheetHost.cs` + `Theme/Controls/Sheet.axaml` — in-app modal
-  **sheet** (scrim + floating card, Esc/scrim dismiss); `Services/ToastService.cs` + `Controls/ToastHost.*`
-  — auto-dismissing **toasts** (shell-hosted in `MainWindow`, owned by `MainWindowViewModel`, passed to the
-  launcher VM). New-project + "Open existing folder…" live in the sheet; all per-project feedback is toasted.
-  New token `ScrimBrush`. Both added to the **gallery** (`GalleryWindow`) with live demos.
-Commit after the user verifies (suggested split: nav spine · sheet+toast components · Projects redesign).
+- `4f62109` design-system kit + gallery; dropped the material-shader background (`Rendering/`, `Assets/Materials/`
+  **gone** — don't resurrect).
+- `10b8106` card designs · `b64514a` UI improvements — the nav back-stack, the first Projects-screen redesign
+  (`ProjectLauncherView` collage cards + new-project sheet + toasts), the `ProjectCard`/`BoardCard` components,
+  `ProjectEditSheet`, `SheetHost`/`ToastHost`/`FlexWrapPanel`, the top-left-light-source token pass, and the
+  related doc updates.
 
-**Needs runtime verification (can't launch the GUI in-session):**
-- **Projects screen (both themes):** the "+ New" tile + project cards reflow as the window widens; each card's
-  3-up collage shows real cached thumbnails (muted tiles where a project has <3); card body opens the project;
-  the ⋯ menu's Open/Clear cache/Remove/Delete all act on the right card (Delete still shows the 10s confirm).
-- **New-project sheet:** "+ New" opens it; scrim/Esc/Cancel dismiss; name validation + path preview; Create
-  opens the new project; "Open existing folder…" adopts a folder; errors show inline in the sheet.
-- **Toasts:** clear-cache / remove / delete / open-failure show a toast bottom-right that auto-dismisses;
-  errors read in the destructive colour. Gallery (`HOARD_GALLERY=1`) has Sheet + Toast demo sections.
-- **Navigation:** open/create → library; **Switch project** returns to a fresh launcher with up-to-date recents.
-Diagnose via `hoard.log`.
+## Uncommitted (working tree)
+
+- New: `Controls/BoardEditSheet.{cs,axaml}` (merge source-list), `Controls/ConfirmSheet.{cs,axaml}` (cooldown
+  confirm), `Controls/ItemCard.{cs,axaml}` (masonry media tile — convex bevel, hover-lift, GIF/VIDEO tag,
+  memory badge, Unload, tombstone).
+- Modified: `Icons.axaml` (+`external-link`), `GalleryWindow.{axaml,axaml.cs}` (board Edit popup + confirm
+  wiring + ItemCard demo row; all destructive actions route through `ConfirmSheet`), `DESIGN.md` (ItemCard
+  inventory entry).
+- Verify in the gallery (`HOARD_GALLERY=1`, both themes) then commit. Build + 47 (Core) / 29 (Desktop) tests green.

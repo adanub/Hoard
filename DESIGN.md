@@ -90,9 +90,11 @@ The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — c
   - **Box-shadows are dark-only, EXCEPT the inset bevel.** The highlight/gloss otherwise comes from the
     gradient, not a light box-shadow. `ButtonRestShadow` = small bottom-right drop + soft dark inner base;
     `ButtonPressedShadow` = dark top-left inset (presses *in*); `ShadowRaised` = soft drop for raised cards;
-    `ShadowInset` = dark inset (recessed inputs); `ShadowInsetBevel` = the concave card's diagonal dark-top-left
-    + **light**-bottom-right bevel (the one deliberate light shadow); `ShadowMd` = overlays; `ShadowNone` = flat.
-    Keep outer drops small so they never clip.
+    `ShadowInset` = dark inset (recessed inputs); `ShadowInsetBevel` = the concave (inset) card's diagonal
+    dark-top-left + **light**-bottom-right bevel; `ShadowRaisedBevel` = its **convex** inverse (light-top-left +
+    dark-bottom-right) for a raised clickable surface (the board card) — both are deliberate light shadows;
+    `ShadowMd` = overlays/sheets (diagonal, kept within the `SheetHost`'s 40px inset); `ShadowNone` = flat. Keep
+    outer drops small, and **reserve room / `ClipToBounds=False`** so they never clip (see CLAUDE.md rule).
   - **🔒 RULE — a text/icon shadow, where used, is ALWAYS the inverse luminance of the text.** Dark text →
     light shadow; light text → dark (black) shadow. **Never** same-luminance (light+light / dark+dark) — that's
     blurry/unreadable. **Only apply it where the text sits on a *contrasting* fill** — i.e. white text on a
@@ -119,10 +121,29 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
   above). **Replaces** the old `accent` / `danger` / `overlay` styles.
 - **Switch** (`ToggleButton`, theme `HoardSwitch`) — a real on/off **slider switch**: a pill track that recolours
   muted→accent with a knob that slides; no inner text (the label sits beside it).
-- **Card / Surface** — `CardBrush`, thin `LineBrush` border, radius lg, `ShadowRaised`. The **project-board
-  card** has a 3-up Pinterest **collage cover** (rounded top via `RadiusLgTop`, built from the project's cached
-  thumbnails; muted tiles fill any gaps) above the name + cache size and a **⋯ manage menu** (open / clear
-  cache / remove / delete); the card body opens the project.
+- **Card / Surface** — generic raised surface: `CardBrush`, thin `LineBrush` border, radius lg, `ShadowRaised`.
+- **ProjectCard** (`Controls/ProjectCard.*`) — a project's card. **Concave inset** (it isn't clickable, so it
+  reads recessed, not floating): `RecessedBrush` fill + `ShadowInsetBevel`, **no** drop shadow; a 3-up collage
+  cover (also given the inset bevel) over name + meta + **Open** (primary) / **Edit** pencil (secondary), both
+  `lg`. Collage built from the project's cached thumbnails (muted tiles fill gaps).
+- **BoardCard** (`Controls/BoardCard.*`) — a board's card. **Raised + clickable**: the collage IS the card
+  (full-bleed, all corners rounded), the **card body opens** the board with expand-on-hover / shrink-on-press
+  scale + a `ShadowRaisedBevel` convex edge (the buttons' tactile feel); name + meta sit **below** it with a
+  floating pencil **Edit** to the right.
+- **ItemCard** (`Controls/ItemCard.*`) — a media tile in the masonry grid. The image/GIF is **full-bleed**
+  under a **convex** `ShadowRaisedBevel` edge + thin `LineBrush` border: **flat at rest**, lifting `ShadowRaised`
+  on hover with the cards' expand-on-hover / shrink-on-press scale. The body tap opens the item; a floating
+  **GIF/VIDEO tag** (`badge`) sits top-left, with a GIF memory-footprint badge + **Unload** button while a GIF
+  plays, and a recessed **tombstone** (deletion note) when the blob is gone. Chrome sits *above* the bevel so it
+  stays legible + clickable.
+- **Edit popups** (`Controls/ProjectEditSheet.*`, `BoardEditSheet.*`) — contents of a `SheetHost`: a **rename
+  toggle** (read-only text ↔ editable field with ✓/✕), info rows, and a `FlexWrapPanel` action group.
+  `BoardEditSheet` also lists the board's **merged Pinterest source boards** (open / remove / add).
+- **ConfirmSheet** (`Controls/ConfirmSheet.*`) — reusable confirm popup in a `SheetHost`, layered on top:
+  title + message + Cancel/Confirm (`lg`), with an optional **N-second cooldown** (Confirm disabled, the
+  countdown shown as a subscript under the centred label). Use for every destructive action.
+- **FlexWrapPanel** (`Controls/FlexWrapPanel.cs`) — flex-wrap-with-grow button group: items share the row
+  equally and wrap one at a time when narrow. The standard container for any row of action buttons.
 - **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset`, thin border, accent focus
   ring, muted placeholder.
 - **Row** (`ListBoxItem`, theme `HoardListItem`) — tappable list item (project / board / collection): bare at

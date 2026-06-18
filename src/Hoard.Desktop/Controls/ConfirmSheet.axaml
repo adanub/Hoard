@@ -1,0 +1,30 @@
+<!--
+  ConfirmSheet — contents of a confirmation popup (see Controls/ConfirmSheet.cs). Goes inside a SheetHost,
+  shown ON TOP of whatever triggered it. The Confirm button's label + enabled state are driven from code
+  (Begin) so it can show an N-second cooldown. Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.ConfirmSheet"
+             x:Name="Root">
+
+    <StackPanel Margin="24" Spacing="16">
+        <TextBlock Classes="h2" Text="{Binding #Root.Title}"/>
+        <TextBlock Text="{Binding #Root.Message}" TextWrapping="Wrap"
+                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+        <!-- Cancel + Confirm as a flexible group: fill the row, wrap one at a time when narrow. -->
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Classes="ghost lg" Content="Cancel" Click="OnCancel"/>
+            <Button x:Name="ConfirmButton" Theme="{StaticResource HoardButton}" Classes="destructive lg" Click="OnConfirm">
+                <!-- Label is a normal centred element; the countdown is an overlay translated just below it, so
+                     it never affects the label's position. -->
+                <Grid TextElement.Foreground="{DynamicResource DestructiveForegroundBrush}">
+                    <TextBlock Text="{Binding #Root.ConfirmLabel}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="ConfirmCountText" FontSize="11" HorizontalAlignment="Center"
+                               VerticalAlignment="Center" RenderTransform="translateY(13px)"/>
+                </Grid>
+            </Button>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

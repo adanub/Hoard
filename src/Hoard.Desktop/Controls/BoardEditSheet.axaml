@@ -1,0 +1,104 @@
+<!--
+  BoardEditSheet — contents of the board Edit popup (see Controls/BoardEditSheet.cs). Goes inside a SheetHost.
+  Rename toggles read-only ↔ editable via Rename ↔ ✓/✕. The source list is manageable: each Pinterest source
+  board has open-in-browser + remove (×), with an "Add source board…" action (merge). No fixed width (the
+  SheetHost sizes it). Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.BoardEditSheet"
+             x:Name="Root">
+
+    <StackPanel Margin="24" Spacing="16">
+        <TextBlock Classes="h2" Text="Edit board"/>
+
+        <!-- Name + rename toggle. Read state = plain text; Rename swaps in the editable field. -->
+        <StackPanel Spacing="6">
+            <TextBlock Classes="muted" Text="Name"/>
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <Panel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding #Root.BoardName}" FontWeight="Medium" FontSize="{DynamicResource FontSizeLg}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               IsVisible="{Binding !#Root.IsEditing}"/>
+                    <TextBox x:Name="NameBox" Theme="{StaticResource HoardInput}"
+                             Text="{Binding #Root.BoardName}" IsVisible="{Binding #Root.IsEditing}"/>
+                </Panel>
+                <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary" Content="Rename"
+                        IsVisible="{Binding !#Root.IsEditing}" Click="OnRename"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" IsVisible="{Binding #Root.IsEditing}">
+                    <Button Theme="{StaticResource HoardButton}" Classes="secondary" Width="38" Height="38" Padding="0"
+                            Click="OnConfirmRename">
+                        <ctrl:Icon Data="{StaticResource Icon.check}" Width="18" Height="18"/>
+                    </Button>
+                    <Button Theme="{StaticResource HoardButton}" Classes="outline" Width="38" Height="38" Padding="0"
+                            Click="OnCancelRename">
+                        <ctrl:Icon Data="{StaticResource Icon.x}" Width="18" Height="18"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <!-- Merged Pinterest source boards: open / remove each, and add another. -->
+        <StackPanel Spacing="6">
+            <TextBlock Classes="muted" Text="Pinterest source boards"/>
+            <ItemsControl ItemsSource="{Binding #Root.SourceBoards}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Spacing="6"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="ctrl:BoardSourceRef">
+                        <Border Background="{DynamicResource MutedBrush}" CornerRadius="{DynamicResource RadiusMd}"
+                                Padding="10,6">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4">
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Classes="muted" Text="{Binding Url}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
+                                        Width="32" Height="32" Padding="0"
+                                        Command="{Binding #Root.OpenSourceCommand}" CommandParameter="{Binding}">
+                                    <ctrl:Icon Data="{StaticResource Icon.external-link}" Width="16" Height="16"/>
+                                </Button>
+                                <Button Grid.Column="2" Theme="{StaticResource HoardButton}" Classes="ghost"
+                                        Width="32" Height="32" Padding="0"
+                                        Command="{Binding #Root.RemoveSourceCommand}" CommandParameter="{Binding}">
+                                    <ctrl:Icon Data="{StaticResource Icon.x}" Width="16" Height="16"/>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Button Theme="{StaticResource HoardButton}" Classes="outline" HorizontalAlignment="Left"
+                    Command="{Binding #Root.AddSourceCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <ctrl:Icon Data="{StaticResource Icon.plus}" Width="16" Height="16"/>
+                    <TextBlock Text="Add source board…" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+        <!-- Info -->
+        <StackPanel Spacing="4">
+            <TextBlock Classes="muted" Text="{Binding #Root.CountsText}"/>
+            <TextBlock Classes="muted" Text="{Binding #Root.CacheText}"/>
+            <Grid ColumnDefinitions="*,*">
+                <TextBlock Grid.Column="0" Classes="muted" Text="{Binding #Root.AddedText}"/>
+                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding #Root.ImportedText}"/>
+            </Grid>
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource LineBrush}"/>
+
+        <!-- Actions: one group that fills the row, wrapping when space runs out. -->
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Clear cache"
+                    Command="{Binding #Root.ClearCacheCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete board…"
+                    Command="{Binding #Root.DeleteCommand}"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

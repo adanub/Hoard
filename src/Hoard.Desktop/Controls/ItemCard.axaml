@@ -1,0 +1,118 @@
+<!--
+  ItemCard — a media tile in the masonry grid (see Controls/ItemCard.cs). The image/GIF fills the card
+  (full-bleed, all corners rounded) under a convex bevel + thin border: flat at rest, lifting a drop shadow
+  on hover with expand-on-hover / shrink-on-press feedback. Tapping the body opens the item. Floating chrome
+  (GIF/VIDEO tag, GIF memory badge, Unload) sits ABOVE the bevel so it stays legible + clickable. The card
+  reserves shadow room via ClipToBounds=False (the grid's spacing gives the lifted shadow its gutter) — per
+  the CLAUDE.md rule. Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.ItemCard"
+             x:Name="Root" ClipToBounds="False">
+
+    <UserControl.Styles>
+        <!-- Rest: flat (border only). Hover: expand + lift a drop shadow. Pressed: shrink + tighter shadow.
+             Both transform AND shadow come from styles, never a local value (a local value would override
+             the state styles — the layout-precedence trap). -->
+        <Style Selector="Border#CardRoot">
+            <Setter Property="RenderTransform" Value="scale(1)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowNone}"/>
+        </Style>
+        <Style Selector="Border#CardRoot:pointerover">
+            <Setter Property="RenderTransform" Value="scale(1.03)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowRaised}"/>
+        </Style>
+        <Style Selector="Border#CardRoot.pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
+        </Style>
+    </UserControl.Styles>
+
+    <!-- Outer Border carries the (hover) shadow + border; inner clip rounds the media without cropping it. -->
+    <Border x:Name="CardRoot" CornerRadius="{DynamicResource RadiusMd}"
+            Background="{DynamicResource MutedBrush}" BorderBrush="{DynamicResource LineBrush}"
+            BorderThickness="1" Cursor="Hand" RenderTransformOrigin="50%,50%"
+            Tapped="OnCardTapped" PointerPressed="OnCardPressed" PointerReleased="OnCardReleased"
+            PointerExited="OnCardExited" PointerCaptureLost="OnCardCaptureLost">
+        <Border.Transitions>
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.10" Easing="CubicEaseOut"/>
+            </Transitions>
+        </Border.Transitions>
+
+        <Border CornerRadius="{DynamicResource RadiusMd}" ClipToBounds="True">
+            <Panel>
+                <!-- Still thumbnail -->
+                <Image Source="{Binding #Root.Thumbnail}" Stretch="UniformToFill"/>
+
+                <!-- Animated GIF, played once the tile is opened (kept while loaded) -->
+                <ctrl:AnimatedImageControl x:Name="TileGif" Source="{Binding #Root.PlaySource}"
+                                           IsVisible="{Binding #Root.PlaySource, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                <!-- Placeholder when no thumbnail has decoded yet (and the blob is live) -->
+                <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="{DynamicResource MutedForegroundBrush}"
+                           IsVisible="{Binding #Root.Thumbnail, Converter={x:Static ObjectConverters.IsNull}}"/>
+
+                <!-- Non-image (video) body: darken + centred kind label -->
+                <Border IsVisible="{Binding #Root.IsImage, Converter={x:Static BoolConverters.Not}}"
+                        Background="{DynamicResource MediaScrimBrush}">
+                    <TextBlock Text="{Binding #Root.KindLabel}" HorizontalAlignment="Center"
+                               VerticalAlignment="Center" Foreground="{DynamicResource MutedForegroundBrush}"/>
+                </Border>
+
+                <!-- Convex bevel over the media (light top-left / dark bottom-right) so the clickable tile has
+                     the buttons' tactile edge. Overlay because inset shadows render behind content. -->
+                <Border CornerRadius="{DynamicResource RadiusMd}" IsHitTestVisible="False"
+                        BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
+
+                <!-- Loading spinners (thumbnail decode, or hover-GIF frame decode) — above the bevel. -->
+                <ProgressBar IsIndeterminate="True" IsVisible="{Binding #Root.IsThumbnailLoading}"
+                             Width="64" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <ProgressBar IsIndeterminate="True" IsVisible="{Binding #TileGif.IsLoading}"
+                             Width="64" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                <!-- Floating GIF/VIDEO tag + GIF memory footprint, top-left (beveled badges, drop shadow). -->
+                <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Spacing="4">
+                    <Border Classes="badge" Padding="6,1" IsVisible="{Binding #Root.ShowGifTag}">
+                        <TextBlock Text="GIF" FontSize="10" FontWeight="Bold"/>
+                    </Border>
+                    <Border Classes="badge" Padding="6,1"
+                            IsVisible="{Binding #Root.IsImage, Converter={x:Static BoolConverters.Not}}">
+                        <TextBlock Text="VIDEO" FontSize="10" FontWeight="Bold"/>
+                    </Border>
+                    <Border Classes="badge" Padding="6,1"
+                            IsVisible="{Binding #TileGif.LoadedSizeText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                        <TextBlock Text="{Binding #TileGif.LoadedSizeText}" Classes="muted" FontSize="10"/>
+                    </Border>
+                </StackPanel>
+
+                <!-- Unload-from-memory button, top-right (only while a GIF is playing). Handles its own
+                     pointer events, so it never triggers the card's tap/press. -->
+                <Button Theme="{StaticResource HoardButton}" Classes="secondary sm"
+                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" Padding="8,0"
+                        FontSize="11" Content="⏏ Unload" Command="{Binding #Root.UnloadCommand}"
+                        ToolTip.Tip="Stop and free this GIF from memory"
+                        IsVisible="{Binding #Root.PlaySource, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                <!-- Tombstone: the blob was deleted — show the note in a recessed well instead of media. LAST
+                     child so it masks all media chrome (tags / spinner / Unload) for a clean deleted state. -->
+                <Border IsVisible="{Binding #Root.IsDeleted}" Background="{DynamicResource RecessedBrush}"
+                        BoxShadow="{DynamicResource ShadowInset}">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="12" Spacing="6">
+                        <ctrl:Icon Data="{StaticResource Icon.trash-2}" Width="22" Height="22"
+                                   HorizontalAlignment="Center" Foreground="{DynamicResource MutedForegroundBrush}"/>
+                        <TextBlock Text="Deleted" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+                        <TextBlock Text="{Binding #Root.DeletionNote}" Classes="muted" FontSize="11"
+                                   TextWrapping="Wrap" TextAlignment="Center" MaxLines="5"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Border>
+            </Panel>
+        </Border>
+    </Border>
+</UserControl>

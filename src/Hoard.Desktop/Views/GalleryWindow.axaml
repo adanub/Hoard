@@ -121,6 +121,19 @@
                                     MetaText="37 images · 5 MB cache" HorizontalAlignment="Left"/>
                 </StackPanel>
 
+                <!-- Item card: a masonry media tile — full-bleed image/GIF, convex bevel + border, hover lift,
+                     floating GIF/VIDEO tag, and a deleted tombstone. (Placeholder tiles show the muted fill.) -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Item card"/>
+                    <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Left">
+                        <ctrl:ItemCard Width="160" Height="200"/>
+                        <ctrl:ItemCard Width="160" Height="120" ShowGifTag="True"/>
+                        <ctrl:ItemCard Width="160" Height="160" IsImage="False" KindLabel="Video"/>
+                        <ctrl:ItemCard Width="160" Height="200" IsDeleted="True"
+                                       DeletionNote="Removed during cleanup — re-import to restore."/>
+                    </StackPanel>
+                </StackPanel>
+
                 <!-- Sheet (in-app modal) -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Sheet"/>
@@ -234,12 +247,26 @@
 
         <!-- Project card's Edit popup (opened by the card's Edit button). -->
         <ctrl:SheetHost x:Name="ProjectEditDemoSheet">
-            <ctrl:ProjectEditSheet ProjectName="HoardTest1"
+            <ctrl:ProjectEditSheet x:Name="DemoProjectEditSheet" ProjectName="HoardTest1"
                                    FolderPath="D:\Archive\HoardTest1"
                                    CountsText="Images 64   ·   GIFs 9   ·   Videos 5"
                                    BoardsText="Boards 4"
                                    CacheText="Cache 12 MB" OnDiskText="On disk 318 MB"
                                    AddedText="Added 2026-05-01" ModifiedText="Modified 2026-06-17"/>
+        </ctrl:SheetHost>
+
+        <!-- Board card's Edit popup (opened by the card's pencil). -->
+        <ctrl:SheetHost x:Name="BoardEditDemoSheet">
+            <ctrl:BoardEditSheet x:Name="DemoBoardEditSheet" BoardName="animation-references"
+                                 CountsText="Images 30   ·   GIFs 5   ·   Videos 2"
+                                 CacheText="Cache 5 MB"
+                                 AddedText="Added 2026-04-12" ImportedText="Imported 2026-06-15"/>
+        </ctrl:SheetHost>
+
+        <!-- Confirmation popup — opened ON TOP of an Edit popup by any destructive action (must be last so it
+             renders above the others). -->
+        <ctrl:SheetHost x:Name="ConfirmDemoSheet">
+            <ctrl:ConfirmSheet x:Name="DemoConfirmSheet"/>
         </ctrl:SheetHost>
     </Panel>
 </Window>
