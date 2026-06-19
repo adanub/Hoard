@@ -39,6 +39,10 @@ public partial class GalleryWindow : Window
             "Delete project?", "Permanently delete this project and all its data? It's moved to your system's recycle bin.",
             "Delete", 10, () => _toasts.Show("Project deleted (→ recycle bin)", isError: true)));
 
+        // New cards: the whole tile is the action.
+        DemoNewCard.Command = new RelayCommand(() => _toasts.Show("New board…"));
+        DemoNewProjectCard.Command = new RelayCommand(() => _toasts.Show("New project…"));
+
         // Board card: body opens the board; pencil opens the board Edit popup.
         DemoBoardCard.OpenCommand = new RelayCommand(() => _toasts.Show("Open board"));
         DemoBoardCard.EditCommand = new RelayCommand(() => BoardEditDemoSheet.IsOpen = true);

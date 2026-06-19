@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Hoard.Core.Library;
 using Hoard.Core.Projects;
 using Hoard.Desktop.Services;
 
@@ -20,23 +21,40 @@ public sealed class NewProjectTile : ViewModelBase
 }
 
 /// <summary>
-/// A recent project, shown as a board card: name, cache size, and a 3-up collage cover built from the
-/// project's cached thumbnails (read straight off disk — no DB is opened).
+/// A recent project, shown as a <see cref="Controls.ProjectCard"/>: name, cache size, and a 3-up collage
+/// cover built from the project's cached thumbnails (read straight off disk — no DB is opened). The Open/Edit
+/// buttons surface as per-item commands that call back into the launcher. The Edit-popup info fields
+/// (counts/boards/dates/on-disk) are filled lazily when the popup opens.
 /// </summary>
 public partial class RecentProjectRef : ViewModelBase
 {
-    public string Path { get; }
-    public string Name { get; }
+    /// <summary>The project folder. Mutable: a rename moves the folder on disk and re-points this.</summary>
+    public string Path { get; set; }
 
+    [ObservableProperty] private string _name;
     [ObservableProperty] private string _cacheSizeText = "Loading…";
     [ObservableProperty] private Bitmap? _thumb0;
     [ObservableProperty] private Bitmap? _thumb1;
     [ObservableProperty] private Bitmap? _thumb2;
 
-    public RecentProjectRef(string path, string name)
+    // Edit-popup info (lazy): live counts + boards come from the DB; dates + on-disk size from the folder.
+    [ObservableProperty] private string _countsText = "";
+    [ObservableProperty] private string _boardsText = "";
+    [ObservableProperty] private string _onDiskText = "";
+    [ObservableProperty] private string _addedText = "";
+    [ObservableProperty] private string _modifiedText = "";
+
+    /// <summary>Open this project (the card's Open button).</summary>
+    public IRelayCommand OpenCommand { get; }
+    /// <summary>Open this project's Edit popup (the card's Edit pencil).</summary>
+    public IRelayCommand EditCommand { get; }
+
+    public RecentProjectRef(string path, string name, Action<RecentProjectRef> open, Action<RecentProjectRef> edit)
     {
         Path = path;
-        Name = name;
+        _name = name;
+        OpenCommand = new RelayCommand(() => open(this));
+        EditCommand = new RelayCommand(() => edit(this));
     }
 }
 
@@ -64,13 +82,17 @@ public partial class ProjectLauncherViewModel : ViewModelBase
         if (projects is not null) // skip in the design-time (null) ctor
         {
             foreach (var path in projects.RecentProjects)
-                Tiles.Add(new RecentProjectRef(path, new DirectoryInfo(path).Name));
+                Tiles.Add(NewRef(path, new DirectoryInfo(path).Name));
             _ = LoadRecentsAsync();
         }
     }
 
     // Design-time constructor for the XAML previewer.
     public ProjectLauncherViewModel() : this(null!, null!, new ToastService(), () => { }) { }
+
+    /// <summary>Build a recent-project card wired to this launcher's Open/Edit actions.</summary>
+    private RecentProjectRef NewRef(string path, string name)
+        => new(path, name, r => _ = OpenProjectAsync(r), BeginEdit);
 
     /// <summary>The “+ New” tile followed by one card per recent project (both rendered in the same grid).</summary>
     public ObservableCollection<ViewModelBase> Tiles { get; } = new();
@@ -153,9 +175,9 @@ public partial class ProjectLauncherViewModel : ViewModelBase
         else SheetError = "Couldn't open project: " + err;
     }
 
-    // ── Per-project actions (card body + the ⋯ menu) ─────────────────────────
+    // ── Open project (the card's Open button) ────────────────────────────────
 
-    /// <summary>Open the project behind a card (the card body and the menu's "Open" both call this).</summary>
+    /// <summary>Open the project behind a card (the card's Open button calls this).</summary>
     public async Task OpenProjectAsync(RecentProjectRef r)
     {
         var err = await TryOpenAsync(r.Path);
@@ -176,6 +198,67 @@ public partial class ProjectLauncherViewModel : ViewModelBase
             return ex.Message;
         }
     }
+
+    // ── Edit popup (per-project info + rename) ───────────────────────────────
+
+    /// <summary>The project whose Edit popup is open (null when closed). Drives the popup's bindings.</summary>
+    [ObservableProperty] private RecentProjectRef? _editTarget;
+    [ObservableProperty] private bool _isEditSheetOpen;
+
+    [RelayCommand]
+    private void CloseEditSheet() => IsEditSheetOpen = false;
+
+    /// <summary>Open the Edit popup for a project and (lazily) fill its info rows.</summary>
+    public void BeginEdit(RecentProjectRef r)
+    {
+        EditTarget = r;
+        IsEditSheetOpen = true;
+        _ = LoadEditInfoAsync(r);
+    }
+
+    private async Task LoadEditInfoAsync(RecentProjectRef r)
+    {
+        // Cheap folder-derived info first (dates), then the on-disk size + DB counts off the UI thread.
+        var info = new DirectoryInfo(r.Path);
+        var exists = info.Exists;
+        r.AddedText = "Added " + (exists ? info.CreationTime.ToString("d MMM yyyy") : "—");
+        r.ModifiedText = "Updated " + (exists ? info.LastWriteTime.ToString("d MMM yyyy") : "—");
+        r.CountsText = "Counting…";
+        r.BoardsText = "";
+
+        var onDisk = await Task.Run(() => DirectorySize(r.Path));
+        r.OnDiskText = ByteFormat.Format(onDisk) + " on disk";
+
+        try
+        {
+            var stats = await ProjectStatsReader.ReadAsync(r.Path);
+            r.CountsText = $"{stats.Images} images · {stats.Gifs} GIFs · {stats.Videos} videos";
+            r.BoardsText = stats.Boards == 1 ? "1 board" : $"{stats.Boards} boards";
+        }
+        catch
+        {
+            r.CountsText = "Couldn't read project stats.";
+            r.BoardsText = "";
+        }
+    }
+
+    /// <summary>Rename a project: rename its folder on disk and re-point the card. From the Edit popup.</summary>
+    public void RenameEditTarget(string? newName)
+    {
+        if (EditTarget is not { } r || string.IsNullOrWhiteSpace(newName)) return;
+        try
+        {
+            r.Path = _projects.RenameProject(r.Path, newName.Trim());
+            r.Name = newName.Trim();
+            _toasts.Show($"Renamed to “{r.Name}”.");
+        }
+        catch (Exception ex)
+        {
+            _toasts.Show($"Couldn't rename: {ex.Message}", isError: true);
+        }
+    }
+
+    // ── Per-project actions ──────────────────────────────────────────────────
 
     /// <summary>Clear a project's thumbnail cache (regenerated on demand, so this is safe).</summary>
     public async Task ClearCacheAsync(RecentProjectRef r)

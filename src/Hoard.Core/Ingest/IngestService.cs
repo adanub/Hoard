@@ -33,8 +33,31 @@ public sealed class IngestService
         _logger = logger ?? NullLogger<IngestService>.Instance;
     }
 
+    /// <summary>
+    /// Create an empty local board (collection) up front — so an import has somewhere to land immediately and
+    /// its card can show progress from the first pin — and return its id. The connector is resolved from the
+    /// <paramref name="url"/> the board will be filled from.
+    /// </summary>
+    public async Task<int> CreateBoardAsync(string name, string url, CancellationToken ct = default)
+    {
+        var connectorName = _connectors.FirstOrDefault(c => c.CanHandle(url))?.Name ?? "";
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var collection = new Collection
+        {
+            Name = name,
+            SourceConnector = connectorName,
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+        db.Collections.Add(collection);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return collection.Id;
+    }
+
+    /// <param name="targetCollectionId">When set, every imported pin is linked into this one board (the board
+    /// the user chose/created), instead of auto-foldering by each pin's source board.</param>
     public async Task<IngestResult> ImportAsync(
-        string url, ConnectorOptions options, IProgress<IngestProgress>? progress, CancellationToken ct = default)
+        string url, ConnectorOptions options, IProgress<IngestProgress>? progress,
+        int? targetCollectionId = null, CancellationToken ct = default)
     {
         var connector = _connectors.FirstOrDefault(c => c.CanHandle(url))
             ?? throw new NotSupportedException($"No connector can handle '{url}'.");
@@ -42,6 +65,10 @@ public sealed class IngestService
         progress?.Report(new IngestProgress(IngestPhase.Starting, 0, 0, $"Starting {connector.Name} download…"));
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        var targetCollection = targetCollectionId is int tid
+            ? await db.Collections.FirstOrDefaultAsync(c => c.Id == tid, ct).ConfigureAwait(false)
+            : null;
 
         // Local caches so repeated keys within a single import resolve before SaveChanges.
         var assetsBySha = new Dictionary<string, Asset>();
@@ -79,7 +106,22 @@ public sealed class IngestService
             var isNew = existing is null;
             var asset = existing ?? CreateAsset(db, assetsBySha, blob, item);
 
-            var collection = await GetOrCreateCollectionAsync(db, collections, item, connector.Name, itemCt).ConfigureAwait(false);
+            Collection? collection;
+            if (targetCollection is not null)
+            {
+                // Import into the one board the user chose/created. Seed its source ref from the first pin that
+                // has one, so future re-imports of that board can skip already-fetched pins (GetKnownItems).
+                collection = targetCollection;
+                if (collection.SourceBoardId is null && item.BoardId is not null)
+                {
+                    collection.SourceBoardId = item.BoardId;
+                    collection.SourceUrl = item.BoardUrl;
+                }
+            }
+            else
+            {
+                collection = await GetOrCreateCollectionAsync(db, collections, item, connector.Name, itemCt).ConfigureAwait(false);
+            }
             if (collection is not null)
                 await LinkToCollectionAsync(db, collection, asset, item, itemCt).ConfigureAwait(false);
 
@@ -99,7 +141,8 @@ public sealed class IngestService
         var skippedNote = skippedDeleted > 0 ? $", {skippedDeleted} skipped (deleted)" : "";
         progress?.Report(new IngestProgress(IngestPhase.Done, processed, processed,
             $"Imported {newAssets} new, {duplicates} already-had{skippedNote}."));
-        return new IngestResult(processed, newAssets, duplicates, collections.Count);
+        var touched = targetCollection is not null ? 1 : collections.Count;
+        return new IngestResult(processed, newAssets, duplicates, touched);
     }
 
     // One shared client for restore downloads (the recommended HttpClient usage).

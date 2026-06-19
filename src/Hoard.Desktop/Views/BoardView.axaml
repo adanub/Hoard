@@ -1,0 +1,159 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Hoard.Desktop.ViewModels"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="700"
+             x:Class="Hoard.Desktop.Views.BoardView"
+             x:DataType="vm:BoardViewModel">
+
+    <Design.DataContext>
+        <vm:BoardViewModel/>
+    </Design.DataContext>
+
+    <UserControl.KeyBindings>
+        <KeyBinding Gesture="Escape" Command="{Binding CloseDetailsCommand}"/>
+    </UserControl.KeyBindings>
+
+    <DockPanel>
+        <!-- Top bar: back (← to Library) · board title. (Search goes elsewhere later.) -->
+        <Border DockPanel.Dock="Top" Padding="16,12"
+                BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <Button Grid.Column="0" Theme="{StaticResource HoardButton}" Classes="ghost"
+                        Width="38" Height="38" Padding="0" Command="{Binding BackCommand}"
+                        ToolTip.Tip="Back">
+                    <ctrl:Icon Data="{StaticResource Icon.chevron-left}" Width="20" Height="20"/>
+                </Button>
+                <TextBlock Grid.Column="1" Text="{Binding Title}" Classes="h2" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+            </Grid>
+        </Border>
+
+        <!-- Import strip: shown while an import is landing in this board, with the same live count as the card. -->
+        <Border DockPanel.Dock="Top" IsVisible="{Binding IsBoardImporting}" Padding="16,8"
+                Background="{DynamicResource SecondaryGradientBrush}"
+                BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="6">
+                <TextBlock Classes="accent" FontSize="{DynamicResource FontSizeSm}" Text="{Binding ImportStatusText}"/>
+                <ProgressBar IsIndeterminate="True" Height="4" Foreground="{DynamicResource PrimaryBrush}"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Masonry grid (ItemCards) with a floating detail overlay on top. -->
+        <Panel>
+            <ScrollViewer Name="GridScroll" Padding="10"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <!-- ClipToBounds=False so an ItemCard's hover-scale + lifted shadow aren't cropped to its cell. -->
+                <ItemsRepeater Name="AssetGrid" ItemsSource="{Binding Assets}" ClipToBounds="False">
+                    <ItemsRepeater.Layout>
+                        <ctrl:MasonryLayout TargetColumnWidth="200" Spacing="10"/>
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="vm:AssetTileViewModel">
+                            <ctrl:ItemCard Thumbnail="{Binding Thumbnail}" PlaySource="{Binding PlaySource}"
+                                           IsImage="{Binding IsImage}" KindLabel="{Binding KindLabel}"
+                                           ShowGifTag="{Binding IsGifBadgeVisible}"
+                                           IsDeleted="{Binding IsDeleted}" DeletionNote="{Binding DeletionNote}"
+                                           IsThumbnailLoading="{Binding IsThumbnailLoading}"
+                                           OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"/>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </ScrollViewer>
+
+            <!-- Detail overlay (floats over the grid). Delete/restore route through the view model. -->
+            <Border Width="360" HorizontalAlignment="Right" VerticalAlignment="Stretch"
+                    IsVisible="{Binding Details, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    Background="{DynamicResource PopoverBrush}"
+                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,0,0,0"
+                    BoxShadow="{DynamicResource ShadowMd}">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="16,12,10,8">
+                        <TextBlock Text="Details" Classes="h2" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
+                                Width="34" Height="34" Padding="0" Command="{Binding CloseDetailsCommand}"
+                                ToolTip.Tip="Close (Esc)">
+                            <ctrl:Icon Data="{StaticResource Icon.x}" Width="16" Height="16"/>
+                        </Button>
+                    </Grid>
+
+                    <ScrollViewer>
+                        <StackPanel Margin="16,0,16,16" Spacing="10"
+                                    DataContext="{Binding Details}" x:DataType="vm:AssetDetailViewModel">
+                            <Border CornerRadius="{DynamicResource RadiusMd}" ClipToBounds="True"
+                                    Background="{DynamicResource MutedBrush}" IsVisible="{Binding IsImage}" MinHeight="80">
+                                <Panel>
+                                    <Image Source="{Binding Preview}" MaxHeight="320" Stretch="Uniform"
+                                           IsVisible="{Binding IsStaticImage}"/>
+                                    <ctrl:AnimatedImageControl Name="GifPlayer" Source="{Binding FilePath}"
+                                                               MaxHeight="320" IsVisible="{Binding IsGif}"/>
+                                    <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                 IsVisible="{Binding IsPreviewLoading}"/>
+                                    <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                 IsVisible="{Binding #GifPlayer.IsLoading}"/>
+                                </Panel>
+                            </Border>
+                            <Border CornerRadius="{DynamicResource RadiusMd}" Background="{DynamicResource MutedBrush}"
+                                    Padding="16" IsVisible="{Binding IsVideo}">
+                                <TextBlock Text="🎬  Video — use “Open file” to play" HorizontalAlignment="Center"
+                                           Foreground="{DynamicResource MutedForegroundBrush}"/>
+                            </Border>
+
+                            <Border CornerRadius="{DynamicResource RadiusMd}" Background="{DynamicResource RecessedBrush}"
+                                    BoxShadow="{DynamicResource ShadowInset}" Padding="16" IsVisible="{Binding IsDeleted}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource MutedForegroundBrush}"
+                                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource MutedForegroundBrush}"
+                                       IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                            <StackPanel Spacing="8" Margin="0,4,0,0">
+                                <StackPanel IsVisible="{Binding Dimensions, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                    <TextBlock Text="Dimensions" Classes="muted" FontSize="11"/>
+                                    <TextBlock Text="{Binding Dimensions}"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="File size" Classes="muted" FontSize="11"/>
+                                    <TextBlock Text="{Binding FileSize}"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Type" Classes="muted" FontSize="11"/>
+                                    <TextBlock Text="{Binding TypeText}"/>
+                                </StackPanel>
+                                <StackPanel IsVisible="{Binding Boards, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                    <TextBlock Text="Boards" Classes="muted" FontSize="11"/>
+                                    <TextBlock Text="{Binding Boards}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <StackPanel Spacing="6" Margin="0,6,0,0">
+                                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open source on Pinterest"
+                                        HorizontalAlignment="Stretch" Click="OnOpenSource"
+                                        IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open file"
+                                        HorizontalAlignment="Stretch" Click="OnOpenImage" IsVisible="{Binding IsLive}"/>
+                                <Button Theme="{StaticResource HoardButton}" Content="♻ Restore from source"
+                                        HorizontalAlignment="Stretch" Click="OnRestoreAsset" Margin="0,8,0,0"
+                                        IsVisible="{Binding IsDeleted}" IsEnabled="{Binding CanRestore}"/>
+                                <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete from archive"
+                                        HorizontalAlignment="Stretch" Click="OnDeleteAsset" Margin="0,8,0,0"
+                                        IsVisible="{Binding IsLive}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Panel>
+    </DockPanel>
+</UserControl>

@@ -20,11 +20,17 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
 
+    // One thumbnail cache per opened project, shared by the Library (board covers) and Board (tiles) screens.
+    private ThumbnailCache? _thumbnails;
+
     /// <summary>The shell binds <c>Navigation.Current</c> to show the active page.</summary>
     public NavigationService Navigation { get; } = new();
 
     /// <summary>App-wide transient toasts; the shell overlays a <c>ToastHost</c> bound to this.</summary>
     public ToastService ToastService { get; } = new();
+
+    /// <summary>Shared in-flight import state, so the Library card and the Board screen show the same progress.</summary>
+    public ImportStatus ImportStatus { get; } = new();
 
     public MainWindowViewModel(
         IngestService ingest, LibraryService library, CurationService curation,
@@ -46,6 +52,18 @@ public partial class MainWindowViewModel : ViewModelBase
     private void ShowLauncher()
         => Navigation.Reset(new ProjectLauncherViewModel(_projects, _dbFactory, ToastService, onProjectOpened: ShowLibrary));
 
+    // Opening a project pushes the Library (board grid) above the launcher; opening a board pushes the Board
+    // screen above the Library; the back chevrons pop back down the stack.
     private void ShowLibrary()
-        => Navigation.Push(new LibraryViewModel(_ingest, _library, _curation, _projects, requestSwitchProject: ShowLauncher));
+    {
+        _thumbnails = _projects.Current is { } p ? new ThumbnailCache(p.ThumbnailsRoot) : null;
+        Navigation.Push(new LibraryViewModel(
+            _ingest, _library, _curation, _projects, _thumbnails, ToastService, ImportStatus,
+            openBoard: ShowBoard, requestSwitchProject: ShowLauncher));
+    }
+
+    private void ShowBoard(BoardTarget target)
+        => Navigation.Push(new BoardViewModel(
+            _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus,
+            target.CollectionId, target.Title, requestBack: Navigation.Pop, target.Search));
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Hoard.Desktop.ViewModels;
@@ -20,9 +21,11 @@ public partial class NavigationService : ObservableObject
     /// <summary>True when a page sits beneath the current one (something to go <see cref="Pop"/> back to).</summary>
     public bool CanGoBack => _stack.Count > 1;
 
-    /// <summary>Start a fresh stack at <paramref name="root"/> (e.g. returning to the launcher).</summary>
+    /// <summary>Start a fresh stack at <paramref name="root"/> (e.g. returning to the launcher), disposing the
+    /// pages that were on the stack so their subscriptions/resources are released.</summary>
     public void Reset(ViewModelBase root)
     {
+        foreach (var page in _stack) (page as IDisposable)?.Dispose();
         _stack.Clear();
         _stack.Push(root);
         Current = root;
@@ -35,11 +38,12 @@ public partial class NavigationService : ObservableObject
         Current = page;
     }
 
-    /// <summary>Return to the previous page; a no-op at the root.</summary>
+    /// <summary>Return to the previous page; a no-op at the root. Disposes the page being left.</summary>
     public void Pop()
     {
         if (_stack.Count <= 1) return;
-        _stack.Pop();
+        var popped = _stack.Pop();
         Current = _stack.Peek();
+        (popped as IDisposable)?.Dispose();
     }
 }

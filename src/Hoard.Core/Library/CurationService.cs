@@ -51,4 +51,31 @@ public sealed class CurationService
         await _store.DeleteAsync(relativePath, ct).ConfigureAwait(false);
         return sha;
     }
+
+    /// <summary>Rename a board (collection) — its local name; source provenance is unchanged.</summary>
+    public async Task RenameBoardAsync(int collectionId, string newName, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(newName))
+            throw new ArgumentException("A board name is required.", nameof(newName));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct).ConfigureAwait(false);
+        if (collection is null) return;
+        collection.Name = newName.Trim();
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Delete a board (collection): removes the board grouping and its asset links (cascade). The assets
+    /// themselves stay in the archive (still under "All images" and any other boards) — deleting their content
+    /// is a separate, per-asset action.
+    /// </summary>
+    public async Task DeleteBoardAsync(int collectionId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct).ConfigureAwait(false);
+        if (collection is null) return;
+        db.Collections.Remove(collection); // cascade removes its CollectionItems
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
 }

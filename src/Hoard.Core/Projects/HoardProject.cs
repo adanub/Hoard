@@ -120,6 +120,19 @@ public sealed class HoardProject
     private void WriteMarker(ProjectMarker marker)
         => File.WriteAllText(MarkerPath, JsonSerializer.Serialize(marker, MarkerJson));
 
+    /// <summary>Update the stored project name in a folder's marker (used when renaming), preserving the
+    /// schema version. Safe if the marker is missing/partial.</summary>
+    public static void SetStoredName(string folder, string name)
+    {
+        var markerPath = Path.Combine(folder, MarkerFileName);
+        var marker = File.Exists(markerPath)
+            ? JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(markerPath)) ?? new ProjectMarker()
+            : new ProjectMarker();
+        marker.Name = name;
+        if (marker.SchemaVersion == 0) marker.SchemaVersion = 1;
+        File.WriteAllText(markerPath, JsonSerializer.Serialize(marker, MarkerJson));
+    }
+
     private static string DeriveName(string folder)
     {
         var leaf = new DirectoryInfo(folder).Name;

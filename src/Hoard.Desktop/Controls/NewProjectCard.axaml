@@ -1,0 +1,80 @@
+<!--
+  NewProjectCard — the "+ New project" action card (see Controls/NewProjectCard.cs). A raised, clickable tile
+  the EXACT size of the ProjectCard, with the + and label centred inside. The height is NOT a magic number: an
+  invisible "sizer" mirrors the ProjectCard's content box verbatim (Padding 10 · collage 150 · Spacing 10 ·
+  SemiBold title · muted meta · 48px button row), so the two cards measure identically even if fonts/tokens
+  change. Keep the sizer in lockstep with Controls/ProjectCard.axaml. ClipToBounds=False so the drop shadow
+  isn't cropped (per the CLAUDE.md rule). Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.NewProjectCard"
+             x:Name="Root" ClipToBounds="False">
+
+    <UserControl.Styles>
+        <!-- Flat at rest (border only); the drop shadow lifts on hover and tightens on press, like the
+             ItemCards. Both transform AND shadow come from styles, never a local value (a local value would
+             override the state styles). -->
+        <Style Selector="Border#CardRoot">
+            <Setter Property="RenderTransform" Value="scale(1)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowNone}"/>
+        </Style>
+        <Style Selector="Border#CardRoot:pointerover">
+            <Setter Property="RenderTransform" Value="scale(1.03)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowRaised}"/>
+        </Style>
+        <Style Selector="Border#CardRoot.pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
+        </Style>
+    </UserControl.Styles>
+
+    <!-- Width fixed to the ProjectCard (240); height comes from the sizer below. Raised + clickable, so the
+         action stands out against the inset project cards. -->
+    <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+            Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
+            BorderThickness="1" Cursor="Hand"
+            RenderTransformOrigin="50%,50%"
+            Tapped="OnCardTapped" PointerPressed="OnCardPressed" PointerReleased="OnCardReleased"
+            PointerExited="OnCardExited" PointerCaptureLost="OnCardCaptureLost">
+        <Border.Transitions>
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.10" Easing="CubicEaseOut"/>
+            </Transitions>
+        </Border.Transitions>
+        <Border CornerRadius="{DynamicResource RadiusLg}" ClipToBounds="True">
+            <Panel>
+                <!-- Sizer: an invisible verbatim mirror of ProjectCard's content box, so this card measures to
+                     the IDENTICAL height (no guessed constant). Mirror = Padding 10 → [collage 150, Spacing 10,
+                     (SemiBold title · muted meta · 48px button row, Spacing 8)]. -->
+                <Border Padding="10" Opacity="0" IsHitTestVisible="False">
+                    <StackPanel Spacing="10">
+                        <Border Height="150"/>
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="X" FontWeight="SemiBold"/>
+                            <TextBlock Classes="muted" Text="X"/>
+                            <Border Height="{DynamicResource ControlHeightLg}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- The actual action content, centred over the full (sizer-driven) height. -->
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                    <Border Width="52" Height="52" CornerRadius="{DynamicResource RadiusFull}"
+                            Background="{DynamicResource MutedBrush}" BorderBrush="{DynamicResource LineBrush}"
+                            BorderThickness="1" HorizontalAlignment="Center">
+                        <ctrl:Icon Data="{StaticResource Icon.plus}" Width="24" Height="24"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource ForegroundBrush}"/>
+                    </Border>
+                    <TextBlock Text="{Binding #Root.Label}" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Convex bevel over the card (light top-left / dark bottom-right), matching the board cards. -->
+                <Border CornerRadius="{DynamicResource RadiusLg}" IsHitTestVisible="False"
+                        BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
+            </Panel>
+        </Border>
+    </Border>
+</UserControl>

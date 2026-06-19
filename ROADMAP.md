@@ -3,16 +3,15 @@
 Progress tracker so a fresh session can resume. Architecture/conventions are in `CLAUDE.md`; the
 user-facing model is in `README.md`. Keep this file current as work lands.
 
-**Status (2026-06-17):** Phase 1 complete. Phase 2 — UI/UX redesign. The design-system **component kit + a full
-card/popup set** are built and live in the dev gallery (`HOARD_GALLERY=1`): **ProjectCard** (concave inset),
-**BoardCard** (raised, clickable, scale feedback), their **Edit popups** (`ProjectEditSheet` / `BoardEditSheet`,
-the latter with the merge source-list), the cooldown **`ConfirmSheet`**, plus **`SheetHost`** (modal),
-**`ToastHost`**, **`FlexWrapPanel`**, the nav **`NavigationService`**, and a **top-left-light-source** token pass
-(diagonal gloss + bevels). Material-shader background was dropped earlier (don't resurrect). Mostly committed
-(`10b8106` card designs, `b64514a` UI improvements); **uncommitted:** `BoardEditSheet`, `ConfirmSheet`, their
-gallery wiring, new icons, **`ItemCard`** (masonry media tile). **These are GALLERY components — not yet wired
-into the real Projects/Library screens.** Tests: 47 (Core) + 29 (Desktop), green. Next: **integrate the cards
-into the screens** (see "Decided, pending integration").
+**Status (2026-06-19):** Phase 1 complete. Phase 2 — UI/UX redesign, now **integrated into the real screens**
+(the gallery components are wired up, not just demoed). The **Projects → Library → Board** nav flow is built and
+runs: Projects grid (`ProjectCard` + `NewProjectCard`, Edit popup, recycle-bin delete, folder rename), Library
+grid (`BoardCard`s + `NewCard` "+ New board" + "All images", board-first import with inline per-board progress,
+`BoardEditSheet` for rename/sources/delete), and the Board screen (`ItemCard` masonry + detail overlay + GIF
+playback + delete/restore). All this is a **large uncommitted batch** on top of `116b91e` (which committed the
+gallery components). Tests: 47 (Core) + 29 (Desktop), green; build clean. **Next:** the board-merge data model
+(additive schema — see "Still to do"), then sub-boards/sections, the Image-detail screen, and retiring
+FluentTheme. Material-shader background was dropped earlier (don't resurrect).
 
 ## Done
 
@@ -99,15 +98,55 @@ into the screens** (see "Decided, pending integration").
 - **Convention (CLAUDE.md):** custom interactive control templates set content `IsHitTestVisible=False` so the
   fill Border is the single hover/hit surface (else `:pointerover`/`:pressed` flickers across the boundary).
 
+**Phase 2 — screen integration (uncommitted batch on top of `116b91e`)**
+- **Nav flow Projects → Library → Board** via `NavigationService` (now **disposes popped/reset pages** so
+  per-board VMs + their subscriptions don't leak). `MainWindowViewModel` is the page factory and holds the
+  per-project `ThumbnailCache` shared by Library covers + Board tiles.
+- **Projects screen** (`ProjectLauncherView` + VM): inline cards replaced by the **`ProjectCard`** component;
+  leading **`NewProjectCard`** "+ New project"; **`ProjectEditSheet`** Edit popup (rename = **folder rename on
+  disk** via `ProjectManager.RenameProject`; lazy DB counts via the path-scoped **`ProjectStatsReader`**;
+  recycle delete via **`ConfirmSheet`**). Card meta shows cache size.
+- **Recycle-bin delete**: `IFileRecycler` (Core, platform-neutral) + `WindowsFileRecycler` (Desktop, P/Invoke
+  `SHFileOperation` + `FOF_ALLOWUNDO`, registered in DI). `ProjectManager.DeleteProject` recycles when a
+  recycler is supplied (else permanent — tests unaffected).
+- **Library screen** (`LibraryViewModel`/`LibraryView` — the old single screen was **split**): board grid of
+  **`BoardCard`s** (collage covers via `LibraryService.GetCoverAssetsAsync` + the thumbnail cache; meta = "N
+  images · size") led by **`NewCard`** + an **"All images"** card. Top bar = back · project name (search bars
+  removed for now; backend dormant). The pencil opens **`BoardEditSheet`** (rename via `CurationService.
+  RenameBoardAsync`, counts/size/dates via `GetBoardDetailAsync`, the import source listed, clear-cache evicts
+  the board's thumbnails, delete-board via `ConfirmSheet` keeps the images under All images).
+- **Board-first import**: the import sheet picks a **target board** (new — named from the URL — or existing to
+  merge into); the board is **created up front** (`IngestService.CreateBoardAsync`) so it appears immediately,
+  and `ImportAsync(targetCollectionId)` links every pin into it. A shared **`ImportStatus`** drives a **pinned
+  inline progress strip** on the board card *and* the open Board screen (live count — no %, since gallery-dl
+  reports no total — + pins streaming into an open board live). Accent-coloured progress bars.
+- **Board screen** (`BoardViewModel`/`BoardView`): `ItemCard` masonry + the detail overlay + GIF autoplay (LRU)
+  + delete (still the `DeleteDialog` window, for the note) / restore — the asset-grid logic extracted from the
+  old `LibraryViewModel`.
+- **Grid clipping fix** (recurring "card crops on hover"): the `ItemsControl`/`ItemsRepeater` item containers
+  clip; fixed via `ClipToBounds=False` on the grid + panel + a `ContentPresenter` style + scroll inset. Rule
+  written into CLAUDE.md.
+- Cards are **flat at rest, drop shadow on hover** (`ShadowNone` → `ShadowRaised` → `ButtonRestShadow`, all from
+  styles) — `BoardCard` / `NewCard` / `NewProjectCard` match the `ItemCard`. `NewProjectCard` sizes from an
+  **invisible sizer** mirroring the `ProjectCard` content box, so heights match exactly (no magic number).
+
 ## Next up — finish Phase 2
 
-- **Finish the redesign (in progress).** The component kit + the full card/popup set (incl. the **ItemCard**
-  media tile) are built **as gallery components**. Remaining: **integrate the cards into the real screens** — the
-  Projects screen (grid of `ProjectCard`s), the Library/Board screens (grids of `BoardCard`s + `ItemCard` masonry
-  tiles, the Edit popups
-  wired to real data + the merge/recycle/rename backends below), the nav back-stack (Projects → Library → Board
-  → Image-detail), then **retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles**. The cards
-  currently carry pre-formatted display strings + `ICommand`s (host supplies real data/commands at integration).
+- **Board-merge data model (next).** The screens are wired, but a board is still a single `Collection`. To
+  deliver the agreed **multi-source merge** + **local rename override**, add (additively, per the schema rules):
+  `Collection.DisplayName` (nullable local override; falls back to the source `Name`) and a `CollectionSource`
+  child table (one board ↔ many Pinterest source refs). Bump `SchemaInitializer.LatestSchemaVersion` with idempotent
+  DDL matching EF's `GenerateCreateScript`. Then the `BoardEditSheet`'s **add/remove source** become real
+  (currently: add re-opens the import sheet targeted at the board; **remove just toasts "coming with merge"**),
+  and rename writes `DisplayName` instead of `Collection.Name`.
+- **Sub-boards / sections** — Pinterest sections are stored as child `Collection`s; the Board screen currently
+  shows only loose pins. Show child boards as `BoardCard`s to drill into (the decided "keep sections as sub-boards").
+- **Image-detail as a pushed screen** — currently a Board-screen overlay; convert to a back-stack screen, and
+  migrate its **delete** off the `DeleteDialog` window (a note-collecting in-app sheet that routes through
+  `ConfirmSheet`). Then **retire the old single-screen `LibraryView` remnants + FluentTheme + the placeholder
+  `accent`/`danger`/`overlay` styles** (the new screens already use the token theme).
+- **Restore project search** (removed from the top bars for now; backend still in the VMs) — place it wherever
+  the redesign lands it.
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
@@ -128,8 +167,9 @@ into the screens** (see "Decided, pending integration").
 
 - `GifDecoder.Snapshot` double-encodes (full-res PNG → `DecodeToWidth`) per frame; a direct Skia resize
   would avoid the round-trip. Kept the safe path (off-thread, not a render hot path).
-- `LibraryService.GetCollectionsAsync` emits a correlated COUNT per collection (N+1 at large board counts);
-  the count includes tombstones (they still occupy the board, shown as note tiles).
+- `LibraryService.GetCollectionsAsync` emits a correlated COUNT + SUM(bytes) per collection (N+1 at large board
+  counts), both excluding tombstones — fine for tens of boards; revisit if board counts get large. Board covers
+  also run one `GetCoverAssetsAsync` query per card.
 - Rebuilding the gallery-dl archive from the DB drops entries for items that were downloaded but never
   ingested (e.g. videos with no ffmpeg), so those get re-probed on each import — accepted cost; add an
   "ignored items" record if it becomes noticeable.
@@ -140,27 +180,26 @@ into the screens** (see "Decided, pending integration").
   on the pin id if that ever shows up.
 - Video poster-frame thumbnails (ffmpeg) not done — video tiles show a placeholder; "Open file" plays
   externally. ffmpeg isn't bundled.
-- No paging: `LibraryViewModel` materialises a tile VM per asset (cheap via virtualisation, but the VM list
-  is full) — page when libraries get very large.
+- No paging: `BoardViewModel` materialises a tile VM per asset (cheap via virtualisation, but the VM list
+  is full) — page when boards get very large.
 - Optional: add an `.editorconfig` to enforce the C# formatting conventions documented in `CLAUDE.md`.
 
-## Decided, pending integration (the card/popup backends)
+## Product decisions & their current state
 
-The cards/popups are built as **gallery components with placeholder data** — these product decisions are
-settled and must be honoured when wiring them into the real screens:
-- **A board merges multiple Pinterest source boards.** A local "board" holds a **list of source-board refs**, so
-  several Pinterest boards can be composed into one. The `BoardEditSheet` is where you manage that list (open /
-  remove / **add** sources). Needs a data-model change (board ↔ many `SourceBoardRef`).
-- **Rename = local display-name override.** Renaming a board/project sets a local name; the original Pinterest
-  source name is kept underneath so a future import won't clobber the rename.
-- **Delete → OS recycle bin, not permanent.** Deleting a board/project hard-removes it **but moves the files to
-  the platform recycle bin** (cross-platform "move to trash" — not yet implemented).
-- **Confirm everything destructive** via `ConfirmSheet` (cooldown on board/project delete; no cooldown on
-  remove-source). The old per-image delete still uses the `ConfirmDialog` **window** — migrate it to
-  `ConfirmSheet` for consistency at integration.
-- **`ProjectLauncherView` already has an *older* inline collage-card grid** (from the first Projects-screen pass:
-  cards with a ⋯ menu, the new-project `SheetHost`, toasts — committed). At integration, **replace its inline
-  cards with the newer `ProjectCard` component** (the inset design supersedes it).
+The settled decisions and how far each is implemented after the integration batch:
+- **A board merges multiple Pinterest source boards** — *partial.* A board is still a single `Collection`;
+  importing into an existing board (the "merge" path) works and the source is listed in `BoardEditSheet`, but
+  the **many-source data model is not built** (see "board-merge data model" in Next up). Remove-source is a
+  placeholder toast until then.
+- **Rename = local display-name override** — *partial.* Board rename currently writes `Collection.Name` and
+  project rename **renames the folder on disk**; the non-destructive local-override comes with the merge model.
+- **Delete → OS recycle bin** — *done for projects* (`IFileRecycler`/`WindowsFileRecycler`). **Board delete**
+  removes only the grouping (images stay under All images — full board+content recycle is deferred). **Per-image
+  delete** still tombstones (frees the blob; not the recycle bin) — unchanged.
+- **Confirm everything destructive via `ConfirmSheet`** — *done* for project delete (10s cooldown) and board
+  delete (5s). Per-image delete still uses the `DeleteDialog` **window** (it collects the tombstone note) —
+  migrate to a note-collecting in-app sheet at the Image-detail-screen step.
+- **`ProjectLauncherView` inline cards → `ProjectCard`** — *done.*
 
 ## Committed this phase
 
@@ -168,15 +207,16 @@ settled and must be honoured when wiring them into the real screens:
   **gone** — don't resurrect).
 - `10b8106` card designs · `b64514a` UI improvements — the nav back-stack, the first Projects-screen redesign
   (`ProjectLauncherView` collage cards + new-project sheet + toasts), the `ProjectCard`/`BoardCard` components,
-  `ProjectEditSheet`, `SheetHost`/`ToastHost`/`FlexWrapPanel`, the top-left-light-source token pass, and the
-  related doc updates.
+  `ProjectEditSheet`, `SheetHost`/`ToastHost`/`FlexWrapPanel`, the top-left-light-source token pass.
+- `116b91e` **`ItemCard`, `ConfirmSheet`, `BoardEditSheet` as gallery components** (+ icons, gallery wiring).
 
-## Uncommitted (working tree)
+## Uncommitted (working tree) — the screen-integration batch
 
-- New: `Controls/BoardEditSheet.{cs,axaml}` (merge source-list), `Controls/ConfirmSheet.{cs,axaml}` (cooldown
-  confirm), `Controls/ItemCard.{cs,axaml}` (masonry media tile — convex bevel, hover-lift, GIF/VIDEO tag,
-  memory badge, Unload, tombstone).
-- Modified: `Icons.axaml` (+`external-link`), `GalleryWindow.{axaml,axaml.cs}` (board Edit popup + confirm
-  wiring + ItemCard demo row; all destructive actions route through `ConfirmSheet`), `DESIGN.md` (ItemCard
-  inventory entry).
-- Verify in the gallery (`HOARD_GALLERY=1`, both themes) then commit. Build + 47 (Core) / 29 (Desktop) tests green.
+The whole "Phase 2 — screen integration" Done block above. New files: `Core/Library/ProjectStatsReader.cs`,
+`Core/Storage/IFileRecycler.cs`, `Desktop/Services/WindowsFileRecycler.cs`, `Desktop/ViewModels/BoardViewModel.cs`,
+`Desktop/ViewModels/ImportStatus.cs`, `Desktop/Views/BoardView.{axaml,axaml.cs}`, `Desktop/Controls/NewCard.{cs,axaml}`,
+`Desktop/Controls/NewProjectCard.{cs,axaml}`. Modified across Core (`IngestService`, `LibraryService`,
+`CurationService`, `ProjectManager`, `HoardProject`) and Desktop (`LibraryViewModel`, `MainWindowViewModel`,
+`ProjectLauncherViewModel`, `AssetTileViewModel`, `NavigationService`, `App.axaml.cs`, `BoardCard`, `Surfaces.axaml`,
+the `Library`/`ProjectLauncher` views, gallery) + docs. Build + 47 (Core) / 29 (Desktop) tests green.
+**Runtime-verify the flow** (import → progress, board edit, recycle delete, masonry/GIF) then commit.

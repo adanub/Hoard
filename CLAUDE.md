@@ -51,19 +51,33 @@ Concepts that span multiple files:
   changes (renames/drops) would need a real migration — cross that bridge if it ever comes up.
 - **Ingest is a stream, not a batch.** `ISourceConnector.DownloadAsync` takes an `onItem` callback and invokes
   it per item as it lands; `IngestService` stores + upserts per item and reports the new `AssetView` via
-  `IngestProgress.ImportedAsset`, which the library VM appends to the grid live. Dedup happens twice: gallery-dl's
-  `--download-archive` skips already-fetched pins *before* download, and the content-addressed store dedups by
-  hash *after*.
+  `IngestProgress.ImportedAsset`, which flows through `ImportStatus` so an open Board screen appends it live.
+  Dedup happens twice: gallery-dl's `--download-archive` skips already-fetched pins *before* download, and the
+  content-addressed store dedups by hash *after*.
 - **The sync log is append-only and content-keyed.** Every add (`IngestService`, on a genuinely new asset)
   and remove (`CurationService.DeleteAssetAsync`) writes a `SyncOp` via `Sync/SyncLog.cs`, in the *same*
   `SaveChanges` as the change so the history can't drift. Ops are keyed by the asset's SHA-256, not its local
   row id, so they replay on another device that holds the same content under a different id. This is the
   Phase 3 (cloud sync) foundation; nothing reads it yet — keep it append-only (never mutate/delete ops).
 - **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a page back-stack
-  (`Reset`/`Push`/`Pop`/`CanGoBack`) — and acts as the page factory (`Reset` to the launcher root, `Push` the
-  library above it; switch-project `Reset`s to a fresh launcher so recents reload). The shell binds
-  `Navigation.Current`; the template `ViewLocator` maps each page VM to its `…View`. The stack is the spine for
-  the deeper Projects → Library → Board → Image-detail flow.
+  (`Reset`/`Push`/`Pop`/`CanGoBack`) — and is the page factory: `ShowLauncher` (`Reset` root) → `ShowLibrary`
+  (`Push`, board grid) → `ShowBoard` (`Push`, one board's masonry). The shell binds `Navigation.Current`; the
+  template `ViewLocator` maps each page VM to its `…View` by name. **`Pop`/`Reset` dispose any `IDisposable`
+  page** so a popped `BoardViewModel` releases its subscriptions (don't leak the per-board tiles). The old
+  single-screen `LibraryView` was **split**: `LibraryViewModel` = the board grid, `BoardViewModel` = a board's
+  asset grid (the GIF/detail/delete logic moved there). `MainWindowViewModel` holds the per-project
+  `ThumbnailCache` shared by both. Image-detail is still a Board-screen overlay (becomes its own pushed screen later).
+- **Import targets one board, and progress is shared state.** The import sheet picks a target board (new —
+  created up front via `IngestService.CreateBoardAsync` so the card shows immediately — or existing to merge);
+  `IngestService.ImportAsync(targetCollectionId)` links every pin into it instead of auto-foldering by source
+  board. A shell-owned **`ImportStatus`** (`ViewModels/ImportStatus.cs`) carries `IsImporting`/`CollectionId`/
+  `Text`/`LastImported`, so the **Library card and the open Board screen show the same live count and stream new
+  pins in**. gallery-dl reports no total mid-stream, so progress is a count + indeterminate bar, never a %.
+- **Recycle, don't delete, for projects.** `IFileRecycler` (Core, platform-neutral interface) →
+  `WindowsFileRecycler` (Desktop, `SHFileOperation` + `FOF_ALLOWUNDO` P/Invoke — platform code stays out of
+  Core), registered in DI. `ProjectManager.DeleteProject` recycles when a recycler is injected, else permanent
+  (so Core tests are unaffected). Board delete removes only the grouping (images stay); per-image delete still
+  tombstones.
 - **Decoded GIF frames are reference-counted, not cached-with-retention.** `RefCountedCache<T>` (in
   `Infrastructure/`) does single-flight load per key and hands out disposable `ResourceLease<T>` handles; frames
   are freed when the **last** lease is disposed. `AnimatedImageControl` holds exactly one lease and disposes it
@@ -130,7 +144,15 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   shadow's blur+offset extent onto the shadowed element itself (size it for the *largest* theme — light
   `ShadowRaised` reaches ~30px sideways and ~42px below) and set `ClipToBounds="False"` on its container;
   reserve the room on the component so callers can't forget (a `UserControl` whose bounds equal the card is the
-  classic trap). See `Controls/ProjectCard.axaml`. **Grid order is by Pinterest pin id (`SourceId`), descending** —
+  classic trap). See `Controls/ProjectCard.axaml`. **A raised card (drop shadow and/or hover-`scale`) inside an
+  `ItemsControl`/`ItemsRepeater` is cropped to its arranged cell because the item container clips — the
+  `ItemsControl`'s per-item `ContentPresenter` and the `ItemsRepeater`'s realized element both clip by default.**
+  This is the recurring "card crops when it expands on hover" bug. Fix it on the *grid*, not the card: set
+  `ClipToBounds="False"` on the `ItemsControl`/`ItemsRepeater` **and** its `ItemsPanel`, add an
+  `<Style Selector="ContentPresenter"><Setter Property="ClipToBounds" Value="False"/></Style>` to the
+  `ItemsControl` (the item containers), and inset the scroll content (margin/padding) so edge cards' shadows
+  don't reach the `ScrollViewer` viewport clip. Same `ContentPresenter` style the `ToastHost` already uses; see
+  `Views/ProjectLauncherView.axaml`, `Views/LibraryView.axaml`, `Views/BoardView.axaml`. **Grid order is by Pinterest pin id (`SourceId`), descending** —
   `LibraryService` fetches in `Id` order then sorts in memory by the numeric pin id, so order is deterministic
   and survives re-import/restore (`Id` is the stable tiebreak; pinless rows sort last). The sidecar carries
   **no per-pin date** (`CreatedAt` is null for Pinterest — only board-level timestamps exist), and SQLite

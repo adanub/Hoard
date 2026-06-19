@@ -1,6 +1,8 @@
+using System;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Hoard.Core.Domain;
 using Hoard.Core.Library;
 using Hoard.Desktop.Controls;
@@ -28,10 +30,19 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     [NotifyPropertyChangedFor(nameof(PlaySource))]
     private bool _isPlaying;
 
-    public AssetTileViewModel(AssetView model, ThumbnailCache? cache = null)
+    /// <summary>Tap the tile (the <see cref="ItemCard"/> body): open/activate it (and play, for a GIF).</summary>
+    public IRelayCommand OpenCommand { get; }
+    /// <summary>The tile's Unload button: stop + free a playing GIF.</summary>
+    public IRelayCommand UnloadCommand { get; }
+
+    public AssetTileViewModel(
+        AssetView model, ThumbnailCache? cache = null,
+        Action<AssetTileViewModel>? onOpen = null, Action<AssetTileViewModel>? onUnload = null)
     {
         Model = model;
         _cache = cache;
+        OpenCommand = new RelayCommand(() => onOpen?.Invoke(this));
+        UnloadCommand = new RelayCommand(() => onUnload?.Invoke(this));
     }
 
     /// <summary>

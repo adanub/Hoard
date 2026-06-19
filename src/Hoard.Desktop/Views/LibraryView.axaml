@@ -1,7 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Hoard.Desktop.ViewModels"
-             xmlns:lib="using:Hoard.Core.Library"
              xmlns:ctrl="using:Hoard.Desktop.Controls"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -13,271 +12,112 @@
         <vm:LibraryViewModel/>
     </Design.DataContext>
 
-    <UserControl.KeyBindings>
-        <KeyBinding Gesture="Escape" Command="{Binding CloseDetailsCommand}"/>
-    </UserControl.KeyBindings>
+    <Panel>
+        <DockPanel>
+            <!-- Top bar: back (← to Projects) · project name. Importing is done via the "+ New board" card.
+                 (Search goes elsewhere later.) -->
+            <Border DockPanel.Dock="Top" Padding="16,12"
+                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                    <Button Grid.Column="0" Theme="{StaticResource HoardButton}" Classes="ghost"
+                            Width="38" Height="38" Padding="0" Command="{Binding BackCommand}"
+                            ToolTip.Tip="Back to projects">
+                        <ctrl:Icon Data="{StaticResource Icon.chevron-left}" Width="20" Height="20"/>
+                    </Button>
 
-    <DockPanel>
-        <!-- Project header -->
-        <Border DockPanel.Dock="Top" Padding="10,8" Background="{DynamicResource SystemRegionBrush}"
-                BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-                <TextBlock Grid.Column="0" Text="📁" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding ProjectName}" FontWeight="SemiBold"/>
-                    <TextBlock Text="{Binding ProjectPath}" Opacity="0.55" FontSize="11"
+                    <TextBlock Grid.Column="1" Text="{Binding ProjectName}" Classes="h2" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
-                </StackPanel>
-                <Button Grid.Column="2" Content="Switch project" Command="{Binding SwitchProjectCommand}"/>
-            </Grid>
-        </Border>
-
-        <!-- Import toolbar -->
-        <Border DockPanel.Dock="Top" Padding="10" Background="{DynamicResource SystemRegionBrush}"
-                BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="0,0,0,1">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBox Text="{Binding BoardUrl}" Width="520"
-                         PlaceholderText="Paste a Pinterest board / section / pin URL…"
-                         VerticalContentAlignment="Center"/>
-                <TextBlock Text="Cookies:" VerticalAlignment="Center"/>
-                <ComboBox ItemsSource="{Binding CookieBrowsers}"
-                          SelectedItem="{Binding CookiesBrowser}" MinWidth="110"/>
-                <Button Content="Import" Command="{Binding ImportCommand}"
-                        Classes="accent" IsEnabled="{Binding !IsImporting}"/>
-                <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
-            </StackPanel>
-        </Border>
-
-        <!-- Search bar -->
-        <Border DockPanel.Dock="Top" Padding="10,6" Background="{DynamicResource SystemRegionBrush}"
-                BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="0,0,0,1">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-                <TextBox Width="340" Text="{Binding SearchQuery}"
-                         PlaceholderText="🔍  Search title, description, tags…"
-                         VerticalContentAlignment="Center"/>
-                <Button Content="✕" Command="{Binding ClearSearchCommand}" ToolTip.Tip="Clear search"
-                        IsVisible="{Binding SearchQuery, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-            </StackPanel>
-        </Border>
-
-        <!-- Status bar (click the message to view it in full) -->
-        <Border DockPanel.Dock="Bottom" Padding="10,6" Background="{DynamicResource SystemRegionBrush}"
-                BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="0,1,0,0">
-            <Grid ColumnDefinitions="*,Auto">
-                <Border Grid.Column="0" Background="Transparent" Cursor="Hand" Tapped="OnStatusTapped"
-                        ToolTip.Tip="Click to view the full message">
-                    <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis"/>
-                </Border>
-                <ProgressBar Grid.Column="1" Width="180" VerticalAlignment="Center"
-                             IsVisible="{Binding IsImporting}"
-                             IsIndeterminate="{Binding ProgressIndeterminate}"
-                             Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue}"/>
-            </Grid>
-        </Border>
-
-        <!-- Collections sidebar -->
-        <Border DockPanel.Dock="Left" Width="220" Padding="6"
-                BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="0,0,1,0">
-            <DockPanel>
-                <Button DockPanel.Dock="Top" Content="📚  All images" HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Left" Command="{Binding ShowAllCommand}"/>
-                <TextBlock DockPanel.Dock="Top" Text="Boards" FontWeight="SemiBold"
-                           Margin="6,10,0,4" Opacity="0.7"/>
-                <ListBox ItemsSource="{Binding Collections}"
-                         SelectedItem="{Binding SelectedCollection}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="lib:CollectionView">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Grid.Column="1" Text="{Binding ItemCount}" Opacity="0.6" Margin="6,0,0,0"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-            </DockPanel>
-        </Border>
-
-        <!-- Image grid (full width) with a floating, closable detail overlay on top -->
-        <Panel>
-            <ScrollViewer Name="GridScroll" Padding="10"
-                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <ItemsRepeater Name="AssetGrid" ItemsSource="{Binding Assets}">
-                    <ItemsRepeater.Layout>
-                        <ctrl:MasonryLayout TargetColumnWidth="200" Spacing="10"/>
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="vm:AssetTileViewModel">
-                            <Border Background="{DynamicResource SystemRegionBrush}" CornerRadius="6"
-                                    ClipToBounds="True" Tapped="OnTileTapped">
-                                <Panel>
-                                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
-
-                                    <!-- Animated GIF, played once the tile is clicked (kept while loaded) -->
-                                    <ctrl:AnimatedImageControl Name="TileGif" Source="{Binding PlaySource}"
-                                                               IsVisible="{Binding PlaySource, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-
-                                    <!-- Loading spinner: thumbnail decode, or hover-GIF frame decode -->
-                                    <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsThumbnailLoading}"
-                                                 Width="64" Height="4" HorizontalAlignment="Center"
-                                                 VerticalAlignment="Center"/>
-                                    <ProgressBar IsIndeterminate="True" IsVisible="{Binding #TileGif.IsLoading}"
-                                                 Width="64" Height="4" HorizontalAlignment="Center"
-                                                 VerticalAlignment="Center"/>
-
-                                    <!-- Non-image (video) placeholder -->
-                                    <Border IsVisible="{Binding !IsImage}" Background="#22000000">
-                                        <TextBlock Text="{Binding KindLabel}" HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center" Opacity="0.7"/>
-                                    </Border>
-
-                                    <!-- GIF badge + memory footprint, top-left -->
-                                    <StackPanel IsVisible="{Binding IsGifBadgeVisible}" HorizontalAlignment="Left"
-                                                VerticalAlignment="Top" Margin="6" Spacing="3">
-                                        <Border Background="#B0000000" CornerRadius="4" Padding="5,1"
-                                                HorizontalAlignment="Left">
-                                            <TextBlock Text="GIF" FontSize="10" FontWeight="Bold" Foreground="White"/>
-                                        </Border>
-                                        <Border Background="#B0000000" CornerRadius="4" Padding="5,1"
-                                                HorizontalAlignment="Left"
-                                                IsVisible="{Binding #TileGif.LoadedSizeText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                            <TextBlock Text="{Binding #TileGif.LoadedSizeText}" FontSize="10"
-                                                       Foreground="White"/>
-                                        </Border>
-                                    </StackPanel>
-
-                                    <!-- Unload-from-memory button, top-right (only while playing) -->
-                                    <Button IsVisible="{Binding PlaySource, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                            Classes="overlay"
-                                            HorizontalAlignment="Right" VerticalAlignment="Top"
-                                            Margin="6" Padding="6,1" FontSize="11"
-                                            Content="⏏ Unload" Click="OnUnloadTile"
-                                            ToolTip.Tip="Stop and free this GIF from memory"/>
-
-                                    <!-- Tombstone: the blob was deleted, so show the note instead of media -->
-                                    <Border IsVisible="{Binding IsDeleted}" Background="{DynamicResource SystemRegionBrush}"
-                                            BorderBrush="#80C0392B" BorderThickness="1" CornerRadius="6">
-                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
-                                                    Margin="10" Spacing="5">
-                                            <TextBlock Text="🗑" FontSize="22" Opacity="0.55" HorizontalAlignment="Center"/>
-                                            <TextBlock Text="Deleted" FontSize="10" FontWeight="Bold" Opacity="0.55"
-                                                       HorizontalAlignment="Center"/>
-                                            <TextBlock Text="{Binding DeletionNote}" FontSize="11" Opacity="0.85"
-                                                       TextWrapping="Wrap" TextAlignment="Center" MaxLines="5"
-                                                       TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                    </Border>
-                                </Panel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
-            </ScrollViewer>
-
-            <!-- Detail overlay (floats over the grid; does not shrink it) -->
-            <Border Width="360" HorizontalAlignment="Right" VerticalAlignment="Stretch"
-                    IsVisible="{Binding Details, Converter={x:Static ObjectConverters.IsNotNull}}"
-                    Background="{DynamicResource SystemRegionBrush}"
-                    BorderBrush="{DynamicResource SystemBaseLowColor}" BorderThickness="1,0,0,0"
-                    BoxShadow="-6 0 20 0 #33000000">
-                <DockPanel>
-                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="14,10,8,8">
-                        <TextBlock Text="Details" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" Content="✕" Command="{Binding CloseDetailsCommand}"
-                                ToolTip.Tip="Close (Esc)"/>
-                    </Grid>
-
-                    <ScrollViewer>
-                        <StackPanel Margin="14,0,14,14" Spacing="10"
-                                    DataContext="{Binding Details}" x:DataType="vm:AssetDetailViewModel">
-                            <Border CornerRadius="6" ClipToBounds="True" Background="#22000000"
-                                    IsVisible="{Binding IsImage}" MinHeight="80">
-                                <Panel>
-                                    <Image Source="{Binding Preview}" MaxHeight="320" Stretch="Uniform"
-                                           IsVisible="{Binding IsStaticImage}"/>
-                                    <ctrl:AnimatedImageControl Name="GifPlayer" Source="{Binding FilePath}"
-                                                               MaxHeight="320" IsVisible="{Binding IsGif}"/>
-                                    <!-- Loading spinner: static-image decode, or GIF frame decode -->
-                                    <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                 IsVisible="{Binding IsPreviewLoading}"/>
-                                    <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                 IsVisible="{Binding #GifPlayer.IsLoading}"/>
-                                </Panel>
-                            </Border>
-                            <Border CornerRadius="6" Background="#22000000" Padding="16" IsVisible="{Binding IsVideo}">
-                                <TextBlock Text="🎬  Video — use “Open file” to play" HorizontalAlignment="Center"
-                                           Opacity="0.7"/>
-                            </Border>
-
-                            <!-- Tombstone: the media is gone; show why it was deleted + offer Restore below -->
-                            <Border CornerRadius="6" Background="#22C0392B" Padding="16" IsVisible="{Binding IsDeleted}">
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap" Opacity="0.85"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-
-                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Opacity="0.85"
-                                       IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-
-                            <!-- Metadata rows -->
-                            <StackPanel Spacing="8" Margin="0,4,0,0">
-                                <StackPanel IsVisible="{Binding Dimensions, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                    <TextBlock Text="Dimensions" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding Dimensions}"/>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="File size" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding FileSize}"/>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="Type" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding TypeText}"/>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="Downloaded" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding Downloaded}"/>
-                                </StackPanel>
-                                <StackPanel IsVisible="{Binding Created, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                    <TextBlock Text="Saved on Pinterest" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding Created}"/>
-                                </StackPanel>
-                                <StackPanel IsVisible="{Binding Boards, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                    <TextBlock Text="Boards" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding Boards}" TextWrapping="Wrap"/>
-                                </StackPanel>
-                                <StackPanel IsVisible="{Binding SourceId, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                    <TextBlock Text="Pin id" FontSize="11" Opacity="0.55"/>
-                                    <TextBlock Text="{Binding SourceId}"/>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <StackPanel Spacing="6" Margin="0,6,0,0">
-                                <Button Content="Open source on Pinterest" HorizontalAlignment="Stretch"
-                                        Click="OnOpenSource"
-                                        IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                                <Button Content="Open original link" HorizontalAlignment="Stretch"
-                                        Click="OnOpenOriginal"
-                                        IsVisible="{Binding OriginalUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                                <Button Content="Open file" HorizontalAlignment="Stretch"
-                                        Click="OnOpenImage" IsVisible="{Binding IsLive}"/>
-                                <Button Content="♻ Restore from source" HorizontalAlignment="Stretch"
-                                        Classes="accent" Click="OnRestoreAsset" Margin="0,8,0,0"
-                                        IsVisible="{Binding IsDeleted}" IsEnabled="{Binding CanRestore}"
-                                        ToolTip.Tip="Re-download this item from its source and undelete it"/>
-                                <Button Content="🗑  Delete from archive" HorizontalAlignment="Stretch"
-                                        Classes="danger" Click="OnDeleteAsset" Margin="0,8,0,0"
-                                        IsVisible="{Binding IsLive}"
-                                        ToolTip.Tip="Remove this image from disk (kept as a restorable tombstone)"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </ScrollViewer>
-                </DockPanel>
+                </Grid>
             </Border>
-        </Panel>
-    </DockPanel>
+
+            <!-- Board grid: "+ New board" + "All images" + one card per board, reflowing by width. ClipToBounds
+                 =False down to the item ContentPresenter so the raised cards' shadow + hover-scale aren't cropped
+                 to their cells (see the CLAUDE.md raised-card-in-grid rule). -->
+            <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding Tiles}" Margin="36,28" ClipToBounds="False">
+                    <ItemsControl.Styles>
+                        <Style Selector="ContentPresenter">
+                            <Setter Property="ClipToBounds" Value="False"/>
+                        </Style>
+                    </ItemsControl.Styles>
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel ClipToBounds="False"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.DataTemplates>
+                        <DataTemplate DataType="vm:NewBoardTile">
+                            <ctrl:NewCard Label="New board" Margin="0,0,16,16"
+                                          Command="{Binding $parent[ItemsControl].((vm:LibraryViewModel)DataContext).OpenImportSheetCommand}"/>
+                        </DataTemplate>
+                        <DataTemplate DataType="vm:BoardCardRef">
+                            <ctrl:BoardCard Margin="0,0,16,16"
+                                            Title="{Binding Name}" MetaText="{Binding MetaText}"
+                                            Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
+                                            IsImporting="{Binding IsImporting}" ImportStatusText="{Binding ImportStatusText}"
+                                            OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>
+                        </DataTemplate>
+                    </ItemsControl.DataTemplates>
+                </ItemsControl>
+            </ScrollViewer>
+        </DockPanel>
+
+        <!-- Import sheet: paste a Pinterest URL + pick cookies. (Target-board picker arrives with the board model.) -->
+        <ctrl:SheetHost IsOpen="{Binding IsImportSheetOpen}" DismissCommand="{Binding CloseImportSheetCommand}">
+            <StackPanel Margin="24" Spacing="16">
+                <TextBlock Classes="h2" Text="Import a board"/>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Pinterest board / section / pin URL"/>
+                    <TextBox Theme="{StaticResource HoardInput}" Text="{Binding BoardUrl}"
+                             PlaceholderText="pinterest.com/user/board…"/>
+                </StackPanel>
+                <!-- Import into a new board (created first) or an existing one (merge). -->
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Import into"/>
+                    <ComboBox ItemsSource="{Binding ImportTargets}" SelectedItem="{Binding SelectedImportTarget}"
+                              HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ImportTarget">
+                                <TextBlock Text="{Binding Display}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Spacing="6" IsVisible="{Binding IsNewBoardTarget}">
+                    <TextBlock Classes="muted" Text="New board name"/>
+                    <TextBox Theme="{StaticResource HoardInput}" Text="{Binding NewBoardName}"
+                             PlaceholderText="Board name"/>
+                </StackPanel>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Cookies (for private boards)"/>
+                    <ComboBox ItemsSource="{Binding CookieBrowsers}" SelectedItem="{Binding CookiesBrowser}"
+                              HorizontalAlignment="Stretch"/>
+                </StackPanel>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseImportSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Import"
+                            Command="{Binding ImportCommand}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- Board Edit popup (the pencil): rename / sources / info / clear cache / delete. Commands wired in
+             code-behind (the delete routes through the confirm popup below). -->
+        <ctrl:SheetHost x:Name="BoardEditHost" IsOpen="{Binding IsBoardEditSheetOpen}"
+                        DismissCommand="{Binding CloseBoardEditSheetCommand}">
+            <ctrl:BoardEditSheet x:Name="BoardEditSheet"
+                                 BoardName="{Binding BoardEditTarget.Name, Mode=OneWay}"
+                                 SourceBoards="{Binding BoardEditTarget.Sources}"
+                                 CountsText="{Binding BoardEditTarget.CountsText}"
+                                 CacheText="{Binding BoardEditTarget.CacheText}"
+                                 AddedText="{Binding BoardEditTarget.AddedText}"
+                                 ImportedText="{Binding BoardEditTarget.ImportedText}"/>
+        </ctrl:SheetHost>
+
+        <!-- Shared confirm popup (the board delete), layered on top. -->
+        <ctrl:SheetHost x:Name="BoardConfirmHost">
+            <ctrl:ConfirmSheet x:Name="BoardConfirmContent"/>
+        </ctrl:SheetHost>
+    </Panel>
 </UserControl>

@@ -35,6 +35,13 @@ public partial class BoardCard : UserControl
     public static readonly StyledProperty<ICommand?> EditCommandProperty =
         AvaloniaProperty.Register<BoardCard, ICommand?>(nameof(EditCommand));
 
+    /// <summary>While true, the card shows a pinned inline import strip (animated bar + <see cref="ImportStatusText"/>).</summary>
+    public static readonly StyledProperty<bool> IsImportingProperty =
+        AvaloniaProperty.Register<BoardCard, bool>(nameof(IsImporting));
+
+    public static readonly StyledProperty<string?> ImportStatusTextProperty =
+        AvaloniaProperty.Register<BoardCard, string?>(nameof(ImportStatusText));
+
     public string? Title { get => GetValue(TitleProperty); set => SetValue(TitleProperty, value); }
     public string? MetaText { get => GetValue(MetaTextProperty); set => SetValue(MetaTextProperty, value); }
     public Bitmap? Thumb0 { get => GetValue(Thumb0Property); set => SetValue(Thumb0Property, value); }
@@ -42,6 +49,8 @@ public partial class BoardCard : UserControl
     public Bitmap? Thumb2 { get => GetValue(Thumb2Property); set => SetValue(Thumb2Property, value); }
     public ICommand? OpenCommand { get => GetValue(OpenCommandProperty); set => SetValue(OpenCommandProperty, value); }
     public ICommand? EditCommand { get => GetValue(EditCommandProperty); set => SetValue(EditCommandProperty, value); }
+    public bool IsImporting { get => GetValue(IsImportingProperty); set => SetValue(IsImportingProperty, value); }
+    public string? ImportStatusText { get => GetValue(ImportStatusTextProperty); set => SetValue(ImportStatusTextProperty, value); }
 
     public BoardCard()
     {

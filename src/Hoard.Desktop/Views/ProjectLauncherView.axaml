@@ -15,85 +15,39 @@
     <!-- Panel so the new-project sheet overlays the whole screen. -->
     <Panel>
         <ScrollViewer>
-            <StackPanel Margin="28,24" Spacing="20" MaxWidth="1040" HorizontalAlignment="Left">
+            <StackPanel Margin="36,28" Spacing="20" MaxWidth="1040" HorizontalAlignment="Left">
                 <TextBlock Classes="h1" Text="Projects"/>
 
-                <!-- The “+ New project” tile + one card per recent project, reflowing by width. -->
-                <ItemsControl ItemsSource="{Binding Tiles}">
+                <!-- The “+ New project” tile + one card per recent project, reflowing by width. ClipToBounds
+                     =False all the way down (incl. the item ContentPresenter) so the raised cards' drop shadow
+                     and hover-scale aren't cropped to their cells — see the CLAUDE.md raised-card-in-grid rule. -->
+                <ItemsControl ItemsSource="{Binding Tiles}" ClipToBounds="False">
+                    <ItemsControl.Styles>
+                        <Style Selector="ContentPresenter">
+                            <Setter Property="ClipToBounds" Value="False"/>
+                        </Style>
+                    </ItemsControl.Styles>
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <WrapPanel/>
+                            <WrapPanel ClipToBounds="False"/>
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.DataTemplates>
 
-                        <!-- Leading action tile: opens the new-project sheet. -->
+                        <!-- Leading action tile: the raised "+ New project" card (NewProjectCard), sized to the
+                             project card's footprint. Its command opens the new-project sheet. -->
                         <DataTemplate DataType="vm:NewProjectTile">
-                            <Border Width="240" MinHeight="224" Margin="0,0,16,16" Cursor="Hand"
-                                    Background="{DynamicResource CardBrush}"
-                                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
-                                    CornerRadius="{DynamicResource RadiusLg}"
-                                    Tapped="OnNewProjectTileTapped">
-                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                                    <Border Width="52" Height="52" CornerRadius="{DynamicResource RadiusFull}"
-                                            Background="{DynamicResource MutedBrush}" HorizontalAlignment="Center">
-                                        <ctrl:Icon Data="{StaticResource Icon.plus}" Width="24" Height="24"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource ForegroundBrush}"/>
-                                    </Border>
-                                    <TextBlock Text="New project" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
+                            <ctrl:NewProjectCard Label="New project" Margin="0,0,16,16"
+                                                 Command="{Binding $parent[ItemsControl].((vm:ProjectLauncherViewModel)DataContext).OpenNewProjectSheetCommand}"/>
                         </DataTemplate>
 
-                        <!-- Project board card: 3-up collage cover + name (with ⋯ menu) + cache size. -->
+                        <!-- Project card (inset): collage cover + name + cache, with Open + Edit (pencil) buttons.
+                             Open/Edit are per-item commands on the ref; Edit opens the popup below. -->
                         <DataTemplate DataType="vm:RecentProjectRef">
-                            <Border Classes="card" Padding="0" Width="240" Margin="0,0,16,16" Cursor="Hand"
-                                    Tapped="OnProjectCardTapped">
-                                <StackPanel>
-                                    <!-- Collage: big = first thumbnail, then two stacked on the right. Rounded top via
-                                         an inner clip so the card keeps its drop shadow. Missing tiles stay muted. -->
-                                    <Border CornerRadius="{DynamicResource RadiusLgTop}" ClipToBounds="True">
-                                        <Grid Height="150" ColumnDefinitions="2*,2,*" RowDefinitions="*,2,*">
-                                            <Border Grid.Column="0" Grid.RowSpan="3" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
-                                                <Panel>
-                                                    <Image Source="{Binding Thumb0}" Stretch="UniformToFill"/>
-                                                    <ctrl:Icon Data="{StaticResource Icon.image}" Width="28" Height="28"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                               Foreground="{DynamicResource MutedForegroundBrush}"
-                                                               IsVisible="{Binding Thumb0, Converter={x:Static ObjectConverters.IsNull}}"/>
-                                                </Panel>
-                                            </Border>
-                                            <Border Grid.Column="2" Grid.Row="0" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
-                                                <Image Source="{Binding Thumb1}" Stretch="UniformToFill"/>
-                                            </Border>
-                                            <Border Grid.Column="2" Grid.Row="2" Background="{DynamicResource MutedBrush}" ClipToBounds="True">
-                                                <Image Source="{Binding Thumb2}" Stretch="UniformToFill"/>
-                                            </Border>
-                                        </Grid>
-                                    </Border>
-                                    <Grid Margin="14,12" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}" FontWeight="SemiBold"
-                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                        <!-- ⋯ manage menu. Its taps are ignored by the card-open handler (it's a Button). -->
-                                        <Button Grid.Row="0" Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
-                                                Width="30" Height="30" Padding="0" VerticalAlignment="Center">
-                                            <ctrl:Icon Data="{StaticResource Icon.more-horizontal}" Width="18" Height="18"/>
-                                            <Button.Flyout>
-                                                <MenuFlyout>
-                                                    <MenuItem Header="Open" Click="OnManageOpen"/>
-                                                    <MenuItem Header="Clear cache" Click="OnManageClearCache"/>
-                                                    <MenuItem Header="Remove from list" Click="OnManageForget"/>
-                                                    <Separator/>
-                                                    <MenuItem Header="Delete from disk…" Click="OnManageDelete"/>
-                                                </MenuFlyout>
-                                            </Button.Flyout>
-                                        </Button>
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Classes="muted"
-                                                   Text="{Binding CacheSizeText}" Margin="0,4,0,0"/>
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
+                            <ctrl:ProjectCard Margin="0,0,16,16"
+                                              Title="{Binding Name}" MetaText="{Binding CacheSizeText}"
+                                              Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
+                                              OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>
                         </DataTemplate>
 
                     </ItemsControl.DataTemplates>
@@ -143,6 +97,25 @@
                 <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Open existing folder…"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Click="OnOpenExisting"/>
             </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- Edit popup for a project (rename / info / clear cache / remove / delete). Its action commands are
+             wired in code-behind (the delete routes through the confirm popup below). -->
+        <ctrl:SheetHost x:Name="EditHost" IsOpen="{Binding IsEditSheetOpen}" DismissCommand="{Binding CloseEditSheetCommand}">
+            <ctrl:ProjectEditSheet x:Name="EditSheet"
+                                   ProjectName="{Binding EditTarget.Name, Mode=OneWay}"
+                                   FolderPath="{Binding EditTarget.Path}"
+                                   CountsText="{Binding EditTarget.CountsText}"
+                                   BoardsText="{Binding EditTarget.BoardsText}"
+                                   CacheText="{Binding EditTarget.CacheSizeText}"
+                                   OnDiskText="{Binding EditTarget.OnDiskText}"
+                                   AddedText="{Binding EditTarget.AddedText}"
+                                   ModifiedText="{Binding EditTarget.ModifiedText}"/>
+        </ctrl:SheetHost>
+
+        <!-- Shared confirm popup (the project delete), layered on top of the Edit popup. -->
+        <ctrl:SheetHost x:Name="ConfirmHost">
+            <ctrl:ConfirmSheet x:Name="ConfirmContent"/>
         </ctrl:SheetHost>
     </Panel>
 </UserControl>

@@ -126,10 +126,20 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
   reads recessed, not floating): `RecessedBrush` fill + `ShadowInsetBevel`, **no** drop shadow; a 3-up collage
   cover (also given the inset bevel) over name + meta + **Open** (primary) / **Edit** pencil (secondary), both
   `lg`. Collage built from the project's cached thumbnails (muted tiles fill gaps).
-- **BoardCard** (`Controls/BoardCard.*`) — a board's card. **Raised + clickable**: the collage IS the card
-  (full-bleed, all corners rounded), the **card body opens** the board with expand-on-hover / shrink-on-press
-  scale + a `ShadowRaisedBevel` convex edge (the buttons' tactile feel); name + meta sit **below** it with a
-  floating pencil **Edit** to the right.
+- **BoardCard** (`Controls/BoardCard.*`) — a board's card. **Clickable, flat-at-rest**: the collage IS the card
+  (full-bleed, all corners rounded) with a `ShadowRaisedBevel` convex edge; the **card body opens** the board,
+  **lifting a drop shadow on hover** with expand-on-hover / shrink-on-press scale (like the `ItemCard`); name +
+  meta sit **below** it with a floating pencil **Edit** to the right.
+- **NewCard** (`Controls/NewCard.*`) — the leading **"+ New board"** action card on the **Library** grid.
+  Mirrors the `BoardCard` silhouette — a clickable cover well (a centred + in a muted well under the convex
+  bevel) with a **label row beneath** — flat at rest, lifting a drop shadow on hover with the same expand/shrink
+  scale, so it sits flush beside the board cards. The whole tile is the button (`Label` + `Command`).
+- **NewProjectCard** (`Controls/NewProjectCard.*`) — the **"+ New project"** companion on the **Projects**
+  grid. A clickable tile (convex bevel; flat at rest, drop shadow on hover; hover/press scale) sized to the
+  **`ProjectCard` footprint** (240 × ~282, via an invisible sizer mirroring the project card's content box so
+  the heights match exactly), with the + and label **centred inside** — so it reads as an action against the
+  inset project cards. Separate from `NewCard` because the project card has a different (inset, taller)
+  silhouette. Replaces the bespoke inline "+ New project" tile.
 - **ItemCard** (`Controls/ItemCard.*`) — a media tile in the masonry grid. The image/GIF is **full-bleed**
   under a **convex** `ShadowRaisedBevel` edge + thin `LineBrush` border: **flat at rest**, lifting `ShadowRaised`
   on hover with the cards' expand-on-hover / shrink-on-press scale. The body tap opens the item; a floating

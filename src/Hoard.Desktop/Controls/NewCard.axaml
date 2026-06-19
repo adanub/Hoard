@@ -1,0 +1,66 @@
+<!--
+  NewCard — the leading "+ New …" action card (see Controls/NewCard.cs). Mirrors the BoardCard: a raised,
+  clickable cover well (here a centred + in a muted well) with a label row beneath. Same shadow-room handling
+  (ClipToBounds=False; the grid's spacing gives the lifted shadow its gutter) per the CLAUDE.md rule.
+  Self-bindings use #Root.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.NewCard"
+             x:Name="Root" ClipToBounds="False">
+
+    <UserControl.Styles>
+        <!-- Flat at rest (border only); the drop shadow lifts on hover and tightens on press, like the
+             ItemCards. Both transform AND shadow come from styles, never a local value (a local value would
+             override the state styles). -->
+        <Style Selector="Border#CardRoot">
+            <Setter Property="RenderTransform" Value="scale(1)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowNone}"/>
+        </Style>
+        <Style Selector="Border#CardRoot:pointerover">
+            <Setter Property="RenderTransform" Value="scale(1.03)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowRaised}"/>
+        </Style>
+        <Style Selector="Border#CardRoot.pressed">
+            <Setter Property="RenderTransform" Value="scale(0.97)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
+        </Style>
+    </UserControl.Styles>
+
+    <StackPanel Width="240" Spacing="10">
+        <!-- The cover well IS the card: a muted well with a centred + under a convex bevel, raised + clickable. -->
+        <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+                Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
+                BorderThickness="1" Cursor="Hand"
+                RenderTransformOrigin="50%,50%"
+                Tapped="OnCardTapped" PointerPressed="OnCardPressed" PointerReleased="OnCardReleased"
+                PointerExited="OnCardExited" PointerCaptureLost="OnCardCaptureLost">
+            <Border.Transitions>
+                <Transitions>
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.10" Easing="CubicEaseOut"/>
+                </Transitions>
+            </Border.Transitions>
+            <Border CornerRadius="{DynamicResource RadiusLg}" ClipToBounds="True">
+                <Panel>
+                    <Border Height="170" Background="{DynamicResource MutedBrush}">
+                        <Border Width="52" Height="52" CornerRadius="{DynamicResource RadiusFull}"
+                                Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
+                                BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <ctrl:Icon Data="{StaticResource Icon.plus}" Width="24" Height="24"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource ForegroundBrush}"/>
+                        </Border>
+                    </Border>
+                    <!-- Convex bevel over the well (light top-left / dark bottom-right), matching the board card. -->
+                    <Border CornerRadius="{DynamicResource RadiusLg}" IsHitTestVisible="False"
+                            BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
+                </Panel>
+            </Border>
+        </Border>
+
+        <!-- Label row beneath the well (inset by the corner radius, like the board card's name row). -->
+        <TextBlock Text="{Binding #Root.Label}" FontWeight="SemiBold" Margin="14,0"
+                   HorizontalAlignment="Center"/>
+    </StackPanel>
+</UserControl>

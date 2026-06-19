@@ -1,10 +1,9 @@
+using System.IO;
 using System.Threading.Tasks;
-using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using Avalonia.VisualTree;
+using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.ViewModels;
 
 namespace Hoard.Desktop.Views;
@@ -14,53 +13,56 @@ public partial class ProjectLauncherView : UserControl
     public ProjectLauncherView()
     {
         InitializeComponent();
+        WireEditSheet();
     }
 
     private ProjectLauncherViewModel? Vm => DataContext as ProjectLauncherViewModel;
 
-    private void OnNewProjectTileTapped(object? sender, TappedEventArgs e) => Vm?.OpenNewProjectSheetCommand.Execute(null);
-
-    private void OnProjectCardTapped(object? sender, TappedEventArgs e)
+    // The Edit popup's actions are orchestrated here (sheets + the delete confirm); the view model owns the
+    // data. The lambdas read Vm/EditTarget lazily, so they pick up the DataContext set after construction.
+    private void WireEditSheet()
     {
-        // The ⋯ button lives inside the card and opens its own menu — ignore taps that originate on it.
-        if ((e.Source as Visual)?.FindAncestorOfType<Button>() is not null) return;
-        if (RefOf(sender) is { } r) _ = Vm?.OpenProjectAsync(r);
+        EditSheet.OpenFolderCommand = new RelayCommand(() =>
+        {
+            if (Vm?.EditTarget is { } r) _ = OpenFolderAsync(r.Path);
+        });
+        EditSheet.RenameCommand = new RelayCommand<object?>(name => Vm?.RenameEditTarget(name as string));
+        EditSheet.ClearCacheCommand = new RelayCommand(() =>
+        {
+            if (Vm?.EditTarget is { } r) _ = Vm.ClearCacheAsync(r);
+        });
+        EditSheet.RemoveCommand = new RelayCommand(() =>
+        {
+            if (Vm is { EditTarget: { } r } vm) { vm.Forget(r); vm.CloseEditSheetCommand.Execute(null); }
+        });
+        EditSheet.DeleteCommand = new RelayCommand(() =>
+        {
+            if (Vm?.EditTarget is { } r) ShowDeleteConfirm(r);
+        });
+        ConfirmHost.DismissCommand = new RelayCommand(() => ConfirmHost.IsOpen = false);
     }
 
-    private void OnManageOpen(object? sender, RoutedEventArgs e)
+    // Configure + open the confirm popup (on top of the Edit popup); a 10s cooldown guards the deletion.
+    private void ShowDeleteConfirm(RecentProjectRef r)
     {
-        if (RefOf(sender) is { } r) _ = Vm?.OpenProjectAsync(r);
+        ConfirmContent.Title = "Delete project?";
+        ConfirmContent.Message = $"Move “{r.Name}” and all of its data to your recycle bin?\n\n{r.Path}";
+        ConfirmContent.ConfirmLabel = "Delete";
+        ConfirmContent.ConfirmCommand = new RelayCommand(() =>
+        {
+            ConfirmHost.IsOpen = false;
+            if (Vm is { } vm) { vm.CloseEditSheetCommand.Execute(null); vm.DeleteFromDisk(r); }
+        });
+        ConfirmContent.CancelCommand = new RelayCommand(() => ConfirmHost.IsOpen = false);
+        ConfirmContent.Begin(10);
+        ConfirmHost.IsOpen = true;
     }
 
-    private void OnManageClearCache(object? sender, RoutedEventArgs e)
+    private async Task OpenFolderAsync(string path)
     {
-        if (RefOf(sender) is { } r) _ = Vm?.ClearCacheAsync(r);
+        if (TopLevel.GetTopLevel(this) is { } top && Directory.Exists(path))
+            await top.Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(path));
     }
-
-    private void OnManageForget(object? sender, RoutedEventArgs e)
-    {
-        if (RefOf(sender) is { } r) Vm?.Forget(r);
-    }
-
-    private async void OnManageDelete(object? sender, RoutedEventArgs e)
-    {
-        if (RefOf(sender) is not { } r || Vm is not { } vm) return;
-        if (TopLevel.GetTopLevel(this) is not Window owner) return;
-
-        var confirm = new ConfirmDialog(
-            "Delete project",
-            $"Permanently delete “{r.Name}” and ALL of its data?\n\n{r.Path}\n\n" +
-            "This removes every downloaded image and the database for this project. It cannot be undone.",
-            confirmLabel: "Delete",
-            danger: true,
-            countdownSeconds: 10);
-
-        if (await confirm.ShowDialog<bool>(owner))
-            vm.DeleteFromDisk(r);
-    }
-
-    // The card body, the ⋯ button, and each menu item all inherit the card's RecentProjectRef DataContext.
-    private static RecentProjectRef? RefOf(object? sender) => (sender as Control)?.DataContext as RecentProjectRef;
 
     private async void OnBrowseLocation(object? sender, RoutedEventArgs e)
     {

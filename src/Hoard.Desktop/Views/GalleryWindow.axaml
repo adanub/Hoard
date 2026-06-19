@@ -109,8 +109,12 @@
                 <!-- Project card: 3-up collage cover + name + metadata + Open/Edit (both lg) -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Project card"/>
-                    <ctrl:ProjectCard x:Name="DemoProjectCard" Title="HoardTest1"
-                                      MetaText="78 images · 12 MB cache" HorizontalAlignment="Left"/>
+                    <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Left">
+                        <ctrl:ProjectCard x:Name="DemoProjectCard" Title="HoardTest1"
+                                          MetaText="78 images · 12 MB cache"/>
+                        <!-- Its "+ New project" companion: raised action tile, same footprint. -->
+                        <ctrl:NewProjectCard x:Name="DemoNewProjectCard" Label="New project"/>
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- Board card: collage + name + metadata, no Open button (card body opens), floating pencil -->
@@ -119,6 +123,12 @@
                     <ctrl:BoardCard x:Name="DemoBoardCard"
                                     Title="animation-references-and-other-very-long-board-name"
                                     MetaText="37 images · 5 MB cache" HorizontalAlignment="Left"/>
+                </StackPanel>
+
+                <!-- New card: the leading "+ New …" action tile (new project / new board). Whole tile clickable. -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="New card"/>
+                    <ctrl:NewCard x:Name="DemoNewCard" Label="New board" HorizontalAlignment="Left"/>
                 </StackPanel>
 
                 <!-- Item card: a masonry media tile — full-bleed image/GIF, convex bevel + border, hover lift,

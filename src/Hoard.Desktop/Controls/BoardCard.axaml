@@ -12,13 +12,16 @@
              x:Name="Root" ClipToBounds="False">
 
     <UserControl.Styles>
-        <!-- Rest: normal. Hover: expand. Pressed: shrink (+ tighter shadow). Base transform comes from a style,
-             not a local value (a local value would override the state styles). -->
+        <!-- Flat at rest (border only); the drop shadow lifts on hover and tightens on press, like the
+             ItemCards. Both transform AND shadow come from styles, never a local value (a local value would
+             override the state styles). -->
         <Style Selector="Border#CardRoot">
             <Setter Property="RenderTransform" Value="scale(1)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowNone}"/>
         </Style>
         <Style Selector="Border#CardRoot:pointerover">
             <Setter Property="RenderTransform" Value="scale(1.03)"/>
+            <Setter Property="BoxShadow" Value="{DynamicResource ShadowRaised}"/>
         </Style>
         <Style Selector="Border#CardRoot.pressed">
             <Setter Property="RenderTransform" Value="scale(0.97)"/>
@@ -35,7 +38,7 @@
         <!-- The collage IS the card. Outer Border carries the shadow (not clipped); inner clip rounds the collage. -->
         <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
                 Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
-                BorderThickness="1" BoxShadow="{DynamicResource ShadowRaised}" Cursor="Hand"
+                BorderThickness="1" Cursor="Hand"
                 RenderTransformOrigin="50%,50%"
                 Tapped="OnCardTapped" PointerPressed="OnCardPressed" PointerReleased="OnCardReleased"
                 PointerExited="OnCardExited" PointerCaptureLost="OnCardCaptureLost">
@@ -67,6 +70,11 @@
                          card has the buttons' tactile edge. Overlay because inset shadows render behind content. -->
                     <Border CornerRadius="{DynamicResource RadiusLg}" IsHitTestVisible="False"
                             BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
+                    <!-- Pinned import strip: an animated (indeterminate) accent bar along the collage bottom while
+                         this board is importing. The running count sits in the meta row below. -->
+                    <ProgressBar IsVisible="{Binding #Root.IsImporting}" IsIndeterminate="True"
+                                 VerticalAlignment="Bottom" Height="4" IsHitTestVisible="False"
+                                 Foreground="{DynamicResource PrimaryBrush}"/>
                 </Panel>
             </Border>
         </Border>
@@ -76,11 +84,16 @@
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="14,0">
             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                 <TextBlock Text="{Binding #Root.Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                <TextBlock Classes="muted" Text="{Binding #Root.MetaText}"/>
+                <!-- Meta normally; the live import count replaces it (in accent) while importing. -->
+                <TextBlock Classes="muted" Text="{Binding #Root.MetaText}"
+                           IsVisible="{Binding !#Root.IsImporting}"/>
+                <TextBlock Classes="accent" FontSize="{DynamicResource FontSizeSm}"
+                           Text="{Binding #Root.ImportStatusText}" IsVisible="{Binding #Root.IsImporting}"/>
             </StackPanel>
             <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary"
                     Width="40" Height="40" Padding="0" VerticalAlignment="Center"
-                    Command="{Binding #Root.EditCommand}">
+                    Command="{Binding #Root.EditCommand}"
+                    IsVisible="{Binding #Root.EditCommand, Converter={x:Static ObjectConverters.IsNotNull}}">
                 <ctrl:Icon Data="{StaticResource Icon.pencil}" Width="16" Height="16"/>
             </Button>
         </Grid>

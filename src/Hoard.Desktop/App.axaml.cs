@@ -41,6 +41,7 @@ public partial class App : Application
 
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddSerilog(dispose: true));
+        services.AddSingleton<Hoard.Core.Storage.IFileRecycler, Services.WindowsFileRecycler>(); // delete → recycle bin
         services.AddHoardCore(appPaths);
         services.AddGalleryDlConnectors(ResolveGalleryDlPath()); // desktop-only ingestion
         services.AddTransient<MainWindowViewModel>();

@@ -4,8 +4,8 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Core.Connectors;
@@ -17,225 +17,315 @@ using Hoard.Ingest.GalleryDl;
 
 namespace Hoard.Desktop.ViewModels;
 
-/// <summary>The in-project UI: import, browse boards, and view a project's images.</summary>
+/// <summary>Marker for the leading "+ New board" tile in the Library grid (rendered by its own template).</summary>
+public sealed class NewBoardTile : ViewModelBase
+{
+    public static readonly NewBoardTile Instance = new();
+    private NewBoardTile() { }
+}
+
+/// <summary>
+/// A board on the Library grid, shown as a <see cref="Controls.BoardCard"/>: name, item count, and a 3-up
+/// collage cover from its newest images. <see cref="CollectionId"/> null = the virtual "All images" board.
+/// Tapping the card opens it (the Board screen); the pencil edits it (wired once the board model lands).
+/// </summary>
+public partial class BoardCardRef : ViewModelBase
+{
+    public int? CollectionId { get; }
+
+    [ObservableProperty] private string _name;
+    [ObservableProperty] private string _metaText = "";
+    [ObservableProperty] private Bitmap? _thumb0;
+    [ObservableProperty] private Bitmap? _thumb1;
+    [ObservableProperty] private Bitmap? _thumb2;
+
+    // While this board is being imported into, the card shows a pinned progress strip + live count.
+    [ObservableProperty] private bool _isImporting;
+    [ObservableProperty] private string _importStatusText = "";
+
+    // Edit-popup detail (loaded lazily when the pencil is clicked).
+    [ObservableProperty] private string _countsText = "";
+    [ObservableProperty] private string _cacheText = "";
+    [ObservableProperty] private string _addedText = "";
+    [ObservableProperty] private string _importedText = "";
+    public ObservableCollection<Controls.BoardSourceRef> Sources { get; } = new();
+
+    public IRelayCommand OpenCommand { get; }
+    /// <summary>Null when the board can't be edited (the "All images" card), which hides the pencil.</summary>
+    public IRelayCommand? EditCommand { get; }
+
+    public BoardCardRef(int? collectionId, string name, Action<BoardCardRef> open, Action<BoardCardRef>? edit)
+    {
+        CollectionId = collectionId;
+        _name = name;
+        OpenCommand = new RelayCommand(() => open(this));
+        EditCommand = edit is null ? null : new RelayCommand(() => edit(this));
+    }
+}
+
+/// <summary>An import target: a new board (CollectionId null) or an existing one to merge into.</summary>
+public sealed record ImportTarget(string Display, int? CollectionId);
+
+/// <summary>
+/// The Library screen: a grid of the project's boards (as cards) led by "+ New board" and "All images", with a
+/// project-wide search and an Import action. Opening a card (or searching) pushes the Board screen; the back
+/// chevron returns to Projects (switching project). Per-board editing/merge arrives with the board model.
+/// </summary>
 public partial class LibraryViewModel : ViewModelBase
 {
     private readonly IngestService _ingest;
     private readonly LibraryService _library;
     private readonly CurationService _curation;
     private readonly ProjectManager _projects;
-    private readonly Action _requestSwitchProject;
     private readonly ThumbnailCache? _thumbnails;
-    private CancellationTokenSource? _searchDebounce;
-
-    // GIFs the user has clicked keep autoplaying in the grid; bounded (LRU) so memory stays sane.
-    private const int MaxPlayingGifs = 12;
-    private readonly LinkedList<AssetTileViewModel> _playing = new();
+    private readonly ToastService _toasts;
+    private readonly ImportStatus _importStatus;
+    private readonly Action<BoardTarget> _openBoard;
+    private readonly Action _requestSwitchProject;
 
     public LibraryViewModel(
-        IngestService ingest, LibraryService library, CurationService curation,
-        ProjectManager projects, Action requestSwitchProject)
+        IngestService ingest, LibraryService library, CurationService curation, ProjectManager projects,
+        ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus,
+        Action<BoardTarget> openBoard, Action requestSwitchProject)
     {
         _ingest = ingest;
         _library = library;
         _curation = curation;
         _projects = projects;
+        _thumbnails = thumbnails;
+        _toasts = toasts;
+        _importStatus = importStatus;
+        _openBoard = openBoard;
         _requestSwitchProject = requestSwitchProject;
-        _thumbnails = projects?.Current is { } p ? new ThumbnailCache(p.ThumbnailsRoot) : null;
         _ = RefreshAsync();
     }
 
     // Design-time constructor for the XAML previewer.
-    public LibraryViewModel() : this(null!, null!, null!, null!, () => { }) { }
+    public LibraryViewModel() : this(null!, null!, null!, null!, null, new ToastService(), new ImportStatus(), _ => { }, () => { }) { }
 
-    [ObservableProperty] private string _boardUrl = "";
-    [ObservableProperty] private string _cookiesBrowser = BrowserCookies.None;
-    [ObservableProperty] private bool _isImporting;
-    [ObservableProperty] private string _statusText = "Ready.";
-    [ObservableProperty] private double _progressValue;
-    [ObservableProperty] private double _progressMaximum = 1;
-    [ObservableProperty] private bool _progressIndeterminate;
-    [ObservableProperty] private AssetTileViewModel? _selectedAsset;
-    [ObservableProperty] private AssetDetailViewModel? _details;
+    /// <summary>"+ New board" tile followed by "All images" and one card per board (one ItemsControl flow).</summary>
+    public ObservableCollection<ViewModelBase> Tiles { get; } = new();
 
-    // Load full metadata for the detail panel whenever the selected tile changes.
-    partial void OnSelectedAssetChanged(AssetTileViewModel? value) => _ = LoadDetailsAsync(value);
-
-    private async Task LoadDetailsAsync(AssetTileViewModel? tile)
-    {
-        if (_library is null || tile is null) { Details = null; return; }
-        var detail = await _library.GetAssetDetailAsync(tile.Model.Id);
-        // Ignore if selection changed again while we were loading.
-        if (ReferenceEquals(SelectedAsset, tile))
-            Details = detail is null ? null : new AssetDetailViewModel(detail);
-    }
-
-    [RelayCommand]
-    private void CloseDetails() => SelectedAsset = null;
-
-    /// <summary>Clicking a tile selects it (opens the detail panel) and, for a GIF, starts it autoplaying
-    /// in the grid. It keeps playing after the detail panel is closed, until pushed out by newer plays.</summary>
-    public void ActivateTile(AssetTileViewModel tile)
-    {
-        SelectedAsset = tile;
-        if (!tile.IsGif) return;
-
-        var existing = _playing.Find(tile);
-        if (existing is not null) { _playing.Remove(existing); _playing.AddFirst(existing); return; }
-
-        tile.IsPlaying = true;
-        _playing.AddFirst(tile);
-        while (_playing.Count > MaxPlayingGifs)
-        {
-            var oldest = _playing.Last!.Value;
-            _playing.RemoveLast();
-            oldest.IsPlaying = false; // stop the least-recently-played GIF
-        }
-    }
-
-    /// <summary>
-    /// Manually unload a playing GIF: stop it and (if it's the selected one) close the detail panel.
-    /// Both drop their cache leases, and the refcounted cache frees the frames once the last lease goes.
-    /// </summary>
-    public void UnloadGif(AssetTileViewModel tile)
-    {
-        tile.IsPlaying = false; // tile's control releases its lease + stops the timer
-        var node = _playing.Find(tile);
-        if (node is not null) _playing.Remove(node);
-
-        // If the detail panel is showing this GIF it also holds a lease — close it so that one drops too.
-        if (ReferenceEquals(SelectedAsset, tile)) SelectedAsset = null;
-    }
-
-    /// <summary>
-    /// Tombstone the selected asset with the given note: its blob is freed and a Remove op logged, but the
-    /// tile stays in place — now showing the note — and can be restored. Updated in place (no grid reload)
-    /// so scroll position survives.
-    /// </summary>
-    public async Task DeleteSelectedAsync(string note)
-    {
-        if (_curation is null || SelectedAsset is not { } tile || tile.IsDeleted) return;
-
-        var sha = tile.Model.Sha256;
-        try
-        {
-            if (await _curation.DeleteAssetAsync(tile.Model.Id, note) is null) return; // already gone
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Delete failed: {ex.Message}";
-            return;
-        }
-
-        // Drop the GIF lease (if playing) so the frames are freed, then turn the tile into its tombstone
-        // in place (clears the thumbnail immediately) and refresh the open detail panel.
-        var node = _playing.Find(tile);
-        if (node is not null) _playing.Remove(node);
-        _thumbnails?.Evict(sha);
-
-        var title = tile.Model.Title ?? "image";
-        tile.ApplyUpdate(tile.Model with { IsDeleted = true, DeletionNote = note });
-        await ReloadDetailsAsync();
-        StatusText = $"Deleted “{title}”. It stays as a tombstone you can restore.";
-    }
-
-    /// <summary>Restore the selected tombstone by re-downloading its original media, then show it live again.</summary>
-    public async Task RestoreSelectedAsync()
-    {
-        if (_ingest is null || SelectedAsset is not { IsDeleted: true } tile) return;
-
-        IsImporting = true;
-        ProgressIndeterminate = true;
-        StatusText = "Restoring…";
-        AssetView? restored;
-        try
-        {
-            restored = await _ingest.RestoreAsync(tile.Model.Id);
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Restore failed: {ex.Message}";
-            return;
-        }
-        finally
-        {
-            IsImporting = false;
-            ProgressIndeterminate = false;
-        }
-
-        if (restored is null) { StatusText = "Could not restore — the item may no longer exist at the source."; return; }
-
-        tile.ApplyUpdate(restored);          // back to live in place
-        _ = tile.EnsureThumbnailAsync();     // decode the freshly re-fetched blob
-        await ReloadDetailsAsync();
-        StatusText = $"Restored “{restored.Title ?? "image"}”.";
-    }
-
-    /// <summary>Re-load the detail panel for the current selection (after its live/deleted state changed).</summary>
-    private Task ReloadDetailsAsync() => LoadDetailsAsync(SelectedAsset);
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(LibraryTitle))]
-    private CollectionView? _selectedCollection;
+    public string ProjectName => _projects?.Current?.Name ?? "";
 
     [ObservableProperty] private string _searchQuery = "";
 
-    // Reload after a short pause so we don't query on every keystroke.
-    partial void OnSearchQueryChanged(string value) => _ = DebouncedSearchAsync();
+    [RelayCommand]
+    private void Back() => _requestSwitchProject();
 
-    private async Task DebouncedSearchAsync()
+    /// <summary>Run the project-wide search: open the Board screen over "All images" filtered to the query.</summary>
+    [RelayCommand]
+    private void Search()
     {
-        var cts = new CancellationTokenSource();
-        Interlocked.Exchange(ref _searchDebounce, cts)?.Cancel();
-        try { await Task.Delay(220, cts.Token); }
-        catch (TaskCanceledException) { return; }
-        await LoadAssetsAsync();
+        var q = SearchQuery.Trim();
+        if (q.Length > 0) _openBoard(new BoardTarget(null, $"Results for “{q}”", q));
     }
 
-    public System.Collections.Generic.IReadOnlyList<string> CookieBrowsers { get; } = BrowserCookies.Choices;
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        if (_library is null || _projects?.Current is null) return;
 
-    public ObservableCollection<CollectionView> Collections { get; } = new();
-    public ObservableCollection<AssetTileViewModel> Assets { get; } = new();
+        Tiles.Clear();
+        Tiles.Add(NewBoardTile.Instance);
+        Tiles.Add(new BoardCardRef(null, "All images", OpenBoardRef, edit: null)); // virtual board: no edit
+        foreach (var c in await _library.GetCollectionsAsync())
+        {
+            var count = c.ItemCount == 1 ? "1 image" : $"{c.ItemCount} images";
+            Tiles.Add(new BoardCardRef(c.Id, c.Name, OpenBoardRef, BeginEditBoard)
+            {
+                MetaText = $"{count} · {ByteFormat.Format(c.SizeBytes)}",
+            });
+        }
 
-    public string ProjectName => _projects?.Current?.Name ?? "";
-    public string? ProjectPath => _projects?.Current?.Root;
-    public string LibraryTitle => SelectedCollection is null ? "All images" : SelectedCollection.Name;
+        _ = LoadCoversAsync();
+    }
+
+    private void OpenBoardRef(BoardCardRef r) => _openBoard(new BoardTarget(r.CollectionId, r.Name));
+
+    // ── Board Edit popup ──────────────────────────────────────────────────────
+
+    [ObservableProperty] private BoardCardRef? _boardEditTarget;
+    [ObservableProperty] private bool _isBoardEditSheetOpen;
 
     [RelayCommand]
-    private void SwitchProject() => _requestSwitchProject();
+    private void CloseBoardEditSheet() => IsBoardEditSheetOpen = false;
 
-    // ── Import ──────────────────────────────────────────────────────────────────
+    /// <summary>Open a board's Edit popup (the pencil) and fill its detail rows + source list lazily.</summary>
+    public void BeginEditBoard(BoardCardRef r)
+    {
+        BoardEditTarget = r;
+        IsBoardEditSheetOpen = true;
+        _ = LoadBoardDetailAsync(r);
+    }
+
+    private async Task LoadBoardDetailAsync(BoardCardRef r)
+    {
+        if (r.CollectionId is not int id) return;
+        r.CountsText = "Counting…";
+        r.CacheText = "";
+        r.Sources.Clear();
+
+        var detail = await _library.GetBoardDetailAsync(id);
+        if (detail is null) return;
+        r.CountsText = $"{detail.Images} images · {detail.Gifs} GIFs · {detail.Videos} videos";
+        r.CacheText = ByteFormat.Format(detail.SizeBytes) + " on disk";
+        r.AddedText = "Added " + detail.CreatedAt.LocalDateTime.ToString("d MMM yyyy");
+        r.ImportedText = detail.SourceUrl is null ? "Local board" : "Imported from Pinterest";
+        if (!string.IsNullOrWhiteSpace(detail.SourceUrl))
+        {
+            var name = detail.SourceBoardId ?? DeriveBoardName(detail.SourceUrl);
+            r.Sources.Add(new Controls.BoardSourceRef(name, detail.SourceUrl));
+        }
+    }
+
+    /// <summary>Rename a board (its local name).</summary>
+    public async Task RenameBoardAsync(string? newName)
+    {
+        if (BoardEditTarget is not { CollectionId: int id } r || string.IsNullOrWhiteSpace(newName)) return;
+        try
+        {
+            await _curation.RenameBoardAsync(id, newName.Trim());
+            r.Name = newName.Trim();
+            _toasts.Show($"Renamed to “{r.Name}”.");
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't rename: {ex.Message}", isError: true); }
+    }
+
+    /// <summary>Clear a board's cached thumbnails (regenerated on demand).</summary>
+    public async Task ClearBoardCacheAsync()
+    {
+        if (BoardEditTarget is not { CollectionId: int id } r) return;
+        var shas = await _library.GetBoardAssetShasAsync(id);
+        if (_thumbnails is not null)
+            foreach (var sha in shas) _thumbnails.Evict(sha);
+        _toasts.Show($"Cleared cached thumbnails for “{r.Name}”.");
+    }
+
+    /// <summary>Delete a board (the grouping); its images stay in the archive.</summary>
+    public async Task DeleteBoardAsync()
+    {
+        if (BoardEditTarget is not { CollectionId: int id } r) return;
+        try
+        {
+            await _curation.DeleteBoardAsync(id);
+            Tiles.Remove(r);
+            _toasts.Show($"Deleted board “{r.Name}”. Its images stay under All images.");
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't delete board: {ex.Message}", isError: true); }
+    }
+
+    /// <summary>Remove a merged source from a board (un-merge) — needs the board-merge model; deferred.</summary>
+    public void RemoveSource(Controls.BoardSourceRef? source)
+        => _toasts.Show("Removing a merged source board is coming with the merge model.");
+
+    /// <summary>"Add source board" — import another Pinterest board into this local board (a merge).</summary>
+    public void AddSourceToEditTarget()
+    {
+        if (BoardEditTarget is not { CollectionId: int } r) return;
+        IsBoardEditSheetOpen = false;
+        OpenImportSheet();
+        SelectedImportTarget = ImportTargets.FirstOrDefault(t => t.CollectionId == r.CollectionId) ?? SelectedImportTarget;
+    }
+
+    // Load each board card's 3-up collage covers (newest images) via the thumbnail cache, off the UI thread.
+    // Per-board try/catch so one bad board (e.g. a missing blob) can't abort covers for all the others.
+    private async Task LoadCoversAsync()
+    {
+        foreach (var r in Tiles.OfType<BoardCardRef>().ToArray())
+        {
+            try
+            {
+                var covers = await _library.GetCoverAssetsAsync(r.CollectionId, 3);
+                for (var i = 0; i < covers.Count; i++)
+                {
+                    var bmp = _thumbnails is not null
+                        ? await _thumbnails.GetAsync(covers[i].Sha256, covers[i].AbsolutePath, 240)
+                        : null;
+                    if (i == 0) r.Thumb0 = bmp;
+                    else if (i == 1) r.Thumb1 = bmp;
+                    else r.Thumb2 = bmp;
+                }
+            }
+            catch
+            {
+                // A board whose covers can't load just keeps its placeholder tiles.
+            }
+        }
+    }
+
+    // ── Import ────────────────────────────────────────────────────────────────
+
+    [ObservableProperty] private bool _isImportSheetOpen;
+    [ObservableProperty] private string _boardUrl = "";
+    [ObservableProperty] private string _cookiesBrowser = BrowserCookies.None;
+    [ObservableProperty] private bool _isImporting;
+    [ObservableProperty] private string _newBoardName = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNewBoardTarget))]
+    private ImportTarget? _selectedImportTarget;
+
+    public ObservableCollection<ImportTarget> ImportTargets { get; } = new();
+    public IReadOnlyList<string> CookieBrowsers { get; } = BrowserCookies.Choices;
+
+    /// <summary>True when the chosen target is a brand-new board (so the name field is shown).</summary>
+    public bool IsNewBoardTarget => SelectedImportTarget is null || SelectedImportTarget.CollectionId is null;
+
+    [RelayCommand]
+    private void OpenImportSheet()
+    {
+        BoardUrl = "";
+        NewBoardName = "";
+        ImportTargets.Clear();
+        ImportTargets.Add(new ImportTarget("＋  New board", null));
+        foreach (var b in Tiles.OfType<BoardCardRef>().Where(r => r.CollectionId is not null))
+            ImportTargets.Add(new ImportTarget(b.Name, b.CollectionId));
+        SelectedImportTarget = ImportTargets[0];
+        IsImportSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseImportSheet() => IsImportSheetOpen = false;
+
+    // Default the new-board name from the URL's last path segment (the user can override it).
+    partial void OnBoardUrlChanged(string value)
+    {
+        ImportCommand.NotifyCanExecuteChanged();
+        if (IsNewBoardTarget) NewBoardName = DeriveBoardName(NormalizeUrl(value));
+    }
+
+    partial void OnIsImportingChanged(bool value) => ImportCommand.NotifyCanExecuteChanged();
 
     [RelayCommand(CanExecute = nameof(CanImport))]
     private async Task ImportAsync()
     {
         if (_ingest is null || _projects?.Current is null) return;
-        IsImporting = true;
-        ProgressIndeterminate = true;
-        ProgressValue = 0;
-        ProgressMaximum = 1;
-        StatusText = "Starting…";
-
         var url = NormalizeUrl(BoardUrl);
 
         var cookies = BrowserCookies.Resolve(CookiesBrowser);
-        if (!cookies.Found)
-        {
-            StatusText = cookies.Error!;
-            IsImporting = false;
-            ProgressIndeterminate = false;
-            return;
-        }
+        if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
+
+        IsImportSheetOpen = false;
+        IsImporting = true;
+
+        // Resolve the target board UP FRONT — create the new board first so it appears immediately with a
+        // progress strip and the pins have somewhere to land.
+        var (card, targetId) = await ResolveImportTargetAsync(url);
+        card.IsImporting = true;
+        card.ImportStatusText = "Importing… starting";
+        _importStatus.Begin(targetId); // share with the Board screen
+
         var options = new ConnectorOptions
         {
             CookiesFromBrowser = cookies.Spec,
-            // Skip re-downloading pins already saved in this project on previous imports.
             DownloadArchivePath = _projects.Current.DownloadArchivePath,
         };
 
         var transcript = new StringBuilder();
         transcript.AppendLine($"Import {DateTime.Now:O}");
-        transcript.AppendLine($"Project: {ProjectName} ({ProjectPath})");
+        transcript.AppendLine($"Project: {ProjectName} ({_projects.Current.Root})");
+        transcript.AppendLine($"Board: {card.Name} (#{targetId})");
         transcript.AppendLine($"URL: {url}");
         transcript.AppendLine($"Cookies: {CookiesBrowser}");
         transcript.AppendLine(new string('-', 60));
@@ -243,46 +333,81 @@ public partial class LibraryViewModel : ViewModelBase
         var progress = new Progress<IngestProgress>(p =>
         {
             if (p.Message is not null) transcript.AppendLine($"[{p.Phase}] {p.Message}");
-            StatusText = p.Message ?? p.Phase.ToString();
-            if (p.Total > 0)
+            // No total is known mid-stream (gallery-dl doesn't report one), so show the live count.
+            if (p.Phase is IngestPhase.Downloading or IngestPhase.Storing)
             {
-                ProgressIndeterminate = false;
-                ProgressMaximum = p.Total;
-                ProgressValue = p.Processed;
+                card.ImportStatusText = $"Importing… {p.Processed} so far";
+                _importStatus.Text = card.ImportStatusText;
             }
-
-            // Show each newly imported image immediately, but only on the unfiltered "All images" view
-            // (a streamed asset may not match an active board/search filter); the final RefreshAsync
-            // reconciles ordering, counts, and the board list.
-            if (p.ImportedAsset is { } asset && SelectedCollection is null && string.IsNullOrWhiteSpace(SearchQuery))
-                Assets.Insert(0, new AssetTileViewModel(asset, _thumbnails));
+            if (p.ImportedAsset is { } asset) _importStatus.LastImported = asset; // stream into an open Board screen
         });
 
         try
         {
-            var result = await _ingest.ImportAsync(url, options, progress);
-            transcript.AppendLine($"RESULT: {result.NewAssets} new, {result.DuplicateAssets} duplicate, {result.CollectionsTouched} board(s).");
-            StatusText = result.TotalItems == 0
-                ? "Already up to date — nothing new to download."
-                : $"Done — {result.NewAssets} new, {result.DuplicateAssets} already-had, {result.CollectionsTouched} board(s).";
-            await RefreshAsync();
+            var result = await _ingest.ImportAsync(url, options, progress, targetId);
+            transcript.AppendLine($"RESULT: {result.NewAssets} new, {result.DuplicateAssets} duplicate.");
+            _toasts.Show(result.TotalItems == 0
+                ? $"“{card.Name}”: already up to date — nothing new."
+                : $"Imported {result.NewAssets} new image(s) into “{card.Name}”.");
         }
         catch (Exception ex)
         {
             transcript.AppendLine("EXCEPTION:");
             transcript.AppendLine(ex.ToString());
             var logPath = WriteImportLog(transcript);
-            StatusText = $"Import failed: {ex.Message}".Trim();
-            if (logPath is not null) StatusText += $"  (log: {logPath})";
+            var msg = $"Import into “{card.Name}” failed: {ex.Message}".Trim();
+            if (logPath is not null) msg += $"  (log: {logPath})";
+            _toasts.Show(msg, isError: true);
+            card.IsImporting = false;
+            IsImporting = false;
+            _importStatus.End();
             return;
         }
-        finally
+
+        card.IsImporting = false;
+        IsImporting = false;
+        _importStatus.End();
+        await RefreshAsync();   // reload counts + covers (the importing card is rebuilt fresh)
+        WriteImportLog(transcript);
+    }
+
+    // Create the new board (or locate the chosen existing one) and ensure it has a card in the grid.
+    private async Task<(BoardCardRef Card, int TargetId)> ResolveImportTargetAsync(string url)
+    {
+        if (SelectedImportTarget?.CollectionId is int existingId)
         {
-            IsImporting = false;
-            ProgressIndeterminate = false;
+            var existing = Tiles.OfType<BoardCardRef>().First(r => r.CollectionId == existingId);
+            return (existing, existingId);
         }
 
-        WriteImportLog(transcript);
+        var name = string.IsNullOrWhiteSpace(NewBoardName) ? DeriveBoardName(url) : NewBoardName.Trim();
+        var newId = await _ingest.CreateBoardAsync(name, url);
+        var card = new BoardCardRef(newId, name, OpenBoardRef, edit: null) { MetaText = "0 images" };
+        Tiles.Insert(Math.Min(2, Tiles.Count), card); // after "+ New board" + "All images"
+        return (card, newId);
+    }
+
+    private bool CanImport() => !IsImporting && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);
+
+    /// <summary>Derive a default board name from a board URL's last path segment.</summary>
+    private static string DeriveBoardName(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            var seg = uri.Segments.LastOrDefault(s => s.Trim('/').Length > 0)?.Trim('/');
+            return string.IsNullOrWhiteSpace(seg) ? "New board" : Uri.UnescapeDataString(seg);
+        }
+        catch { return "New board"; }
+    }
+
+    /// <summary>Accept "pinterest.com/…" by prepending https:// when the user omits the scheme.</summary>
+    private static string NormalizeUrl(string raw)
+    {
+        var url = raw.Trim();
+        if (url.Length == 0) return url;
+        if (!url.Contains("://", StringComparison.Ordinal)) url = "https://" + url;
+        return url;
     }
 
     private string? WriteImportLog(StringBuilder transcript)
@@ -299,63 +424,5 @@ public partial class LibraryViewModel : ViewModelBase
         {
             return null; // logging must never break an import
         }
-    }
-
-    private bool CanImport() => !IsImporting && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);
-
-    partial void OnBoardUrlChanged(string value) => ImportCommand.NotifyCanExecuteChanged();
-    partial void OnIsImportingChanged(bool value) => ImportCommand.NotifyCanExecuteChanged();
-
-    /// <summary>Accept "pinterest.com/…" by prepending https:// when the user omits the scheme.</summary>
-    private static string NormalizeUrl(string raw)
-    {
-        var url = raw.Trim();
-        if (url.Length == 0) return url;
-        if (!url.Contains("://", StringComparison.Ordinal)) url = "https://" + url;
-        return url;
-    }
-
-    // ── Library browsing ─────────────────────────────────────────────────────────
-
-    [RelayCommand]
-    private void ShowAll() => SelectedCollection = null;
-
-    [RelayCommand]
-    private void ClearSearch() => SearchQuery = "";
-
-    [RelayCommand]
-    private async Task RefreshAsync()
-    {
-        if (_library is null || _projects?.Current is null) return;
-        var previouslySelectedId = SelectedCollection?.Id;
-
-        Collections.Clear();
-        foreach (var c in await _library.GetCollectionsAsync())
-            Collections.Add(c);
-
-        SelectedCollection = previouslySelectedId is int id
-            ? Collections.FirstOrDefault(c => c.Id == id)
-            : null;
-
-        await LoadAssetsAsync();
-    }
-
-    partial void OnSelectedCollectionChanged(CollectionView? value) => _ = LoadAssetsAsync();
-
-    private async Task LoadAssetsAsync()
-    {
-        if (_library is null || _projects?.Current is null) return;
-        var search = SearchQuery;
-        var views = await _library.GetAssetsAsync(SelectedCollection?.Id, search);
-        // Tiles are being recreated: close the detail panel and forget what was playing so their GIF
-        // cache leases are dropped and the frames are freed (memory tracks what's actually on screen).
-        SelectedAsset = null;
-        _playing.Clear();
-        Assets.Clear();
-        foreach (var v in views)
-            Assets.Add(new AssetTileViewModel(v, _thumbnails));
-        StatusText = string.IsNullOrWhiteSpace(search)
-            ? $"{Assets.Count} image(s) in “{LibraryTitle}”."
-            : $"{Assets.Count} result(s) for “{search.Trim()}” in “{LibraryTitle}”.";
     }
 }
