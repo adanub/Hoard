@@ -51,8 +51,8 @@ public partial class GalleryWindow : Window
         // Board Edit popup demo: placeholder merged source boards. Destructive actions route through the confirm.
         DemoBoardEditSheet.SourceBoards = new List<BoardSourceRef>
         {
-            new("alice/animation-refs", "pinterest.com/alice/animation-refs"),
-            new("bob/keyframes", "pinterest.com/bob/keyframes"),
+            new(1, "alice/animation-refs", "pinterest.com/alice/animation-refs", 27),
+            new(2, "bob/keyframes", "pinterest.com/bob/keyframes", 0),
         };
         DemoBoardEditSheet.RenameCommand = new RelayCommand<object?>(name => _toasts.Show($"Renamed to “{name}”"));
         DemoBoardEditSheet.OpenSourceCommand = new RelayCommand<BoardSourceRef?>(s => _toasts.Show($"Open {s?.Name} in browser"));

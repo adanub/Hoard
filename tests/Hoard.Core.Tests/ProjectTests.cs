@@ -47,6 +47,73 @@ public class ProjectTests : IDisposable
         Assert.Equal("Custom Name", HoardProject.Open(folder).Name);
     }
 
+    [Fact]
+    public void Open_tolerates_a_corrupt_marker_by_deriving_the_name()
+    {
+        var folder = Path.Combine(_dir, "Corrupt Marker");
+        HoardProject.Create(folder, "Old Name");
+        File.WriteAllText(Path.Combine(folder, HoardProject.MarkerFileName), "{ this is not valid json ");
+
+        var project = HoardProject.Open(folder); // still a project (marker present), just unreadable
+        Assert.Equal("Corrupt Marker", project.Name); // falls back to the folder name instead of throwing
+    }
+
+    [Fact]
+    public void Adopt_recreates_a_missing_marker_for_a_data_folder()
+    {
+        var folder = Path.Combine(_dir, "lost-marker");
+        HoardProject.Create(folder, "Recovered");
+        File.Delete(Path.Combine(folder, HoardProject.MarkerFileName));
+        Assert.False(HoardProject.IsProject(folder));            // no marker → not openable normally
+        Assert.True(HoardProject.LooksLikeProjectFolder(folder)); // but the store/db give it away
+
+        var project = HoardProject.Adopt(folder);
+
+        Assert.True(HoardProject.IsProject(folder));             // marker rewritten
+        Assert.Equal("lost-marker", project.Name);              // name derived from the folder
+    }
+
+    [Fact]
+    public void Adopt_refuses_a_folder_with_no_project_data()
+    {
+        var folder = Path.Combine(_dir, "just-files");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "hi");
+        Assert.Throws<InvalidOperationException>(() => HoardProject.Adopt(folder));
+    }
+
+    [Fact]
+    public void Manager_adopt_opens_a_marker_less_project()
+    {
+        var appPaths = new AppPaths(Path.Combine(_dir, "appdata"));
+        var folder = Path.Combine(_dir, "adopt-me");
+        new ProjectManager(appPaths).Create(folder); // create the data…
+        File.Delete(Path.Combine(folder, HoardProject.MarkerFileName)); // …then lose the marker
+
+        var manager = new ProjectManager(appPaths);
+        var project = manager.Adopt(folder);
+
+        Assert.Equal(folder, Path.GetFullPath(project.Root));
+        Assert.Equal(folder, manager.Current!.Root);
+        Assert.Contains(folder, manager.RecentProjects);
+    }
+
+    [Fact]
+    public void Manager_prunes_recents_whose_folder_is_gone()
+    {
+        var appPaths = new AppPaths(Path.Combine(_dir, "appdata"));
+        var keep = Path.Combine(_dir, "still-here");
+        var gone = Path.Combine(_dir, "moved-away");
+        var m1 = new ProjectManager(appPaths);
+        m1.Create(keep);
+        m1.Create(gone);
+        Directory.Delete(gone, recursive: true); // moved/deleted outside the app
+
+        // A fresh manager drops the vanished folder from recents on load.
+        var m2 = new ProjectManager(appPaths);
+        Assert.Equal(new[] { keep }, m2.RecentProjects.ToArray());
+    }
+
     [Theory]
     [InlineData("Pinterest Archive")]
     [InlineData("my_board-2026")]

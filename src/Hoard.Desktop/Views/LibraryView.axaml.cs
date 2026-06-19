@@ -37,9 +37,27 @@ public partial class LibraryView : UserControl
         {
             if (s is { } src) _ = OpenUrlAsync(src.Url);
         });
-        BoardEditSheet.RemoveSourceCommand = new RelayCommand<BoardSourceRef?>(s => Vm?.RemoveSource(s));
+        BoardEditSheet.RemoveSourceCommand = new RelayCommand<BoardSourceRef?>(ShowRemoveSourceConfirm);
         BoardEditSheet.DeleteCommand = new RelayCommand(ShowBoardDeleteConfirm);
         BoardConfirmHost.DismissCommand = new RelayCommand(() => BoardConfirmHost.IsOpen = false);
+    }
+
+    private void ShowRemoveSourceConfirm(BoardSourceRef? source)
+    {
+        if (source is null) return;
+        BoardConfirmContent.Title = "Remove source board?";
+        BoardConfirmContent.Message = source.ImageCount > 0
+            ? $"Stop merging “{source.Name}” and delete its {source.ImageCount} image(s) — files go to your recycle bin (any also in another board are removed there too)."
+            : $"Stop merging “{source.Name}” into this board. It won't be listed or re-synced.";
+        BoardConfirmContent.ConfirmLabel = "Remove";
+        BoardConfirmContent.ConfirmCommand = new RelayCommand(() =>
+        {
+            BoardConfirmHost.IsOpen = false;
+            if (Vm is { } vm) _ = vm.RemoveSource(source);
+        });
+        BoardConfirmContent.CancelCommand = new RelayCommand(() => BoardConfirmHost.IsOpen = false);
+        BoardConfirmContent.Begin(source.ImageCount > 0 ? 3 : 0); // a brief cooldown when it deletes images
+        BoardConfirmHost.IsOpen = true;
     }
 
     private void ShowBoardDeleteConfirm()
@@ -47,7 +65,7 @@ public partial class LibraryView : UserControl
         if (Vm?.BoardEditTarget is not { } r) return;
         BoardConfirmContent.Title = "Delete board?";
         BoardConfirmContent.Message =
-            $"Delete the board “{r.Name}”? Its images stay in your archive (under All images).";
+            $"Delete the board “{r.Name}” and its images — files go to your recycle bin (any also in another board are removed there too).";
         BoardConfirmContent.ConfirmLabel = "Delete";
         BoardConfirmContent.ConfirmCommand = new RelayCommand(() =>
         {

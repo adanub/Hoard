@@ -141,6 +141,7 @@
                         <ctrl:ItemCard Width="160" Height="160" IsImage="False" KindLabel="Video"/>
                         <ctrl:ItemCard Width="160" Height="200" IsDeleted="True"
                                        DeletionNote="Removed during cleanup — re-import to restore."/>
+                        <ctrl:ItemCard Width="160" Height="200" IsFileMissing="True"/>
                     </StackPanel>
                 </StackPanel>
 

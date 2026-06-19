@@ -221,6 +221,37 @@ public class IngestServiceTests : IDisposable
         });
     }
 
+    [Fact]
+    public async Task Refetch_is_a_noop_when_the_blob_is_present()
+    {
+        await new IngestService(_dbFactory, _store, new[] { new FakeConnector(("AAA", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+        int id;
+        await using (var db = _dbFactory.CreateDbContext()) id = await db.Assets.Select(a => a.Id).FirstAsync();
+
+        // Blob present → returns the view without attempting a (network) download.
+        var view = await new IngestService(_dbFactory, _store, Array.Empty<ISourceConnector>()).RefetchAsync(id);
+        Assert.NotNull(view);
+    }
+
+    [Fact]
+    public async Task Refetch_throws_for_a_missing_blob_with_no_media_url()
+    {
+        await new IngestService(_dbFactory, _store, new[] { new FakeConnector(("AAA", "Nature")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+        int id; string relativePath;
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var asset = await db.Assets.FirstAsync();
+            (id, relativePath) = (asset.Id, asset.RelativePath);
+        }
+        await _store.DeleteAsync(relativePath); // the blob is removed outside the app
+
+        // No saved media URL (the fake sets none) → can't re-fetch → a clear error rather than a silent miss.
+        var ingest = new IngestService(_dbFactory, _store, Array.Empty<ISourceConnector>());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ingest.RefetchAsync(id));
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch { }

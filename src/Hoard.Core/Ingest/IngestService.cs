@@ -67,27 +67,36 @@ public sealed class IngestService
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
         var targetCollection = targetCollectionId is int tid
-            ? await db.Collections.FirstOrDefaultAsync(c => c.Id == tid, ct).ConfigureAwait(false)
+            // Include the existing sources so EnsureSourceAsync's in-graph check sees them (no per-source query).
+            ? await db.Collections.Include(c => c.Sources).FirstOrDefaultAsync(c => c.Id == tid, ct).ConfigureAwait(false)
             : null;
 
         // Local caches so repeated keys within a single import resolve before SaveChanges.
         var assetsBySha = new Dictionary<string, Asset>();
         var collections = new Dictionary<string, Collection>();
         var tags = new Dictionary<string, Tag>(StringComparer.OrdinalIgnoreCase);
+        // The resolved CollectionSource per (connector, board id) this run — keyed like the uniqueness key —
+        // so each source is resolved once and every link can be attributed to it.
+        var sourceByBoard = new Dictionary<(string Connector, string BoardId), CollectionSource>();
+        // Every pin the crawl emitted (even tombstone-skipped ones), so the post-crawl orphan re-attach never
+        // double-handles a pin that was actually re-listed.
+        var importedPins = new HashSet<string>();
 
         int processed = 0, newAssets = 0, duplicates = 0, skippedDeleted = 0;
 
         var downloadLog = new Progress<string>(line =>
             progress?.Report(new IngestProgress(IngestPhase.Downloading, processed, 0, line)));
 
-        // Hand the connector the full set the library already tracks (live AND tombstoned) so it can
-        // rebuild its skip-archive from this single source of truth — the archive never drifts from the DB.
-        var effectiveOptions = options with { KnownItems = await GetKnownItemsAsync(db, ct).ConfigureAwait(false) };
+        // Hand the connector what to pre-skip, rebuilt from the DB so its archive never drifts. For a targeted
+        // import this is what's already in THAT board (+ blacklisted tombstones) — NOT pins merely held in some
+        // other board — so a re-import/sync re-links pins the target is missing instead of skipping them.
+        var effectiveOptions = options with { KnownItems = await GetKnownItemsAsync(db, targetCollectionId, ct).ConfigureAwait(false) };
 
         // Each item is ingested the moment the connector finishes downloading it, and the freshly
         // imported asset is reported so the UI can show it immediately (not after the whole batch).
         await connector.DownloadAsync(url, effectiveOptions, downloadLog, async (item, itemCt) =>
         {
+            if (item.SourceId is not null) importedPins.Add(item.SourceId);
             var blob = await _store.PutAsync(item.FilePath, itemCt).ConfigureAwait(false);
             var existing = await FindExistingAssetAsync(db, assetsBySha, blob.Sha256, itemCt).ConfigureAwait(false);
 
@@ -106,24 +115,32 @@ public sealed class IngestService
             var isNew = existing is null;
             var asset = existing ?? CreateAsset(db, assetsBySha, blob, item);
 
-            Collection? collection;
-            if (targetCollection is not null)
+            // Import into the one board the user chose/created (a merge can add several source boards), or
+            // auto-folder by the pin's own source board.
+            var collection = targetCollection
+                ?? await GetOrCreateCollectionAsync(db, collections, item, connector.Name, itemCt).ConfigureAwait(false);
+
+            // Resolve (and record) which source board this pin came from, so the link can be attributed to it
+            // and a source can later be un-merged together with its own images.
+            CollectionSource? source = null;
+            if (collection is not null && item.BoardId is not null)
             {
-                // Import into the one board the user chose/created. Seed its source ref from the first pin that
-                // has one, so future re-imports of that board can skip already-fetched pins (GetKnownItems).
-                collection = targetCollection;
-                if (collection.SourceBoardId is null && item.BoardId is not null)
+                var key = (connector.Name, item.BoardId);
+                if (!sourceByBoard.TryGetValue(key, out source))
+                {
+                    source = await GetOrAddSourceAsync(db, collection, connector.Name, item, item.BoardUrl ?? url, itemCt).ConfigureAwait(false);
+                    sourceByBoard[key] = source;
+                }
+                // Keep the denormalised primary pointer seeded from the first source seen.
+                if (collection.SourceBoardId is null)
                 {
                     collection.SourceBoardId = item.BoardId;
                     collection.SourceUrl = item.BoardUrl;
                 }
             }
-            else
-            {
-                collection = await GetOrCreateCollectionAsync(db, collections, item, connector.Name, itemCt).ConfigureAwait(false);
-            }
+
             if (collection is not null)
-                await LinkToCollectionAsync(db, collection, asset, item, itemCt).ConfigureAwait(false);
+                await LinkToCollectionAsync(db, collection, asset, item, source, itemCt).ConfigureAwait(false);
 
             await AttachTagsAsync(db, tags, asset, item, itemCt).ConfigureAwait(false);
 
@@ -138,11 +155,71 @@ public sealed class IngestService
                 $"Imported {processed} — {item.Title ?? item.SourceId ?? Path.GetFileName(item.FilePath)}", view));
         }, ct).ConfigureAwait(false);
 
+        var reattached = await ReattachOrphansAsync(db, targetCollection, sourceByBoard, importedPins, connector.Name, progress, ct).ConfigureAwait(false);
+
         var skippedNote = skippedDeleted > 0 ? $", {skippedDeleted} skipped (deleted)" : "";
+        var reattachedNote = reattached > 0 ? $", {reattached} re-attached" : "";
         progress?.Report(new IngestProgress(IngestPhase.Done, processed, processed,
-            $"Imported {newAssets} new, {duplicates} already-had{skippedNote}."));
+            $"Imported {newAssets} new, {duplicates} already-had{skippedNote}{reattachedNote}."));
         var touched = targetCollection is not null ? 1 : collections.Count;
         return new IngestResult(processed, newAssets, duplicates, touched);
+    }
+
+    /// <summary>
+    /// After a targeted import, re-attach <b>orphaned live</b> assets that belong to a board we just imported but
+    /// weren't re-listed by the crawl (e.g. a restored image whose pin was removed from the source board, so
+    /// gallery-dl never sees it again). Their content is already in the library — they only lost their board
+    /// link — so we link them back into the target by the board id in their stored sidecar. The set of "imported
+    /// boards" is the crawl's sources <i>plus</i> the target's already-recorded sources, so a re-sync of a board
+    /// that's now empty at the source (crawl emits nothing) still re-attaches its orphans. Tombstoned
+    /// (blacklisted) assets are excluded, and any pin the crawl actually handled is skipped (no double link).
+    /// Returns how many were re-attached.
+    /// </summary>
+    private async Task<int> ReattachOrphansAsync(
+        HoardDbContext db, Collection? targetCollection,
+        Dictionary<(string Connector, string BoardId), CollectionSource> sourceByBoard,
+        HashSet<string> importedPins, string connectorName, IProgress<IngestProgress>? progress, CancellationToken ct)
+    {
+        if (targetCollection is null) return 0;
+
+        // The board id → CollectionSource id the orphan should be attributed to: this run's crawl sources, plus
+        // the target's existing sources (so re-sync of a now-empty board still finds its board id).
+        var sourceIdByBoard = new Dictionary<string, int>();
+        foreach (var ((connector, boardId), source) in sourceByBoard)
+            if (connector == connectorName) sourceIdByBoard[boardId] = source.Id;
+        foreach (var s in await db.CollectionSources
+                     .Where(s => s.CollectionId == targetCollection.Id && s.SourceConnector == connectorName && s.SourceBoardId != null)
+                     .Select(s => new { s.Id, s.SourceBoardId })
+                     .ToListAsync(ct).ConfigureAwait(false))
+            sourceIdByBoard.TryAdd(s.SourceBoardId!, s.Id);
+        if (sourceIdByBoard.Count == 0) return 0;
+
+        // Un-tracked read (we only insert links, never modify the orphan rows).
+        var orphans = await db.Assets
+            .AsNoTracking()
+            .Where(a => a.DeletedAt == null && a.SourceId != null && !a.CollectionItems.Any())
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        var reattached = 0;
+        foreach (var orphan in orphans)
+        {
+            if (importedPins.Contains(orphan.SourceId!)) continue; // the crawl already re-listed this pin
+            var boardId = SidecarBoardId.From(orphan.MetadataJson);
+            if (boardId is null || !sourceIdByBoard.TryGetValue(boardId, out var sourceId)) continue;
+
+            db.CollectionItems.Add(new CollectionItem
+            {
+                CollectionId = targetCollection.Id,
+                AssetId = orphan.Id,
+                CollectionSourceId = sourceId,
+                AddedAt = DateTimeOffset.UtcNow,
+            });
+            reattached++;
+            progress?.Report(new IngestProgress(IngestPhase.Storing, 0, 0,
+                $"Re-attached {orphan.Title ?? orphan.SourceId}", ToView(orphan)));
+        }
+        if (reattached > 0) await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return reattached;
     }
 
     // One shared client for restore downloads (the recommended HttpClient usage).
@@ -160,10 +237,49 @@ public sealed class IngestService
         var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
         if (asset is null || asset.DeletedAt is null) return null;
 
+        var blob = await ReDownloadAsync(asset, ct).ConfigureAwait(false);
+        asset.RelativePath = blob.RelativePath;
+        asset.Sha256 = blob.Sha256;
+        asset.Bytes = blob.Bytes;
+        asset.DeletedAt = null;
+        asset.DeletionNote = null;
+        SyncLog.RecordAdd(db, asset); // a restore is a genuine re-add to the library
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return ToView(asset);
+    }
+
+    /// <summary>
+    /// Re-fetch a <b>live</b> asset whose blob has gone missing from the store (deleted/moved/corrupted outside
+    /// the app) from its saved media URL, re-storing it in place. A no-op (returns the view) if the blob is
+    /// already present; null if the asset is missing or is a tombstone (use <see cref="RestoreAsync"/> for those).
+    /// Throws if there's no usable media URL. Not a delete/add cycle, so it writes no sync op.
+    /// </summary>
+    public async Task<AssetView?> RefetchAsync(int assetId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
+        if (asset is null || asset.DeletedAt is not null) return null;
+        if (File.Exists(_store.GetAbsolutePath(asset.RelativePath))) return ToView(asset); // already present
+
+        var blob = await ReDownloadAsync(asset, ct).ConfigureAwait(false);
+        asset.RelativePath = blob.RelativePath;
+        asset.Sha256 = blob.Sha256;
+        asset.Bytes = blob.Bytes;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return ToView(asset);
+    }
+
+    /// <summary>
+    /// Download an asset's media from its saved public URL into the content-addressed store and return the
+    /// stored blob. Shared by restore (tombstoned) and re-fetch (live but missing). Throws if the asset has no
+    /// usable http(s) media URL.
+    /// </summary>
+    private async Task<StoredBlob> ReDownloadAsync(Asset asset, CancellationToken ct)
+    {
         if (string.IsNullOrWhiteSpace(asset.SourceUrl)
             || !Uri.TryCreate(asset.SourceUrl, UriKind.Absolute, out var uri)
             || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-            throw new InvalidOperationException("This item has no direct media URL, so it can't be restored.");
+            throw new InvalidOperationException("This item has no direct media URL, so it can't be re-downloaded.");
 
         // Download to a temp file (preserving the extension so the store/MIME stay correct), then re-store
         // it — identical content lands back at the same content-addressed path.
@@ -176,16 +292,7 @@ public sealed class IngestService
             await using (var response = await RestoreHttp.GetStreamAsync(uri, ct).ConfigureAwait(false))
             await using (var file = File.Create(tempPath))
                 await response.CopyToAsync(file, ct).ConfigureAwait(false);
-
-            var blob = await _store.PutAsync(tempPath, ct).ConfigureAwait(false);
-            asset.RelativePath = blob.RelativePath;
-            asset.Sha256 = blob.Sha256;
-            asset.Bytes = blob.Bytes;
-            asset.DeletedAt = null;
-            asset.DeletionNote = null;
-            SyncLog.RecordAdd(db, asset);
-            await db.SaveChangesAsync(ct).ConfigureAwait(false);
-            return ToView(asset);
+            return await _store.PutAsync(tempPath, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -193,13 +300,29 @@ public sealed class IngestService
         }
     }
 
-    /// <summary>Every (board, pin) pair the library tracks — live or tombstoned — so a connector can rebuild
-    /// its skip-archive from the DB rather than a separate, drift-prone list.</summary>
-    private static async Task<IReadOnlyCollection<KnownSourceItem>> GetKnownItemsAsync(HoardDbContext db, CancellationToken ct)
+    /// <summary>
+    /// The (board, pin) pairs the connector should pre-skip when filling <paramref name="targetCollectionId"/>,
+    /// rebuilt from the DB so the skip-archive can never drift. It deliberately covers only:
+    ///   • pins ALREADY IN the target board (so an incremental re-import skips what's there), and
+    ///   • every <b>tombstoned (blacklisted)</b> pin, globally (so deleted content is never re-fetched).
+    /// It does <b>not</b> skip a live pin just because it sits in some <i>other</i> board — that pin must still be
+    /// linked into the target, so it's left for download → dedup-by-hash → link (this is what lets a re-import or
+    /// Sync repopulate a board that's missing items it holds elsewhere). The blacklist correctness is also
+    /// belt-and-braces: <see cref="ImportAsync"/> re-checks <c>DeletedAt</c> after download. A null target keeps
+    /// the legacy whole-project behaviour for the auto-folder path. Flat join (not a SelectMany over the nav,
+    /// which SQLite can't APPLY); over-claiming a pin under a sibling source board is safe (only skips content we
+    /// already hold for that board).
+    /// </summary>
+    private static async Task<IReadOnlyCollection<KnownSourceItem>> GetKnownItemsAsync(
+        HoardDbContext db, int? targetCollectionId, CancellationToken ct)
     {
-        var rows = await db.CollectionItems
-            .Where(ci => ci.Asset.SourceId != null && ci.Collection.SourceBoardId != null)
-            .Select(ci => new { Board = ci.Collection.SourceBoardId!, Source = ci.Asset.SourceId! })
+        var rows = await (
+            from ci in db.CollectionItems
+            where ci.Asset.SourceId != null
+                  && (targetCollectionId == null || ci.CollectionId == targetCollectionId || ci.Asset.DeletedAt != null)
+            join s in db.CollectionSources on ci.CollectionId equals s.CollectionId
+            where s.SourceBoardId != null
+            select new { Board = s.SourceBoardId!, Source = ci.Asset.SourceId! })
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
         return rows.Select(r => new KnownSourceItem(r.Board, r.Source)).ToList();
@@ -279,8 +402,47 @@ public sealed class IngestService
         return collection;
     }
 
+    /// <summary>
+    /// Resolve the board's record of this source (the Pinterest board it's being filled from), creating it on
+    /// first sight. Idempotent on (collection, connector, source board id); returns the source so each imported
+    /// link can be attributed to it.
+    /// </summary>
+    private static async Task<CollectionSource> GetOrAddSourceAsync(
+        HoardDbContext db, Collection collection, string connectorName, SourceMediaItem item, string fallbackUrl, CancellationToken ct)
+    {
+        var boardId = item.BoardId;
+        var existing = collection.Sources.FirstOrDefault(s => s.SourceConnector == connectorName && s.SourceBoardId == boardId);
+        if (existing is null && collection.Id != 0)
+        {
+            existing = await db.CollectionSources.FirstOrDefaultAsync(
+                s => s.CollectionId == collection.Id && s.SourceConnector == connectorName && s.SourceBoardId == boardId, ct).ConfigureAwait(false);
+            // Track it on the nav so the in-graph check finds it next time (no repeat query this run).
+            if (existing is not null && !collection.Sources.Contains(existing)) collection.Sources.Add(existing);
+        }
+        if (existing is not null)
+        {
+            // A source backfilled (v3) without a URL becomes syncable once a real import supplies one.
+            if (string.IsNullOrEmpty(existing.SourceUrl) && !string.IsNullOrWhiteSpace(item.BoardUrl))
+                existing.SourceUrl = item.BoardUrl;
+            return existing;
+        }
+
+        var source = new CollectionSource
+        {
+            Collection = collection,
+            SourceConnector = connectorName,
+            SourceBoardId = boardId,
+            SourceUrl = item.BoardUrl ?? fallbackUrl,
+            Name = item.BoardName,
+            AddedAt = DateTimeOffset.UtcNow,
+        };
+        collection.Sources.Add(source);
+        db.CollectionSources.Add(source);
+        return source;
+    }
+
     private static async Task LinkToCollectionAsync(
-        HoardDbContext db, Collection collection, Asset asset, SourceMediaItem item, CancellationToken ct)
+        HoardDbContext db, Collection collection, Asset asset, SourceMediaItem item, CollectionSource? source, CancellationToken ct)
     {
         // Same-run duplicates resolve against the tracked graph; cross-run duplicates (both already
         // persisted) resolve against the DB so we never violate the (CollectionId, AssetId) index.
@@ -295,6 +457,7 @@ public sealed class IngestService
         {
             Collection = collection,
             Asset = asset,
+            CollectionSource = source, // which merged source this pin came from (null for a loose/board-less pin)
             Note = item.Description,
             AddedAt = DateTimeOffset.UtcNow,
         };

@@ -72,8 +72,34 @@ public partial class ProjectLauncherView : UserControl
 
     private async void OnOpenExisting(object? sender, RoutedEventArgs e)
     {
-        if (Vm is { } vm && await PickFolderAsync("Open an existing project folder") is { } folder)
+        if (Vm is not { } vm || await PickFolderAsync("Open an existing project folder") is not { } folder) return;
+
+        // A normal project opens straight away; a folder with project data but no/altered marker (older version
+        // or edited outside the app) is offered for adoption; anything else is rejected with a clear message.
+        if (Hoard.Core.Projects.HoardProject.IsProject(folder))
             await vm.OpenExistingAsync(folder);
+        else if (Hoard.Core.Projects.HoardProject.LooksLikeProjectFolder(folder))
+            ShowAdoptConfirm(folder);
+        else
+            vm.ShowSheetError("That folder isn't a Hoard project (no database or store inside it).");
+    }
+
+    // Offer to adopt a marker-less project folder (reuses the shared confirm popup).
+    private void ShowAdoptConfirm(string folder)
+    {
+        ConfirmContent.Title = "Adopt this folder?";
+        ConfirmContent.Message =
+            "This folder holds Hoard project data but has no project marker (it may be from an older version or " +
+            $"was edited outside the app). Adopt it as a project?\n\n{folder}";
+        ConfirmContent.ConfirmLabel = "Adopt";
+        ConfirmContent.ConfirmCommand = new RelayCommand(() =>
+        {
+            ConfirmHost.IsOpen = false;
+            if (Vm is { } vm) _ = vm.AdoptExistingAsync(folder);
+        });
+        ConfirmContent.CancelCommand = new RelayCommand(() => ConfirmHost.IsOpen = false);
+        ConfirmContent.Begin(0);
+        ConfirmHost.IsOpen = true;
     }
 
     private async Task<string?> PickFolderAsync(string title)

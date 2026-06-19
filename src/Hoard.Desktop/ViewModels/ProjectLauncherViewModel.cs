@@ -147,14 +147,25 @@ public partial class ProjectLauncherViewModel : ViewModelBase
     /// <summary>Called by the view's folder picker to set the parent location for a new project.</summary>
     public void SetNewProjectLocation(string parentFolder) => NewProjectLocation = parentFolder;
 
+    // While a project is being opened/created its database is built and the EF model is compiled (a one-off,
+    // CPU-heavy first-use cost) — done off the UI thread behind this flag so the shell shows a spinner instead
+    // of freezing. See OpenOffUiThreadAsync.
+    [ObservableProperty] private bool _isOpening;
+    [ObservableProperty] private string _openingText = "Opening project…";
+
     [RelayCommand(CanExecute = nameof(CanCreate))]
     private async Task CreateProjectAsync()
     {
         try
         {
             var folder = Path.Combine(NewProjectLocation, NewProjectName.Trim());
-            _projects.Create(folder, NewProjectName.Trim());
-            await _dbFactory.EnsureCreatedAsync();
+            // Keep the sheet open (under the busy overlay) until the work succeeds, so a failure shows the
+            // error in place instead of the sheet flashing closed then reopening.
+            await OpenOffUiThreadAsync($"Creating “{NewProjectName.Trim()}”…", () =>
+            {
+                _projects.Create(folder, NewProjectName.Trim());
+                return _dbFactory.EnsureCreatedAsync();
+            });
             IsNewProjectSheetOpen = false;
             _onProjectOpened();
         }
@@ -175,6 +186,29 @@ public partial class ProjectLauncherViewModel : ViewModelBase
         else SheetError = "Couldn't open project: " + err;
     }
 
+    /// <summary>Adopt a folder that holds project data but has lost/altered its marker (rewrite the marker and
+    /// open it). The view offers this only after confirming a marker-less but project-shaped folder.</summary>
+    public async Task AdoptExistingAsync(string folder)
+    {
+        try
+        {
+            await OpenOffUiThreadAsync("Adopting project…", () =>
+            {
+                _projects.Adopt(folder);
+                return _dbFactory.EnsureCreatedAsync();
+            });
+            IsNewProjectSheetOpen = false;
+            _onProjectOpened();
+        }
+        catch (Exception ex)
+        {
+            SheetError = "Couldn't adopt project: " + ex.Message;
+        }
+    }
+
+    /// <summary>Surface a message in the new-project sheet (e.g. a folder that isn't a project at all).</summary>
+    public void ShowSheetError(string message) => SheetError = message;
+
     // ── Open project (the card's Open button) ────────────────────────────────
 
     /// <summary>Open the project behind a card (the card's Open button calls this).</summary>
@@ -188,14 +222,37 @@ public partial class ProjectLauncherViewModel : ViewModelBase
     {
         try
         {
-            _projects.Open(folder);
-            await _dbFactory.EnsureCreatedAsync();
+            await OpenOffUiThreadAsync("Opening project…", () =>
+            {
+                _projects.Open(folder);
+                return _dbFactory.EnsureCreatedAsync();
+            });
             _onProjectOpened();
             return null;
         }
         catch (Exception ex)
         {
             return ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Run a project open/create (open the folder + build/upgrade its DB) on a background thread, with the
+    /// busy spinner shown. The DB work compiles the EF model on first use — a synchronous, one-off cost that
+    /// would otherwise stall the UI thread — so it must not run inline. Navigation happens after, back on the
+    /// UI thread (the await resumes there).
+    /// </summary>
+    private async Task OpenOffUiThreadAsync(string busyText, Func<Task> work)
+    {
+        OpeningText = busyText;
+        IsOpening = true;
+        try
+        {
+            await Task.Run(work);
+        }
+        finally
+        {
+            IsOpening = false;
         }
     }
 

@@ -13,4 +13,8 @@ public interface IFileRecycler
 
     /// <summary>Recycle a single file. Throws if it can't.</summary>
     void RecycleFile(string path);
+
+    /// <summary>Recycle many files in one operation (far cheaper than one call per file). Missing files are
+    /// skipped; throws if the operation itself fails.</summary>
+    void RecycleFiles(IReadOnlyCollection<string> paths);
 }

@@ -12,8 +12,9 @@ namespace Hoard.Core.Metadata;
 /// </summary>
 public static class SchemaInitializer
 {
-    /// <summary>Bump this and add a matching <see cref="Upgrades"/> entry whenever the model gains additive objects.</summary>
-    public const long LatestSchemaVersion = 2;
+    /// <summary>Bump this and add a matching <see cref="Upgrades"/> entry whenever the model gains additive objects.
+    /// (v5 and v6 are data-only steps — the attribution backfill and the stale-tombstone repair — with no DDL.)</summary>
+    public const long LatestSchemaVersion = 6;
 
     /// <summary>
     /// Ordered additive patches applied to a pre-existing database whose <c>user_version</c> is below the
@@ -38,6 +39,37 @@ public static class SchemaInitializer
             ALTER TABLE "Assets" ADD COLUMN "DeletedAt" TEXT NULL;
             ALTER TABLE "Assets" ADD COLUMN "DeletionNote" TEXT NULL;
             """),
+        // v3 — board merge: a local board can gather pins from several Pinterest source boards. "DisplayName"
+        // is a local rename override (keeps the source name in "Name"); "CollectionSources" is the authoritative
+        // many-sources list (see Domain/CollectionSource.cs). Existing single-source boards are backfilled into
+        // it from their denormalised Source* columns so re-import and the merge list keep working.
+        (3, """
+            ALTER TABLE "Collections" ADD COLUMN "DisplayName" TEXT NULL;
+            CREATE TABLE IF NOT EXISTS "CollectionSources" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_CollectionSources" PRIMARY KEY AUTOINCREMENT,
+                "CollectionId" INTEGER NOT NULL,
+                "SourceConnector" TEXT NOT NULL,
+                "SourceBoardId" TEXT NULL,
+                "SourceUrl" TEXT NOT NULL,
+                "Name" TEXT NULL,
+                "AddedAt" TEXT NOT NULL,
+                CONSTRAINT "FK_CollectionSources_Collections_CollectionId" FOREIGN KEY ("CollectionId") REFERENCES "Collections" ("Id") ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_CollectionSources_CollectionId_SourceConnector_SourceBoardId" ON "CollectionSources" ("CollectionId", "SourceConnector", "SourceBoardId");
+            INSERT INTO "CollectionSources" ("CollectionId", "SourceConnector", "SourceBoardId", "SourceUrl", "Name", "AddedAt")
+                SELECT "Id", "SourceConnector", "SourceBoardId", COALESCE("SourceUrl", ''), "Name", "CreatedAt"
+                FROM "Collections"
+                WHERE ("SourceBoardId" IS NOT NULL OR "SourceUrl" IS NOT NULL)
+                  AND NOT EXISTS (SELECT 1 FROM "CollectionSources" cs WHERE cs."CollectionId" = "Collections"."Id");
+            """),
+        // v4 — per-pin provenance: which merged source a board link came from, so a source can be un-merged
+        // together with its own images (see Domain/CollectionItem.cs). Nullable FK with ON DELETE SET NULL so
+        // removing a source without its images just un-attributes its links. SQLite permits adding a column
+        // with a REFERENCES clause as long as its default is NULL (it is).
+        (4, """
+            ALTER TABLE "CollectionItems" ADD COLUMN "CollectionSourceId" INTEGER NULL REFERENCES "CollectionSources" ("Id") ON DELETE SET NULL;
+            CREATE INDEX IF NOT EXISTS "IX_CollectionItems_CollectionSourceId" ON "CollectionItems" ("CollectionSourceId");
+            """),
     };
 
     public static async Task InitializeAsync(HoardDbContext db, CancellationToken ct = default)
@@ -60,6 +92,30 @@ public static class SchemaInitializer
             if (version <= current) continue;
             await db.Database.ExecuteSqlRawAsync(sql, ct).ConfigureAwait(false);
             await SetVersionAsync(db, version, ct).ConfigureAwait(false);
+        }
+
+        // v5 — data-only: attribute pins imported before per-pin provenance (v4) to their source, so removing a
+        // source removes its images on legacy data too. Runs once (any DB that predates v5).
+        if (current < 5)
+        {
+            await SourceAttributionBackfill.RunAsync(db, ct).ConfigureAwait(false);
+            await SetVersionAsync(db, 5, ct).ConfigureAwait(false);
+        }
+
+        // v6 — data-only repair: an earlier build wrongly *tombstoned* a board/source's images on removal
+        // (instead of hard-deleting them). Those tombstones act as a blacklist that blocks re-importing the same
+        // board — not what was intended. Remove them outright (their blobs were already freed); a DELETE on
+        // Assets cascades the links via the FK. They're identifiable by the auto-generated deletion note;
+        // per-image deletes use a user-typed note and are deliberately kept (they ARE the intended blacklist).
+        if (current < 6)
+        {
+            // Match the exact auto-note shape `Removed with source “name”` (note the curly “ U+201C) so a
+            // user-typed per-image delete note that merely starts with these words can't be purged.
+            await db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM \"Assets\" WHERE \"DeletedAt\" IS NOT NULL " +
+                "AND (\"DeletionNote\" LIKE 'Removed with source “%' OR \"DeletionNote\" LIKE 'Removed with board “%');",
+                ct).ConfigureAwait(false);
+            await SetVersionAsync(db, 6, ct).ConfigureAwait(false);
         }
     }
 

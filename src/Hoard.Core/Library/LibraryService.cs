@@ -19,10 +19,15 @@ public sealed record AssetDetail(
 
 public sealed record CollectionView(int Id, string Name, int ItemCount, long SizeBytes);
 
-/// <summary>Detail for the board Edit popup: per-kind counts, total size, created date, and source ref.</summary>
+/// <summary>One Pinterest source board merged into a local board (a row in the board Edit popup's source list).
+/// <paramref name="ImageCount"/> is the board's live images attributed to this source (what un-merging with its
+/// images would remove); 0 for links made before per-pin provenance.</summary>
+public sealed record BoardSource(int Id, string? SourceBoardId, string SourceUrl, string? Name, int ImageCount);
+
+/// <summary>Detail for the board Edit popup: per-kind counts, total size, created date, and merged sources.</summary>
 public sealed record BoardDetail(
     int Images, int Gifs, int Videos, long SizeBytes, DateTimeOffset CreatedAt,
-    string? SourceBoardId, string? SourceUrl);
+    IReadOnlyList<BoardSource> Sources);
 
 /// <summary>Read-side queries for the UI. Kept separate from <c>IngestService</c> (writes).</summary>
 public sealed class LibraryService
@@ -41,11 +46,26 @@ public sealed class LibraryService
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         // Count + total bytes of the board's live (non-tombstoned) assets — for the card's "N images · X" meta.
         return await db.Collections
-            .OrderBy(c => c.Name)
+            .OrderBy(c => c.DisplayName ?? c.Name)
             .Select(c => new CollectionView(
-                c.Id, c.Name,
+                c.Id, c.DisplayName ?? c.Name,
                 c.Items.Count(ci => ci.Asset.DeletedAt == null),
                 c.Items.Where(ci => ci.Asset.DeletedAt == null).Sum(ci => (long?)ci.Asset.Bytes) ?? 0L))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// The distinct source URLs a board can be re-fetched ("synced") from — its <see cref="Domain.CollectionSource"/>
+    /// rows that carry a usable URL. Empty for a local board, the "All images" view, or sources with no URL.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetBoardSourceUrlsAsync(int collectionId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.CollectionSources
+            .Where(s => s.CollectionId == collectionId && s.SourceUrl != "")
+            .OrderBy(s => s.Id)
+            .Select(s => s.SourceUrl)
+            .Distinct()
             .ToListAsync(ct);
     }
 
@@ -67,14 +87,48 @@ public sealed class LibraryService
         var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct);
         if (collection is null) return null;
 
-        var live = db.CollectionItems
+        // One round-trip for all four kind/size aggregates (GroupBy(_ => 1) → conditional COUNT/SUM) rather
+        // than four sequential count/sum queries.
+        var agg = await db.CollectionItems
             .Where(ci => ci.CollectionId == collectionId && ci.Asset.DeletedAt == null)
-            .Select(ci => ci.Asset);
-        var images = await live.CountAsync(a => a.Kind == MediaKind.Image, ct);
-        var gifs = await live.CountAsync(a => a.Kind == MediaKind.Gif, ct);
-        var videos = await live.CountAsync(a => a.Kind == MediaKind.Video, ct);
-        var size = await live.SumAsync(a => (long?)a.Bytes, ct) ?? 0L;
-        return new BoardDetail(images, gifs, videos, size, collection.CreatedAt, collection.SourceBoardId, collection.SourceUrl);
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Images = g.Count(ci => ci.Asset.Kind == MediaKind.Image),
+                Gifs = g.Count(ci => ci.Asset.Kind == MediaKind.Gif),
+                Videos = g.Count(ci => ci.Asset.Kind == MediaKind.Video),
+                Size = g.Sum(ci => (long?)ci.Asset.Bytes) ?? 0L,
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var sourceRows = await db.CollectionSources
+            .Where(s => s.CollectionId == collectionId)
+            // Id is monotonic with insert order (≈ AddedAt) and an integer SQLite can ORDER BY — it can't
+            // sort a DateTimeOffset column. Every provenance-bearing board has a source row (the v3 backfill
+            // covers legacy boards; ingest writes one going forward), so no denormalised-pointer fallback.
+            .OrderBy(s => s.Id)
+            .Select(s => new { s.Id, s.SourceBoardId, s.SourceUrl, s.Name })
+            .ToListAsync(ct);
+
+        // Live images attributed to each source — what removing that source deletes. When the board has a
+        // single source, removing it sweeps the whole board (incl. un-attributed legacy pins), so that source's
+        // count is the board's total live pins.
+        var countBySource = (await db.CollectionItems
+            .Where(ci => ci.CollectionId == collectionId && ci.CollectionSourceId != null && ci.Asset.DeletedAt == null)
+            .GroupBy(ci => ci.CollectionSourceId!.Value)
+            .Select(g => new { SourceId = g.Key, Count = g.Count() })
+            .ToListAsync(ct))
+            .ToDictionary(x => x.SourceId, x => x.Count);
+        var totalLive = (agg?.Images ?? 0) + (agg?.Gifs ?? 0) + (agg?.Videos ?? 0);
+
+        var sources = sourceRows
+            .Select(s => new BoardSource(s.Id, s.SourceBoardId, s.SourceUrl, s.Name,
+                sourceRows.Count == 1 ? totalLive : countBySource.GetValueOrDefault(s.Id)))
+            .ToList();
+
+        return new BoardDetail(
+            agg?.Images ?? 0, agg?.Gifs ?? 0, agg?.Videos ?? 0, agg?.Size ?? 0L,
+            collection.CreatedAt, sources);
     }
 
     /// <param name="collectionId">Filter to one collection, or null for the whole library.</param>
@@ -173,7 +227,8 @@ public sealed class LibraryService
                 a.Id, a.RelativePath, a.Kind, a.MimeType, a.Title, a.Description,
                 a.SourceUrl, a.OriginalUrl, a.SourceId, a.Width, a.Height, a.Bytes,
                 a.CreatedAt, a.ImportedAt, a.DeletedAt, a.DeletionNote,
-                Boards = a.CollectionItems.Select(ci => ci.Collection.Name).ToList(),
+                // The shown board title is DisplayName ?? Name (the local rename override), same as the grid.
+                Boards = a.CollectionItems.Select(ci => ci.Collection.DisplayName ?? ci.Collection.Name).ToList(),
             })
             .FirstOrDefaultAsync(ct);
 

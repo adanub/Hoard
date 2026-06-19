@@ -46,6 +46,18 @@ public sealed class ProjectManager
         return project;
     }
 
+    /// <summary>
+    /// Adopt a folder that holds project data but has lost (or has a corrupt) marker: rewrite the marker and
+    /// open it. For the explicit "open existing folder" recovery path — throws if the folder doesn't look like
+    /// a project.
+    /// </summary>
+    public HoardProject Adopt(string folder)
+    {
+        var project = HoardProject.Adopt(folder);
+        SetCurrent(project);
+        return project;
+    }
+
     /// <summary>Re-open the last-used project on startup, if its folder still exists. Returns it or null.</summary>
     public HoardProject? OpenLastOrNull()
     {

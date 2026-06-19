@@ -7,9 +7,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Hoard.Core.Connectors;
 using Hoard.Core.Ingest;
 using Hoard.Core.Library;
+using Hoard.Core.Projects;
 using Hoard.Desktop.Services;
+using Hoard.Ingest.GalleryDl;
 
 namespace Hoard.Desktop.ViewModels;
 
@@ -31,9 +34,11 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
     private readonly ThumbnailCache? _thumbnails;
     private readonly ToastService _toasts;
     private readonly ImportStatus _importStatus;
+    private readonly ProjectManager? _projects;
     private readonly int? _collectionId;
     private readonly Action _requestBack;
     private CancellationTokenSource? _searchDebounce;
+    private IReadOnlyList<string> _sourceUrls = Array.Empty<string>();
 
     // GIFs the user has tapped keep autoplaying in the grid; bounded (LRU) so memory stays sane.
     private const int MaxPlayingGifs = 12;
@@ -41,7 +46,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
 
     public BoardViewModel(
         LibraryService library, CurationService curation, IngestService ingest,
-        ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus,
+        ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus, ProjectManager? projects,
         int? collectionId, string title, Action requestBack, string? initialSearch = null)
     {
         _library = library;
@@ -50,6 +55,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
         _thumbnails = thumbnails;
         _toasts = toasts;
         _importStatus = importStatus;
+        _projects = projects;
         _collectionId = collectionId;
         Title = title;
         _requestBack = requestBack;
@@ -58,10 +64,11 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
         _importStatus.PropertyChanged += OnImportStatusChanged;
         UpdateImportState();
         _ = LoadAssetsAsync();
+        _ = LoadSourcesAsync(); // for the Sync button (a real board with at least one URL'd source)
     }
 
     // Design-time constructor for the XAML previewer.
-    public BoardViewModel() : this(null!, null!, null!, null, new ToastService(), new ImportStatus(), null, "All images", () => { }) { }
+    public BoardViewModel() : this(null!, null!, null!, null, new ToastService(), new ImportStatus(), null, null, "All images", () => { }) { }
 
     public string Title { get; }
     public ObservableCollection<AssetTileViewModel> Assets { get; } = new();
@@ -108,6 +115,93 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
     }
 
     public void Dispose() => _importStatus.PropertyChanged -= OnImportStatusChanged;
+
+    // ── Sync (re-fetch this board from its sources) ────────────────────────────
+
+    [ObservableProperty] private bool _isSyncSheetOpen;
+    [ObservableProperty] private string _syncCookiesBrowser = BrowserCookies.None;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSyncable))]
+    [NotifyPropertyChangedFor(nameof(SyncButtonText))]
+    private int _sourceCount;
+
+    public IReadOnlyList<string> CookieBrowsers { get; } = BrowserCookies.Choices;
+
+    /// <summary>A real board (not "All images") with at least one URL'd source can be synced.</summary>
+    public bool IsSyncable => _collectionId is not null && SourceCount > 0;
+    public string SyncButtonText => SourceCount == 1 ? "Sync 1 source" : $"Sync {SourceCount} sources";
+
+    private async Task LoadSourcesAsync()
+    {
+        if (_library is null || _collectionId is not int id) return;
+        _sourceUrls = await _library.GetBoardSourceUrlsAsync(id);
+        SourceCount = _sourceUrls.Count;
+    }
+
+    [RelayCommand]
+    private void OpenSyncSheet()
+    {
+        SyncCookiesBrowser = BrowserCookies.None;
+        IsSyncSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseSyncSheet() => IsSyncSheetOpen = false;
+
+    /// <summary>
+    /// Re-fetch this board from each of its sources: the standard import pipeline run per source, so it pulls in
+    /// anything missing/new (an interrupted import, lost items, or items the source gained later) while skipping
+    /// already-held items and <b>tombstoned (blacklisted) ones</b> — those are never resurrected. Progress flows
+    /// through the shared <see cref="ImportStatus"/>, so the inline strip shows it and new pins stream in live;
+    /// the grid reloads when it finishes.
+    /// </summary>
+    [RelayCommand]
+    private async Task SyncAsync()
+    {
+        if (_ingest is null || _collectionId is not int boardId || _sourceUrls.Count == 0) return;
+
+        var cookies = BrowserCookies.Resolve(SyncCookiesBrowser);
+        if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
+
+        IsSyncSheetOpen = false;
+        _importStatus.Begin(boardId); // drives IsBoardImporting + streams LastImported into this open board
+
+        var options = new ConnectorOptions
+        {
+            CookiesFromBrowser = cookies.Spec,
+            DownloadArchivePath = _projects?.Current?.DownloadArchivePath,
+        };
+        var processed = 0;
+        var progress = new Progress<IngestProgress>(p =>
+        {
+            if (p.Phase is IngestPhase.Downloading or IngestPhase.Storing)
+                _importStatus.Text = $"Syncing… {processed + p.Processed} so far";
+            if (p.ImportedAsset is { } asset) _importStatus.LastImported = asset;
+        });
+
+        var newCount = 0;
+        try
+        {
+            foreach (var url in _sourceUrls)
+            {
+                var result = await _ingest.ImportAsync(url, options, progress, boardId);
+                newCount += result.NewAssets;
+                processed += result.TotalItems;
+            }
+            _toasts.Show(newCount == 0
+                ? "Sync complete — already up to date."
+                : $"Synced — {newCount} new image(s).");
+        }
+        catch (Exception ex)
+        {
+            _toasts.Show($"Sync failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            _importStatus.End(); // → OnImportStatusChanged reloads the grid
+        }
+    }
 
     [RelayCommand]
     private void Back() => _requestBack();
@@ -242,5 +336,36 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
             Assets.Add(NewTile(v));
     }
 
-    private AssetTileViewModel NewTile(AssetView v) => new(v, _thumbnails, ActivateTile, UnloadGif);
+    private AssetTileViewModel NewTile(AssetView v) => new(v, _thumbnails, ActivateTile, UnloadGif, RefetchTile);
+
+    /// <summary>
+    /// Re-download a tile whose blob has gone missing from the store (deleted/moved/corrupted outside the app)
+    /// from its saved source URL, then show it live again in place. Triggered by the tile's "file missing"
+    /// re-download button.
+    /// </summary>
+    public async void RefetchTile(AssetTileViewModel tile)
+    {
+        if (_ingest is null || tile.IsRefetching) return;
+        tile.IsRefetching = true;
+        try
+        {
+            var view = await _ingest.RefetchAsync(tile.Model.Id);
+            if (view is null)
+            {
+                _toasts.Show("Couldn't re-download — the item may no longer exist.", isError: true);
+                return;
+            }
+            tile.ApplyUpdate(view);
+            _ = tile.EnsureThumbnailAsync();
+            _toasts.Show($"Re-downloaded “{view.Title ?? "image"}”.");
+        }
+        catch (Exception ex)
+        {
+            _toasts.Show($"Re-download failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            tile.IsRefetching = false;
+        }
+    }
 }

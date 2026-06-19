@@ -64,6 +64,6 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void ShowBoard(BoardTarget target)
         => Navigation.Push(new BoardViewModel(
-            _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus,
+            _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus, _projects,
             target.CollectionId, target.Title, requestBack: Navigation.Pop, target.Search));
 }

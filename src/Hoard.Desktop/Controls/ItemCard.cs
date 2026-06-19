@@ -44,11 +44,21 @@ public partial class ItemCard : UserControl
     public static readonly StyledProperty<bool> IsThumbnailLoadingProperty =
         AvaloniaProperty.Register<ItemCard, bool>(nameof(IsThumbnailLoading));
 
+    /// <summary>The asset is live but its blob is gone from the store — show the "file missing" + re-download state.</summary>
+    public static readonly StyledProperty<bool> IsFileMissingProperty =
+        AvaloniaProperty.Register<ItemCard, bool>(nameof(IsFileMissing));
+
+    public static readonly StyledProperty<bool> IsRefetchingProperty =
+        AvaloniaProperty.Register<ItemCard, bool>(nameof(IsRefetching));
+
     public static readonly StyledProperty<ICommand?> OpenCommandProperty =
         AvaloniaProperty.Register<ItemCard, ICommand?>(nameof(OpenCommand));
 
     public static readonly StyledProperty<ICommand?> UnloadCommandProperty =
         AvaloniaProperty.Register<ItemCard, ICommand?>(nameof(UnloadCommand));
+
+    public static readonly StyledProperty<ICommand?> RefetchCommandProperty =
+        AvaloniaProperty.Register<ItemCard, ICommand?>(nameof(RefetchCommand));
 
     public Bitmap? Thumbnail { get => GetValue(ThumbnailProperty); set => SetValue(ThumbnailProperty, value); }
     public string? PlaySource { get => GetValue(PlaySourceProperty); set => SetValue(PlaySourceProperty, value); }
@@ -58,8 +68,11 @@ public partial class ItemCard : UserControl
     public bool IsDeleted { get => GetValue(IsDeletedProperty); set => SetValue(IsDeletedProperty, value); }
     public string? DeletionNote { get => GetValue(DeletionNoteProperty); set => SetValue(DeletionNoteProperty, value); }
     public bool IsThumbnailLoading { get => GetValue(IsThumbnailLoadingProperty); set => SetValue(IsThumbnailLoadingProperty, value); }
+    public bool IsFileMissing { get => GetValue(IsFileMissingProperty); set => SetValue(IsFileMissingProperty, value); }
+    public bool IsRefetching { get => GetValue(IsRefetchingProperty); set => SetValue(IsRefetchingProperty, value); }
     public ICommand? OpenCommand { get => GetValue(OpenCommandProperty); set => SetValue(OpenCommandProperty, value); }
     public ICommand? UnloadCommand { get => GetValue(UnloadCommandProperty); set => SetValue(UnloadCommandProperty, value); }
+    public ICommand? RefetchCommand { get => GetValue(RefetchCommandProperty); set => SetValue(RefetchCommandProperty, value); }
 
     public ItemCard()
     {

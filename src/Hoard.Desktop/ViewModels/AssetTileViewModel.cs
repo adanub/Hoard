@@ -26,6 +26,11 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     [ObservableProperty] private Bitmap? _thumbnail;
     [ObservableProperty] private bool _isThumbnailLoading;
 
+    /// <summary>The blob is gone from the store (deleted/moved outside the app) though the asset is live — the
+    /// tile shows a "file missing" state with a re-download action.</summary>
+    [ObservableProperty] private bool _isFileMissing;
+    [ObservableProperty] private bool _isRefetching;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PlaySource))]
     private bool _isPlaying;
@@ -34,15 +39,19 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     public IRelayCommand OpenCommand { get; }
     /// <summary>The tile's Unload button: stop + free a playing GIF.</summary>
     public IRelayCommand UnloadCommand { get; }
+    /// <summary>The "file missing" state's Re-download button.</summary>
+    public IRelayCommand RefetchCommand { get; }
 
     public AssetTileViewModel(
         AssetView model, ThumbnailCache? cache = null,
-        Action<AssetTileViewModel>? onOpen = null, Action<AssetTileViewModel>? onUnload = null)
+        Action<AssetTileViewModel>? onOpen = null, Action<AssetTileViewModel>? onUnload = null,
+        Action<AssetTileViewModel>? onRefetch = null)
     {
         Model = model;
         _cache = cache;
         OpenCommand = new RelayCommand(() => onOpen?.Invoke(this));
         UnloadCommand = new RelayCommand(() => onUnload?.Invoke(this));
+        RefetchCommand = new RelayCommand(() => onRefetch?.Invoke(this));
     }
 
     /// <summary>
@@ -55,6 +64,7 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
         Model = updated;
         IsPlaying = false;
         Thumbnail = null;            // release the bitmap and clear the Image
+        IsFileMissing = false;       // a re-fetch/restore may have put the blob back
         _thumbnailRequested = false; // allow a fresh decode if it becomes live again (restore)
         OnPropertyChanged(string.Empty); // re-evaluate every derived binding (IsDeleted, IsGifBadgeVisible, …)
     }
@@ -82,7 +92,12 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     {
         if (_thumbnailRequested) return;
         _thumbnailRequested = true;
-        if (!IsImage || IsDeleted) return; // a tombstone has no blob to decode
+        if (IsDeleted) return; // a tombstone shows its note, not media
+
+        // Lazy per-tile existence check: a live asset whose blob has vanished from the store (deleted/moved
+        // outside the app) shows a "file missing" state with a re-download, instead of a blank placeholder.
+        if (!System.IO.File.Exists(Model.AbsolutePath)) { IsFileMissing = true; return; }
+        if (!IsImage) return; // video/other: no thumbnail, but the file is present
 
         IsThumbnailLoading = true;
         try

@@ -166,16 +166,25 @@ public partial class LibraryViewModel : ViewModelBase
         r.CacheText = "";
         r.Sources.Clear();
 
-        var detail = await _library.GetBoardDetailAsync(id);
-        if (detail is null) return;
-        r.CountsText = $"{detail.Images} images · {detail.Gifs} GIFs · {detail.Videos} videos";
-        r.CacheText = ByteFormat.Format(detail.SizeBytes) + " on disk";
-        r.AddedText = "Added " + detail.CreatedAt.LocalDateTime.ToString("d MMM yyyy");
-        r.ImportedText = detail.SourceUrl is null ? "Local board" : "Imported from Pinterest";
-        if (!string.IsNullOrWhiteSpace(detail.SourceUrl))
+        try
         {
-            var name = detail.SourceBoardId ?? DeriveBoardName(detail.SourceUrl);
-            r.Sources.Add(new Controls.BoardSourceRef(name, detail.SourceUrl));
+            var detail = await _library.GetBoardDetailAsync(id);
+            if (detail is null) { r.CountsText = "No details."; return; }
+            r.CountsText = $"{detail.Images} images · {detail.Gifs} GIFs · {detail.Videos} videos";
+            r.CacheText = ByteFormat.Format(detail.SizeBytes) + " on disk";
+            r.AddedText = "Added " + detail.CreatedAt.LocalDateTime.ToString("d MMM yyyy");
+            r.ImportedText = ImportedSummary(detail.Sources.Count);
+            foreach (var s in detail.Sources)
+            {
+                var name = s.Name ?? s.SourceBoardId ?? DeriveBoardName(s.SourceUrl);
+                r.Sources.Add(new Controls.BoardSourceRef(s.Id, name, s.SourceUrl, s.ImageCount));
+            }
+        }
+        catch (Exception ex)
+        {
+            // Don't leave the popup stuck on "Counting…" if the read fails — say so and surface the reason.
+            r.CountsText = "Couldn't load details.";
+            _toasts.Show($"Couldn't load board details: {ex.Message}", isError: true);
         }
     }
 
@@ -202,22 +211,46 @@ public partial class LibraryViewModel : ViewModelBase
         _toasts.Show($"Cleared cached thumbnails for “{r.Name}”.");
     }
 
-    /// <summary>Delete a board (the grouping); its images stay in the archive.</summary>
+    /// <summary>Delete a board and its images completely (files to the recycle bin).</summary>
     public async Task DeleteBoardAsync()
     {
         if (BoardEditTarget is not { CollectionId: int id } r) return;
         try
         {
-            await _curation.DeleteBoardAsync(id);
+            var removed = await _curation.DeleteBoardAsync(id);
             Tiles.Remove(r);
-            _toasts.Show($"Deleted board “{r.Name}”. Its images stay under All images.");
+            _toasts.Show($"Deleted board “{r.Name}” — {removed} image(s) sent to the recycle bin.");
         }
         catch (Exception ex) { _toasts.Show($"Couldn't delete board: {ex.Message}", isError: true); }
     }
 
-    /// <summary>Remove a merged source from a board (un-merge) — needs the board-merge model; deferred.</summary>
-    public void RemoveSource(Controls.BoardSourceRef? source)
-        => _toasts.Show("Removing a merged source board is coming with the merge model.");
+    /// <summary>
+    /// Remove a merged source from a board (un-merge) and delete its images completely (files to the recycle
+    /// bin), so the board keeps no orphaned pins. Routed through a confirmation in the view.
+    /// </summary>
+    public async Task RemoveSource(Controls.BoardSourceRef? source)
+    {
+        if (BoardEditTarget is not { CollectionId: int } r || source is null) return;
+        try
+        {
+            var removed = await _curation.RemoveSourceAsync(source.Id);
+            r.Sources.Remove(source);
+            r.ImportedText = ImportedSummary(r.Sources.Count);
+            _toasts.Show(removed > 0
+                ? $"Removed source “{source.Name}” — {removed} image(s) sent to the recycle bin."
+                : $"Removed source “{source.Name}”.");
+            await RefreshAsync(); // counts/covers change as images were removed
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't remove source: {ex.Message}", isError: true); }
+    }
+
+    /// <summary>The board's provenance line for the Edit popup, from how many sources it merges.</summary>
+    private static string ImportedSummary(int sourceCount) => sourceCount switch
+    {
+        0 => "Local board",
+        1 => "Imported from Pinterest",
+        var n => $"Merged from {n} Pinterest boards",
+    };
 
     /// <summary>"Add source board" — import another Pinterest board into this local board (a merge).</summary>
     public void AddSourceToEditTarget()

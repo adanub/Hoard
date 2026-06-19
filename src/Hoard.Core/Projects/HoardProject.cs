@@ -13,6 +13,10 @@ public sealed class HoardProject
     /// <summary>Filename of the marker that identifies a folder as a Hoard project.</summary>
     public const string MarkerFileName = "hoard.project.json";
 
+    /// <summary>Current marker format version (distinct from the DB <c>user_version</c>). Bump if the marker
+    /// JSON shape changes so an old marker can be recognised and migrated.</summary>
+    public const int CurrentMarkerVersion = 1;
+
     public string Root { get; }
     public string Name { get; private set; }
 
@@ -93,7 +97,33 @@ public sealed class HoardProject
         Directory.CreateDirectory(full);
         var project = new HoardProject(full, string.IsNullOrWhiteSpace(name) ? DeriveName(full) : name.Trim());
         project.EnsureSubdirectories();
-        project.WriteMarker(new ProjectMarker { Name = project.Name, SchemaVersion = 1 });
+        project.WriteMarker(new ProjectMarker { Name = project.Name, SchemaVersion = CurrentMarkerVersion });
+        return project;
+    }
+
+    /// <summary>
+    /// Adopt a folder that holds project data (a database or store) but whose marker is missing or unreadable:
+    /// (re)write a valid marker so it opens as a normal project. Preserves a still-readable marker name, else
+    /// derives one from the folder. Throws if the folder shows no sign of being a project, so an unrelated
+    /// directory is never stamped. Use this for the explicit "open existing folder" recovery path.
+    /// </summary>
+    public static HoardProject Adopt(string folder)
+    {
+        var full = Path.GetFullPath(folder);
+        if (!LooksLikeProjectFolder(full))
+            throw new InvalidOperationException($"'{full}' doesn't look like a Hoard project (no database or store).");
+
+        string? existingName = null;
+        if (File.Exists(Path.Combine(full, MarkerFileName)))
+        {
+            // A present-but-corrupt marker: keep its name if we can still read one, otherwise fall back.
+            try { existingName = JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(Path.Combine(full, MarkerFileName)))?.Name; }
+            catch { /* unreadable marker — derive the name from the folder */ }
+        }
+
+        var project = new HoardProject(full, string.IsNullOrWhiteSpace(existingName) ? DeriveName(full) : existingName!);
+        project.EnsureSubdirectories();
+        project.WriteMarker(new ProjectMarker { Name = project.Name, SchemaVersion = CurrentMarkerVersion });
         return project;
     }
 
@@ -104,7 +134,11 @@ public sealed class HoardProject
         if (!IsProject(full))
             throw new InvalidOperationException($"'{full}' is not a Hoard project (no {MarkerFileName}).");
 
-        var marker = JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(Path.Combine(full, MarkerFileName)));
+        // Tolerate a present-but-malformed marker: fall back to the folder name rather than failing the open.
+        ProjectMarker? marker = null;
+        try { marker = JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(Path.Combine(full, MarkerFileName))); }
+        catch { /* unreadable marker — derive the name from the folder below */ }
+
         var project = new HoardProject(full, string.IsNullOrWhiteSpace(marker?.Name) ? DeriveName(full) : marker!.Name!);
         project.EnsureSubdirectories();
         return project;

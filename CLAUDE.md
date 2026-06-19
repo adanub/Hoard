@@ -67,17 +67,70 @@ Concepts that span multiple files:
   single-screen `LibraryView` was **split**: `LibraryViewModel` = the board grid, `BoardViewModel` = a board's
   asset grid (the GIF/detail/delete logic moved there). `MainWindowViewModel` holds the per-project
   `ThumbnailCache` shared by both. Image-detail is still a Board-screen overlay (becomes its own pushed screen later).
+  **Opening/creating a project runs off the UI thread** (`ProjectLauncherViewModel.OpenOffUiThreadAsync` wraps
+  `ProjectManager.Open/Create` + `EnsureCreatedAsync` in `Task.Run`, behind an `IsOpening` busy overlay): the
+  first `DbContext` use **compiles the EF model synchronously** before its first `await` yields — a one-off,
+  CPU-heavy cost that froze the shell if run inline. Keep DB-first-touch off the UI thread.
 - **Import targets one board, and progress is shared state.** The import sheet picks a target board (new —
   created up front via `IngestService.CreateBoardAsync` so the card shows immediately — or existing to merge);
   `IngestService.ImportAsync(targetCollectionId)` links every pin into it instead of auto-foldering by source
   board. A shell-owned **`ImportStatus`** (`ViewModels/ImportStatus.cs`) carries `IsImporting`/`CollectionId`/
   `Text`/`LastImported`, so the **Library card and the open Board screen show the same live count and stream new
   pins in**. gallery-dl reports no total mid-stream, so progress is a count + indeterminate bar, never a %.
-- **Recycle, don't delete, for projects.** `IFileRecycler` (Core, platform-neutral interface) →
-  `WindowsFileRecycler` (Desktop, `SHFileOperation` + `FOF_ALLOWUNDO` P/Invoke — platform code stays out of
-  Core), registered in DI. `ProjectManager.DeleteProject` recycles when a recycler is injected, else permanent
-  (so Core tests are unaffected). Board delete removes only the grouping (images stay); per-image delete still
-  tombstones.
+- **Syncing a board re-runs the import per source.** The Board-screen top-bar **Sync** button (visible only for a
+  real board with ≥1 URL'd source) opens a cookie sheet, then `BoardViewModel.SyncAsync` loops the board's
+  `CollectionSource` URLs (`LibraryService.GetBoardSourceUrlsAsync`) through `IngestService.ImportAsync(targetCollectionId)`.
+  No new download logic — it reuses the whole pipeline, so it pulls in missing/new items and **skips already-held
+  AND tombstoned (blacklisted) items** (the `KnownItems` skip-archive includes tombstones, and `ImportAsync`
+  re-checks `DeletedAt`). Progress flows through the same `ImportStatus` (inline strip + live streaming + reload).
+- **The skip-archive is TARGET-aware, and import re-attaches orphans.** Two import-correctness rules that make
+  re-import/sync actually repopulate a board: (1) `GetKnownItemsAsync(targetCollectionId)` pre-skips only pins
+  **already in the target board** (+ globally-tombstoned blacklist) — NOT pins merely held in some *other* board
+  — so a live pin missing from the target is left for download → dedup-by-hash → link instead of being skipped
+  globally. (2) After the crawl, `ReattachOrphansAsync` links **orphaned live assets** (no `CollectionItem` at
+  all) that belong to an imported board — matched by the board id in their stored sidecar (`SidecarBoardId.From`,
+  shared with the v5 backfill) — into the target. This recovers a **restored-but-uncrawled** image (its pin was
+  removed from the Pinterest board, so gallery-dl never re-lists it, but its content + provenance are in the DB).
+  Tombstoned orphans are never re-attached.
+- **A board can merge several source boards (schema v3/v4).** A local board is one `Collection`; the Pinterest
+  boards it gathers pins from are rows in **`CollectionSource`** (the authoritative many-sources list — board
+  id/url/name). Importing into a target board records its source(s); a second import into the same board *is*
+  the merge. `Collection.Name` is the source/original name; **`Collection.DisplayName` is a local rename
+  override** (`CurationService.RenameBoardAsync` writes it, non-destructive, survives re-import) so the shown
+  title is `DisplayName ?? Name`. The denormalised `Collection.SourceBoardId`/`SourceUrl` are kept only as a
+  "primary source" pointer (`RemoveSourceAsync` re-seeds it from a surviving source so it never drifts).
+  **`GetKnownItemsAsync` joins through `CollectionSource`** (a flat join — SQLite can't APPLY a `SelectMany`
+  over a nav) so re-crawling any merged source skips pins already held; over-claiming a pin under a sibling
+  source is safe (only ever skips content we have). **Per-pin provenance (v4):** `CollectionItem.CollectionSourceId`
+  (nullable FK, **ON DELETE SET NULL**) records which source each link came from, set at import. **Remove-source
+  hard-deletes that source's images** (no keep option — a source's pins left behind are churn): `RemoveSourceAsync(id)`
+  drops the source record and **deletes the attributed live assets outright** — `db.Assets.Remove` (cascades
+  links + tags everywhere; content-addressed = gone from every board) + logs a Remove + **recycles each blob to
+  the OS bin** (`IFileRecycler`, fallback permanent when none). NOT a tombstone — no placeholder tile, not
+  in-app restorable; a re-import re-fetches them fresh. When it's the board's **last** source it also sweeps the
+  board's remaining live images (catches pre-v4 un-attributed pins). **`DeleteBoardAsync` is the same** (hard
+  delete + recycle, then remove the grouping). Both share `StageAssetRemovals` + `FreeBlobsAsync` and skip
+  already-tombstoned assets, so a **per-image delete stays the restorable tombstone** (`DeleteAssetAsync` /
+  `RestoreAsync` — unchanged). Routed through a `ConfirmSheet`. When you touch this model, follow the
+  additive-schema rules above (v3 backfills legacy single-source boards; tests assert the upgrade DDL matches EF's). **v5 is a data-only step** (no DDL): `SourceAttributionBackfill` attributes pins
+  imported before v4 — single-source boards trivially, merged boards by the board id in each asset's stored
+  sidecar (`MetadataJson`) — so remove-source's per-source hard-delete works on legacy data too.
+- **Compatibility / resilience to outside changes (cheap on open, deep on demand).** Older project DBs are
+  upgraded by `SchemaInitializer` on open (above). Beyond that: **(marker)** a folder with project data but a
+  missing/corrupt `hoard.project.json` is recoverable — `HoardProject.Open` tolerates a malformed marker (derives
+  the name); `HoardProject.Adopt`/`ProjectManager.Adopt` rewrite a missing marker, offered only via the explicit
+  "open existing folder" path (with a confirm) so "open recent" stays strict. `ProjectManager` prunes recents
+  whose folder vanished. **(missing blobs)** a *live* asset whose blob was deleted/moved/altered outside the app
+  doesn't crash — the tile detects it lazily (per-tile `File.Exists`, not a bulk scan) and shows a **"file
+  missing"** state with a one-click **re-download** (`IngestService.RefetchAsync` → re-fetch from the saved
+  source URL; shares `ReDownloadAsync` with restore). No full content-hash verification on open (deferred to a
+  future on-demand "verify project" action). Keep open cheap: schema + marker + recents only.
+- **Recycle, don't delete.** `IFileRecycler` (Core, platform-neutral interface) → `WindowsFileRecycler` (Desktop,
+  `SHFileOperation` + `FOF_ALLOWUNDO` P/Invoke — platform code stays out of Core), registered in DI and injected
+  (optionally) into `ProjectManager` **and `CurationService`**; when absent (Core tests) the fallback is a
+  permanent delete. **`ProjectManager.DeleteProject`** recycles the project folder; **`CurationService` recycles
+  image blobs** on the hard-delete paths (remove-source, delete-board). The lone exception is **per-image delete**,
+  which tombstones (keeps a restorable row, frees the blob permanently) — that one is in-app restorable by design.
 - **Decoded GIF frames are reference-counted, not cached-with-retention.** `RefCountedCache<T>` (in
   `Infrastructure/`) does single-flight load per key and hands out disposable `ResourceLease<T>` handles; frames
   are freed when the **last** lease is disposed. `AnimatedImageControl` holds exactly one lease and disposes it

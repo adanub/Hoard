@@ -117,5 +117,20 @@
         <ctrl:SheetHost x:Name="ConfirmHost">
             <ctrl:ConfirmSheet x:Name="ConfirmContent"/>
         </ctrl:SheetHost>
+
+        <!-- Busy overlay: while a project's DB opens/builds off the UI thread (the EF model compiles on first
+             use), dim the screen and show an indeterminate bar instead of letting the shell freeze. The scrim
+             also blocks clicks on the cards underneath. -->
+        <Border IsVisible="{Binding IsOpening}" Background="{DynamicResource ScrimBrush}">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Center" Margin="40" Padding="28,24"
+                    Background="{DynamicResource PopoverBrush}" BorderBrush="{DynamicResource LineBrush}"
+                    BorderThickness="1" CornerRadius="{DynamicResource RadiusLg}"
+                    BoxShadow="{DynamicResource ShadowMd}">
+                <StackPanel Spacing="14" MinWidth="240">
+                    <ProgressBar IsIndeterminate="True" Height="6"/>
+                    <TextBlock Text="{Binding OpeningText}" Classes="muted" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </Border>
     </Panel>
 </UserControl>

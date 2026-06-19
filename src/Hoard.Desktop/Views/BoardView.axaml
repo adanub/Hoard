@@ -16,11 +16,13 @@
         <KeyBinding Gesture="Escape" Command="{Binding CloseDetailsCommand}"/>
     </UserControl.KeyBindings>
 
+    <!-- Panel so the Sync sheet overlays the whole screen. -->
+    <Panel>
     <DockPanel>
-        <!-- Top bar: back (← to Library) · board title. (Search goes elsewhere later.) -->
+        <!-- Top bar: back (← to Library) · board title · Sync (re-fetch the board's sources). -->
         <Border DockPanel.Dock="Top" Padding="16,12"
                 BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                 <Button Grid.Column="0" Theme="{StaticResource HoardButton}" Classes="ghost"
                         Width="38" Height="38" Padding="0" Command="{Binding BackCommand}"
                         ToolTip.Tip="Back">
@@ -28,6 +30,16 @@
                 </Button>
                 <TextBlock Grid.Column="1" Text="{Binding Title}" Classes="h2" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"/>
+                <!-- Only a real board with at least one URL'd source can be synced; disabled while importing. -->
+                <Button Grid.Column="2" Theme="{StaticResource HoardButton}" Classes="secondary"
+                        Command="{Binding OpenSyncSheetCommand}"
+                        IsVisible="{Binding IsSyncable}" IsEnabled="{Binding !IsBoardImporting}"
+                        ToolTip.Tip="Re-fetch this board from its source(s)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ctrl:Icon Data="{StaticResource Icon.rotate-ccw}" Width="16" Height="16"/>
+                        <TextBlock Text="Sync" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
             </Grid>
         </Border>
 
@@ -57,7 +69,9 @@
                                            ShowGifTag="{Binding IsGifBadgeVisible}"
                                            IsDeleted="{Binding IsDeleted}" DeletionNote="{Binding DeletionNote}"
                                            IsThumbnailLoading="{Binding IsThumbnailLoading}"
-                                           OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"/>
+                                           IsFileMissing="{Binding IsFileMissing}" IsRefetching="{Binding IsRefetching}"
+                                           OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"
+                                           RefetchCommand="{Binding RefetchCommand}"/>
                         </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
@@ -156,4 +170,25 @@
             </Border>
         </Panel>
     </DockPanel>
+
+        <!-- Sync sheet: pick cookies (for private boards), then re-fetch every source of this board. -->
+        <ctrl:SheetHost IsOpen="{Binding IsSyncSheetOpen}" DismissCommand="{Binding CloseSyncSheetCommand}">
+            <StackPanel Margin="24" Spacing="16">
+                <TextBlock Classes="h2" Text="Sync this board"/>
+                <TextBlock Classes="muted" TextWrapping="Wrap"
+                           Text="Re-fetch this board from its source board(s): pulls in anything missing or newly added, and skips items you've deleted."/>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Cookies (for private boards)"/>
+                    <ComboBox ItemsSource="{Binding CookieBrowsers}" SelectedItem="{Binding SyncCookiesBrowser}"
+                              HorizontalAlignment="Stretch"/>
+                </StackPanel>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseSyncSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="{Binding SyncButtonText}"
+                            Command="{Binding SyncCommand}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </ctrl:SheetHost>
+    </Panel>
 </UserControl>

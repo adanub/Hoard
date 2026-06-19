@@ -9,6 +9,7 @@ public class HoardDbContext : DbContext
 
     public DbSet<Asset> Assets => Set<Asset>();
     public DbSet<Collection> Collections => Set<Collection>();
+    public DbSet<CollectionSource> CollectionSources => Set<CollectionSource>();
     public DbSet<CollectionItem> CollectionItems => Set<CollectionItem>();
     public DbSet<Tag> Tags => Set<Tag>();
     public DbSet<AssetTag> AssetTags => Set<AssetTag>();
@@ -33,6 +34,17 @@ public class HoardDbContext : DbContext
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
+        b.Entity<CollectionSource>(e =>
+        {
+            // A given source board is merged into a local board at most once.
+            e.HasIndex(s => new { s.CollectionId, s.SourceConnector, s.SourceBoardId }).IsUnique();
+            e.Property(s => s.SourceUrl).IsRequired();
+            e.HasOne(s => s.Collection)
+                .WithMany(c => c.Sources)
+                .HasForeignKey(s => s.CollectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<CollectionItem>(e =>
         {
             // An asset appears at most once per collection.
@@ -45,6 +57,12 @@ public class HoardDbContext : DbContext
                 .WithMany(a => a.CollectionItems)
                 .HasForeignKey(ci => ci.AssetId)
                 .OnDelete(DeleteBehavior.Cascade);
+            // Removing a source un-attributes its links (SET NULL) rather than deleting them, so removing a
+            // source without its images leaves the pins in place.
+            e.HasOne(ci => ci.CollectionSource)
+                .WithMany()
+                .HasForeignKey(ci => ci.CollectionSourceId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         b.Entity<SyncOp>(e =>

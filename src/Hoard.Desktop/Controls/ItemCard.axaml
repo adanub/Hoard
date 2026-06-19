@@ -112,6 +112,30 @@
                                    TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </Border>
+
+                <!-- File-missing: the asset is live but its blob is gone from the store (deleted/moved/altered
+                     outside the app). Offer a re-download from its source. Mutually exclusive with the tombstone;
+                     also a recessed well masking the media chrome. -->
+                <Border IsVisible="{Binding #Root.IsFileMissing}" Background="{DynamicResource RecessedBrush}"
+                        BoxShadow="{DynamicResource ShadowInset}">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="12" Spacing="8">
+                        <ctrl:Icon Data="{StaticResource Icon.image}" Width="22" Height="22"
+                                   HorizontalAlignment="Center" Foreground="{DynamicResource MutedForegroundBrush}"/>
+                        <TextBlock Text="File missing" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary sm" Padding="8,0" FontSize="11"
+                                HorizontalAlignment="Center" Command="{Binding #Root.RefetchCommand}"
+                                ToolTip.Tip="Re-download this file from its source"
+                                IsVisible="{Binding #Root.IsRefetching, Converter={x:Static BoolConverters.Not}}">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <ctrl:Icon Data="{StaticResource Icon.download}" Width="13" Height="13"/>
+                                <TextBlock Text="Re-download" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <ProgressBar IsIndeterminate="True" Width="64" Height="4"
+                                     IsVisible="{Binding #Root.IsRefetching}"/>
+                    </StackPanel>
+                </Border>
             </Panel>
         </Border>
     </Border>

@@ -10,13 +10,19 @@ namespace Hoard.Desktop.Controls;
 /// <summary>One Pinterest source board merged into a local board (a row in the board Edit popup's source list).</summary>
 public sealed class BoardSourceRef
 {
+    /// <summary>The <c>CollectionSource</c> row id, so the host can remove this exact source.</summary>
+    public int Id { get; }
     public string Name { get; }
     public string Url { get; }
+    /// <summary>The board's live images attributed to this source — what un-merging "with images" would remove.</summary>
+    public int ImageCount { get; }
 
-    public BoardSourceRef(string name, string url)
+    public BoardSourceRef(int id, string name, string url, int imageCount)
     {
+        Id = id;
         Name = name;
         Url = url;
+        ImageCount = imageCount;
     }
 }
 

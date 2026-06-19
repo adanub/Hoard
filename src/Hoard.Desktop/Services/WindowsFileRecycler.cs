@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using Hoard.Core.Storage;
@@ -13,26 +14,39 @@ namespace Hoard.Desktop.Services;
 /// </summary>
 public sealed class WindowsFileRecycler : IFileRecycler
 {
-    public void RecycleDirectory(string path) => Recycle(path);
-    public void RecycleFile(string path) => Recycle(path);
+    public void RecycleDirectory(string path) => Run(Path.GetFullPath(path) + '\0' + '\0', path);
+    public void RecycleFile(string path) => Run(Path.GetFullPath(path) + '\0' + '\0', path);
 
-    private static void Recycle(string path)
+    public void RecycleFiles(IReadOnlyCollection<string> paths)
     {
-        // SHFileOperation needs the source list double-null-terminated; append an extra NUL (the marshaller
-        // adds the string's own terminator).
-        var from = Path.GetFullPath(path) + '\0' + '\0';
+        // SHFileOperation takes a NUL-separated, double-NUL-terminated list — so the whole set recycles in one
+        // shell call. Skip files that are already gone (a missing path would abort the batch).
+        var existing = new List<string>(paths.Count);
+        foreach (var p in paths)
+        {
+            var full = Path.GetFullPath(p);
+            if (File.Exists(full)) existing.Add(full);
+        }
+        if (existing.Count == 0) return;
+        Run(string.Join('\0', existing) + '\0' + '\0', $"{existing.Count} file(s)");
+    }
+
+    // The source list must be double-null-terminated; the marshaller adds the string's own terminator, so the
+    // caller appends one extra NUL.
+    private static void Run(string pFrom, string label)
+    {
         var op = new SHFILEOPSTRUCT
         {
             wFunc = FO_DELETE,
-            pFrom = from,
+            pFrom = pFrom,
             fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI,
         };
 
         var result = SHFileOperation(ref op);
         if (result != 0)
-            throw new IOException($"Could not recycle '{path}' (SHFileOperation returned 0x{result:X}).");
+            throw new IOException($"Could not recycle '{label}' (SHFileOperation returned 0x{result:X}).");
         if (op.fAnyOperationsAborted)
-            throw new IOException($"Recycling '{path}' was aborted.");
+            throw new IOException($"Recycling '{label}' was aborted.");
     }
 
     private const uint FO_DELETE = 0x0003;
