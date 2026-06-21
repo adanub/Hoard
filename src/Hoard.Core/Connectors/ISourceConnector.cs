@@ -79,6 +79,14 @@ public sealed record SourceMediaItem
     public string? BoardName { get; init; }
     public string? BoardId { get; init; }
     public string? BoardUrl { get; init; }
+
+    /// <summary>The source <i>section</i> (a sub-folder within the board) this item sits in, when it's inside
+    /// one — so ingest files it into a matching child folder instead of the board's main grid. Null for a loose
+    /// (sectionless) item.</summary>
+    public string? SectionId { get; init; }
+    public string? SectionName { get; init; }
+    public string? SectionUrl { get; init; }
+
     public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
     public string? RawJson { get; init; }
 }

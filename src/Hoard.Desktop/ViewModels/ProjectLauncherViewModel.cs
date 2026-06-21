@@ -365,9 +365,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase
             {
                 var dir = HoardProject.ThumbnailsDir(r.Path);
                 var sz = DirectorySize(dir);
-                var files = Directory.Exists(dir)
-                    ? Directory.EnumerateFiles(dir, "*.png").Take(3).ToList()
-                    : new List<string>();
+                var files = PickSpreadThumbnails(dir, 3);
                 return (sz, files.Select(LoadThumbnail).ToList());
             });
 
@@ -377,6 +375,19 @@ public partial class ProjectLauncherViewModel : ViewModelBase
             if (thumbs.Count > 1) r.Thumb1 = thumbs[1];
             if (thumbs.Count > 2) r.Thumb2 = thumbs[2];
         }
+    }
+
+    // Pick `count` cached thumbnails spread across the browse history (newest, midpoint, oldest by file time) so
+    // the project collage shows variety rather than the first three files (which cluster on one board). The
+    // project isn't open here, so there's no DB to ask for boards/recency — file time is the available proxy.
+    private static List<string> PickSpreadThumbnails(string dir, int count)
+    {
+        if (!Directory.Exists(dir)) return new List<string>();
+        var files = new DirectoryInfo(dir).EnumerateFiles("*.png")
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .Select(f => f.FullName)
+            .ToList();
+        return SpreadSelect.Positions(files.Count, count).Select(i => files[i]).ToList();
     }
 
     private static Bitmap? LoadThumbnail(string path)

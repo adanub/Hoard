@@ -75,8 +75,11 @@ Concepts that span multiple files:
   created up front via `IngestService.CreateBoardAsync` so the card shows immediately — or existing to merge);
   `IngestService.ImportAsync(targetCollectionId)` links every pin into it instead of auto-foldering by source
   board. A shell-owned **`ImportStatus`** (`ViewModels/ImportStatus.cs`) carries `IsImporting`/`CollectionId`/
-  `Text`/`LastImported`, so the **Library card and the open Board screen show the same live count and stream new
-  pins in**. gallery-dl reports no total mid-stream, so progress is a count + indeterminate bar, never a %.
+  `Text`/`LastImported`/`LastImportedCollectionId`, so the **Library card and the open Board screen show the same
+  live count and stream new pins in**. Each streamed pin is **routed to the collection it was actually filed into**
+  (`IngestProgress.ImportedIntoCollectionId`, set per item): a loose pin lands on the board grid, a **sectioned pin
+  updates its folder card live** (debounced) instead of flashing on the root grid to be reorganised at the end.
+  gallery-dl reports no total mid-stream, so progress is a count + indeterminate bar, never a %.
 - **Syncing a board re-runs the import per source.** The Board-screen top-bar **Sync** button (visible only for a
   real board with ≥1 URL'd source) opens a cookie sheet, then `BoardViewModel.SyncAsync` loops the board's
   `CollectionSource` URLs (`LibraryService.GetBoardSourceUrlsAsync`) through `IngestService.ImportAsync(targetCollectionId)`.
@@ -115,6 +118,38 @@ Concepts that span multiple files:
   additive-schema rules above (v3 backfills legacy single-source boards; tests assert the upgrade DDL matches EF's). **v5 is a data-only step** (no DDL): `SourceAttributionBackfill` attributes pins
   imported before v4 — single-source boards trivially, merged boards by the board id in each asset's stored
   sidecar (`MetadataJson`) — so remove-source's per-source hard-delete works on legacy data too.
+- **Nested folders = child collections (schema v7).** A Pinterest *section* / sub-folder is just a child
+  `Collection` via the long-present self-referencing **`Collection.ParentId`**; `SourceSectionId` (v7, additive —
+  added by a *guarded* upgrade since SQLite `ADD COLUMN` has no `IF NOT EXISTS` and a fresh-model DB is reused to
+  simulate older ones in tests) records the source section id on a child so a re-import re-finds it. **Loose pins
+  link to the parent; sectioned pins link to the child**, so a board's grid (`GetAssetsAsync(id)` filters by
+  `CollectionId`) shows only its loose pins automatically. `GetCollectionsAsync` lists **top-level boards only**
+  (`ParentId == null`); `GetChildBoardsAsync(parentId)` feeds the Board screen. **A card's count/size rolls up the
+  whole subtree** (its sections count toward the board) — `LibraryService` sums per-collection totals over the
+  `ParentId` tree (`LoadSubtreeRollupAsync`; `GetBoardDetailAsync`/`GetBoardAssetShasAsync` are subtree-scoped too),
+  and **covers are picked spread** (most-recent · midpoint · oldest via `SpreadSelect`, across the subtree) so a
+  board's 3-up — and the "All images"/project collage — pull from a variety of boards, not the latest import.
+  Subtree walks share `CollectionTree.SubtreeIdsAsync` (delete/remove-source/known-items/shas) — the rollup is the
+  batch in-memory variant for the "all boards" case. **Folders are rendered exactly like top-level boards** — `BoardCard`s (collage + pencil edit) in a `WrapPanel` led by a "+ New folder"
+  `NewCard`, shown **before the image masonry in one `ScrollViewer`** (a `StackPanel` of [folder grid][masonry];
+  the masonry stays virtualized because `MasonryLayout` realizes from `context.RealizationRect`, the effective
+  viewport, not the measure height). **Drilling into a folder reuses the whole Board screen** — `ShowBoard(new BoardTarget(childId, …, ParentId: …))` pushes another
+  `BoardViewModel`, so nesting works to any depth via the back-stack; an `IResumable.OnResumed` nav hook reloads a
+  board's folders + grid when a child is popped (a folder may have been renamed/deleted, or a pin moved out).
+  A folder is renamed/deleted via its **card pencil** (`BeginEditFolder` → `BoardEditSheet` with
+  `ShowSources=false`), same as editing a board from the Library;
+  `CurationService.DeleteBoardAsync` **recurses the subtree** (the `ParentId` FK is `SET NULL`, so children are
+  removed explicitly, not cascaded) and `MoveAssetWithinBoardAsync` re-points a `CollectionItem` to file a pin
+  into a folder (one at a time, via the detail panel). **Auto-import (ingest side) is wired:** `SourceMediaItem`
+  carries `SectionId`/`SectionName`/`SectionUrl`; `IngestService.ImportAsync` files a sectioned pin into a child
+  folder via `GetOrCreateSectionFolderAsync` (find-or-create by parent + `SourceSectionId`, cached per run) while
+  a sectionless pin lands on the board; the section pin keeps the **board's** source attribution, so
+  `RemoveSourceAsync` (now subtree-scoped via `CollectionTree.SubtreeIdsAsync`, shared with delete-board) sweeps a
+  source's foldered pins too, and `GetKnownItemsAsync` pairs held descendant-folder pins with the root board's
+  source ids so a re-sync pre-skips them. **What's NOT confirmed:** the exact gallery-dl sidecar field/flag —
+  `PinterestSidecarParser` probes a nested `section` object + flat `section_id` defensively (graceful no-op when
+  absent, so sections just don't form), pending a **live gallery-dl spike** (the connector passes no section flag
+  yet; the real archive shows only `board.section_count`, no per-pin attribution).
 - **Compatibility / resilience to outside changes (cheap on open, deep on demand).** Older project DBs are
   upgraded by `SchemaInitializer` on open (above). Beyond that: **(marker)** a folder with project data but a
   missing/corrupt `hoard.project.json` is recoverable — `HoardProject.Open` tolerates a malformed marker (derives

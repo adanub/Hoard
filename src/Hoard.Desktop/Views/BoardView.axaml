@@ -53,28 +53,62 @@
             </StackPanel>
         </Border>
 
-        <!-- Masonry grid (ItemCards) with a floating detail overlay on top. -->
+        <!-- Grid: child folders (as board cards, like the Library) sorted BEFORE the images, both in one scroll
+             with a floating detail overlay on top. The masonry stays virtualized (its layout realizes from the
+             effective viewport, not the measure height), so a folder header above it is free. -->
         <Panel>
             <ScrollViewer Name="GridScroll" Padding="10"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <!-- ClipToBounds=False so an ItemCard's hover-scale + lifted shadow aren't cropped to its cell. -->
-                <ItemsRepeater Name="AssetGrid" ItemsSource="{Binding Assets}" ClipToBounds="False">
-                    <ItemsRepeater.Layout>
-                        <ctrl:MasonryLayout TargetColumnWidth="200" Spacing="10"/>
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="vm:AssetTileViewModel">
-                            <ctrl:ItemCard Thumbnail="{Binding Thumbnail}" PlaySource="{Binding PlaySource}"
-                                           IsImage="{Binding IsImage}" KindLabel="{Binding KindLabel}"
-                                           ShowGifTag="{Binding IsGifBadgeVisible}"
-                                           IsDeleted="{Binding IsDeleted}" DeletionNote="{Binding DeletionNote}"
-                                           IsThumbnailLoading="{Binding IsThumbnailLoading}"
-                                           IsFileMissing="{Binding IsFileMissing}" IsRefetching="{Binding IsRefetching}"
-                                           OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"
-                                           RefetchCommand="{Binding RefetchCommand}"/>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
+                <StackPanel Spacing="6" ClipToBounds="False">
+                    <!-- Folder grid: "+ New folder" + one BoardCard per child folder, rendered exactly like
+                         top-level boards. Hidden for "All images" / search results. ClipToBounds=False down to
+                         the item ContentPresenter so the cards' hover-scale + shadow aren't cropped (the same
+                         raised-card-in-grid rule as the Library). -->
+                    <ItemsControl ItemsSource="{Binding FolderTiles}" IsVisible="{Binding ShowFolderRow}"
+                                  Margin="6,4,6,8" ClipToBounds="False">
+                        <ItemsControl.Styles>
+                            <Style Selector="ContentPresenter">
+                                <Setter Property="ClipToBounds" Value="False"/>
+                            </Style>
+                        </ItemsControl.Styles>
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel ClipToBounds="False"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.DataTemplates>
+                            <DataTemplate DataType="vm:NewFolderTile">
+                                <ctrl:NewCard Label="New folder" Margin="0,0,16,16"
+                                              Command="{Binding $parent[ItemsControl].((vm:BoardViewModel)DataContext).OpenNewFolderSheetCommand}"/>
+                            </DataTemplate>
+                            <DataTemplate DataType="vm:BoardCardRef">
+                                <ctrl:BoardCard Margin="0,0,16,16"
+                                                Title="{Binding Name}" MetaText="{Binding MetaText}"
+                                                Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
+                                                OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>
+                            </DataTemplate>
+                        </ItemsControl.DataTemplates>
+                    </ItemsControl>
+
+                    <!-- ClipToBounds=False so an ItemCard's hover-scale + lifted shadow aren't cropped to its cell. -->
+                    <ItemsRepeater Name="AssetGrid" ItemsSource="{Binding Assets}" ClipToBounds="False">
+                        <ItemsRepeater.Layout>
+                            <ctrl:MasonryLayout TargetColumnWidth="200" Spacing="10"/>
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="vm:AssetTileViewModel">
+                                <ctrl:ItemCard Thumbnail="{Binding Thumbnail}" PlaySource="{Binding PlaySource}"
+                                               IsImage="{Binding IsImage}" KindLabel="{Binding KindLabel}"
+                                               ShowGifTag="{Binding IsGifBadgeVisible}"
+                                               IsDeleted="{Binding IsDeleted}" DeletionNote="{Binding DeletionNote}"
+                                               IsThumbnailLoading="{Binding IsThumbnailLoading}"
+                                               IsFileMissing="{Binding IsFileMissing}" IsRefetching="{Binding IsRefetching}"
+                                               OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"
+                                               RefetchCommand="{Binding RefetchCommand}"/>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </StackPanel>
             </ScrollViewer>
 
             <!-- Detail overlay (floats over the grid). Delete/restore route through the view model. -->
@@ -157,6 +191,11 @@
                                         IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                 <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open file"
                                         HorizontalAlignment="Stretch" Click="OnOpenImage" IsVisible="{Binding IsLive}"/>
+                                <!-- File this pin into one of the board's folders (or back up to the parent). Visible
+                                     only when there's somewhere to move it; CanMoveSelected lives on the Board VM. -->
+                                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Move to folder…"
+                                        HorizontalAlignment="Stretch" Click="OnMoveAsset"
+                                        IsVisible="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).CanMoveSelected}"/>
                                 <Button Theme="{StaticResource HoardButton}" Content="♻ Restore from source"
                                         HorizontalAlignment="Stretch" Click="OnRestoreAsset" Margin="0,8,0,0"
                                         IsVisible="{Binding IsDeleted}" IsEnabled="{Binding CanRestore}"/>
@@ -189,6 +228,65 @@
                             Command="{Binding SyncCommand}"/>
                 </ctrl:FlexWrapPanel>
             </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- New-folder sheet: name a sub-folder to create in this board. -->
+        <ctrl:SheetHost IsOpen="{Binding IsNewFolderSheetOpen}" DismissCommand="{Binding CloseNewFolderSheetCommand}">
+            <StackPanel Margin="24" Spacing="16" Width="360">
+                <TextBlock Classes="h2" Text="New folder"/>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Folder name"/>
+                    <TextBox Theme="{StaticResource HoardInput}" Text="{Binding NewFolderName}" PlaceholderText="e.g. Kitchen"/>
+                </StackPanel>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseNewFolderSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Create folder"
+                            Command="{Binding CreateFolderCommand}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- Move sheet: pick where to file the selected pin (a folder, or "out" to the parent board). -->
+        <ctrl:SheetHost IsOpen="{Binding IsMoveSheetOpen}" DismissCommand="{Binding CloseMoveSheetCommand}">
+            <StackPanel Margin="24" Spacing="16" Width="360">
+                <TextBlock Classes="h2" Text="Move to folder"/>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Destination"/>
+                    <ComboBox ItemsSource="{Binding MoveTargets}" SelectedItem="{Binding SelectedMoveTarget}"
+                              HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MoveTarget">
+                                <TextBlock Text="{Binding Display}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseMoveSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Move"
+                            Command="{Binding ConfirmMoveCommand}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- Folder Edit popup (a folder card's pencil): rename / clear cache / delete. No source list (folders
+             have no sources). Bound to the folder card under edit; commands wired in code-behind, delete routes
+             through the confirm. -->
+        <ctrl:SheetHost x:Name="FolderEditHost" IsOpen="{Binding IsFolderEditSheetOpen}"
+                        DismissCommand="{Binding CloseFolderEditSheetCommand}">
+            <ctrl:BoardEditSheet x:Name="FolderEditSheet"
+                                 Heading="Edit folder" DeleteLabel="Delete folder…" ShowSources="False"
+                                 BoardName="{Binding FolderEditTarget.Name, Mode=OneWay}"
+                                 CountsText="{Binding FolderEditTarget.CountsText}"
+                                 CacheText="{Binding FolderEditTarget.CacheText}"
+                                 AddedText="{Binding FolderEditTarget.AddedText}"/>
+        </ctrl:SheetHost>
+
+        <!-- Shared confirm popup (the folder delete), layered on top. -->
+        <ctrl:SheetHost x:Name="FolderConfirmHost">
+            <ctrl:ConfirmSheet x:Name="FolderConfirmContent"/>
         </ctrl:SheetHost>
     </Panel>
 </UserControl>

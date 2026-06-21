@@ -5,6 +5,13 @@ using Hoard.Desktop.ViewModels;
 
 namespace Hoard.Desktop.Navigation;
 
+/// <summary>A page that wants to refresh when it's revealed again by a <see cref="NavigationService.Pop"/>
+/// (e.g. a board reloading its folder row after a child folder was renamed/deleted from inside it).</summary>
+public interface IResumable
+{
+    void OnResumed();
+}
+
 /// <summary>
 /// The shell's page back-stack. The shell binds <see cref="Current"/>; screens push the next page and pop to
 /// return. Built now for the Projects ↔ Library swap, but as the spine for the deeper
@@ -38,12 +45,15 @@ public partial class NavigationService : ObservableObject
         Current = page;
     }
 
-    /// <summary>Return to the previous page; a no-op at the root. Disposes the page being left.</summary>
+    /// <summary>Return to the previous page; a no-op at the root. Disposes the page being left and lets the page
+    /// revealed beneath it refresh (<see cref="IResumable"/>).</summary>
     public void Pop()
     {
         if (_stack.Count <= 1) return;
         var popped = _stack.Pop();
-        Current = _stack.Peek();
+        var revealed = _stack.Peek();
+        Current = revealed;
         (popped as IDisposable)?.Dispose();
+        (revealed as IResumable)?.OnResumed();
     }
 }

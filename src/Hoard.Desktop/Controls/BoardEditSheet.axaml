@@ -11,7 +11,7 @@
              x:Name="Root">
 
     <StackPanel Margin="24" Spacing="16">
-        <TextBlock Classes="h2" Text="Edit board"/>
+        <TextBlock Classes="h2" Text="{Binding #Root.Heading}"/>
 
         <!-- Name + rename toggle. Read state = plain text; Rename swaps in the editable field. -->
         <StackPanel Spacing="6">
@@ -39,8 +39,9 @@
             </Grid>
         </StackPanel>
 
-        <!-- Merged Pinterest source boards: open / remove each, and add another. -->
-        <StackPanel Spacing="6">
+        <!-- Merged Pinterest source boards: open / remove each, and add another. Hidden for a child folder
+             (ShowSources=False), which has no sources of its own. -->
+        <StackPanel Spacing="6" IsVisible="{Binding #Root.ShowSources}">
             <TextBlock Classes="muted" Text="Pinterest source boards"/>
             <ItemsControl ItemsSource="{Binding #Root.SourceBoards}">
                 <ItemsControl.ItemsPanel>
@@ -97,7 +98,7 @@
         <ctrl:FlexWrapPanel Spacing="8">
             <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Clear cache"
                     Command="{Binding #Root.ClearCacheCommand}"/>
-            <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete board…"
+            <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="{Binding #Root.DeleteLabel}"
                     Command="{Binding #Root.DeleteCommand}"/>
         </ctrl:FlexWrapPanel>
     </StackPanel>

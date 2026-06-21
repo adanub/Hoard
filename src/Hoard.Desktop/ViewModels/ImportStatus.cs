@@ -21,11 +21,17 @@ public partial class ImportStatus : ObservableObject
     /// <summary>The most recently imported new pin, so an open Board screen can append it live.</summary>
     [ObservableProperty] private AssetView? _lastImported;
 
+    /// <summary>Which collection <see cref="LastImported"/> was filed into — the board itself, or one of its
+    /// child folders (a Pinterest section) — so the open Board screen shows it in the right place, not the root
+    /// grid. Set <i>before</i> <see cref="LastImported"/> so it's current when the pin change is handled.</summary>
+    [ObservableProperty] private int? _lastImportedCollectionId;
+
     public void Begin(int collectionId)
     {
         CollectionId = collectionId;
         Text = "Importing… starting";
         LastImported = null;
+        LastImportedCollectionId = null;
         IsImporting = true;
     }
 
@@ -33,5 +39,6 @@ public partial class ImportStatus : ObservableObject
     {
         IsImporting = false;
         LastImported = null;
+        LastImportedCollectionId = null;
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.ViewModels;
 
 namespace Hoard.Desktop.Views;
@@ -9,7 +10,8 @@ namespace Hoard.Desktop.Views;
 /// <summary>
 /// The Board screen: a masonry grid of one board's images (ItemCards) with a floating detail overlay. Tile
 /// taps/unloads run the tile's own commands (wired to the view model); this code-behind covers the lazy
-/// thumbnail decode and the detail-panel open/delete/restore actions.
+/// thumbnail decode, the detail-panel open/delete/restore/move actions, and the folder Edit popup (rename /
+/// delete, routed through a confirm).
 /// </summary>
 public partial class BoardView : UserControl
 {
@@ -18,10 +20,44 @@ public partial class BoardView : UserControl
         InitializeComponent();
         // Decode thumbnails only as the ItemsRepeater realizes containers (virtualized on-demand).
         AssetGrid.ElementPrepared += OnAssetElementPrepared;
+        WireFolderEditSheet();
     }
 
     private BoardViewModel? Vm => DataContext as BoardViewModel;
     private AssetDetailViewModel? Detail => Vm?.Details;
+
+    private void WireFolderEditSheet()
+    {
+        FolderEditSheet.RenameCommand = new RelayCommand<object?>(name =>
+        {
+            if (Vm is { } vm) _ = vm.RenameFolderAsync(name as string);
+        });
+        FolderEditSheet.ClearCacheCommand = new RelayCommand(() =>
+        {
+            if (Vm is { } vm) _ = vm.ClearFolderCacheAsync();
+        });
+        FolderEditSheet.DeleteCommand = new RelayCommand(ShowFolderDeleteConfirm);
+        FolderConfirmHost.DismissCommand = new RelayCommand(() => FolderConfirmHost.IsOpen = false);
+    }
+
+    private void ShowFolderDeleteConfirm()
+    {
+        if (Vm is not { FolderEditTarget: { } folder }) return;
+        FolderConfirmContent.Title = "Delete folder?";
+        FolderConfirmContent.Message =
+            $"Delete the folder “{folder.Name}” and its images — files go to your recycle bin (any also in another board are removed there too).";
+        FolderConfirmContent.ConfirmLabel = "Delete";
+        FolderConfirmContent.ConfirmCommand = new RelayCommand(() =>
+        {
+            FolderConfirmHost.IsOpen = false;
+            if (Vm is { } v) { v.CloseFolderEditSheetCommand.Execute(null); _ = v.DeleteFolderAsync(); }
+        });
+        FolderConfirmContent.CancelCommand = new RelayCommand(() => FolderConfirmHost.IsOpen = false);
+        FolderConfirmContent.Begin(3); // a brief cooldown — it deletes images
+        FolderConfirmHost.IsOpen = true;
+    }
+
+    private void OnMoveAsset(object? sender, RoutedEventArgs e) => Vm?.OpenMoveSheet();
 
     private void OnAssetElementPrepared(object? sender, ItemsRepeaterElementPreparedEventArgs e)
     {

@@ -32,6 +32,13 @@ public class Collection
     public Collection? Parent { get; set; }
     public List<Collection> Children { get; } = new();
 
+    /// <summary>
+    /// For a child folder imported from a Pinterest <i>section</i>: the section's stable source id, so a
+    /// re-import can re-find the same folder rather than duplicating it. Null for a top-level board or a
+    /// folder the user created locally (which has no source section).
+    /// </summary>
+    public string? SourceSectionId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     public List<CollectionItem> Items { get; } = new();

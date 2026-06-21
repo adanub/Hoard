@@ -36,9 +36,12 @@ public sealed class IngestService
     /// <summary>
     /// Create an empty local board (collection) up front — so an import has somewhere to land immediately and
     /// its card can show progress from the first pin — and return its id. The connector is resolved from the
-    /// <paramref name="url"/> the board will be filled from.
+    /// <paramref name="url"/> the board will be filled from. Pass <paramref name="parentId"/> to create a
+    /// <b>child folder</b> instead of a top-level board (a Pinterest section or a locally-created sub-folder);
+    /// <paramref name="sectionId"/> records its source section id so a re-import re-finds it.
     /// </summary>
-    public async Task<int> CreateBoardAsync(string name, string url, CancellationToken ct = default)
+    public async Task<int> CreateBoardAsync(
+        string name, string url, int? parentId = null, string? sectionId = null, CancellationToken ct = default)
     {
         var connectorName = _connectors.FirstOrDefault(c => c.CanHandle(url))?.Name ?? "";
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
@@ -46,6 +49,8 @@ public sealed class IngestService
         {
             Name = name,
             SourceConnector = connectorName,
+            ParentId = parentId,
+            SourceSectionId = sectionId,
             CreatedAt = DateTimeOffset.UtcNow,
         };
         db.Collections.Add(collection);
@@ -78,6 +83,10 @@ public sealed class IngestService
         // The resolved CollectionSource per (connector, board id) this run — keyed like the uniqueness key —
         // so each source is resolved once and every link can be attributed to it.
         var sourceByBoard = new Dictionary<(string Connector, string BoardId), CollectionSource>();
+        // The child folder per (parent board, section id) this run, so sectioned pins file into one matching
+        // folder rather than creating a duplicate per pin. Keyed by the parent Collection *reference* (stable even
+        // while its Id is 0 before its first save — the auto-folder path) rather than parent.Id.
+        var sectionFolders = new Dictionary<(Collection Parent, string SectionId), Collection>();
         // Every pin the crawl emitted (even tombstone-skipped ones), so the post-crawl orphan re-attach never
         // double-handles a pin that was actually re-listed.
         var importedPins = new HashSet<string>();
@@ -139,8 +148,19 @@ public sealed class IngestService
                 }
             }
 
+            // A pin inside a Pinterest section files into a matching child folder (a child Collection of the
+            // board); a sectionless pin lands on the board's main grid. The link keeps the board's source
+            // attribution either way (the pin still came from that source board). The folder is created + the
+            // link committed within THIS item's SaveChanges (below), so an interrupted import never leaves a
+            // downloaded pin un-filed.
+            var linkTarget = collection;
             if (collection is not null)
-                await LinkToCollectionAsync(db, collection, asset, item, source, itemCt).ConfigureAwait(false);
+            {
+                linkTarget = item.SectionId is { Length: > 0 } sectionId
+                    ? await GetOrCreateSectionFolderAsync(db, sectionFolders, collection, sectionId, item, itemCt).ConfigureAwait(false)
+                    : collection;
+                await LinkToCollectionAsync(db, linkTarget, asset, item, source, itemCt).ConfigureAwait(false);
+            }
 
             await AttachTagsAsync(db, tags, asset, item, itemCt).ConfigureAwait(false);
 
@@ -150,9 +170,13 @@ public sealed class IngestService
             processed++;
             if (isNew) newAssets++; else duplicates++;
 
-            var view = isNew ? ToView(asset) : null; // only surface genuinely new images to the grid
+            // Surface genuinely new images to the grid, tagged with the collection they actually landed in (the
+            // board, or a section folder) so the live view files them in the right place rather than dumping all
+            // of them on the board.
+            var view = isNew ? ToView(asset) : null;
             progress?.Report(new IngestProgress(IngestPhase.Storing, processed, 0,
-                $"Imported {processed} — {item.Title ?? item.SourceId ?? Path.GetFileName(item.FilePath)}", view));
+                $"Imported {processed} — {item.Title ?? item.SourceId ?? Path.GetFileName(item.FilePath)}",
+                view, linkTarget?.Id));
         }, ct).ConfigureAwait(false);
 
         var reattached = await ReattachOrphansAsync(db, targetCollection, sourceByBoard, importedPins, connector.Name, progress, ct).ConfigureAwait(false);
@@ -216,7 +240,7 @@ public sealed class IngestService
             });
             reattached++;
             progress?.Report(new IngestProgress(IngestPhase.Storing, 0, 0,
-                $"Re-attached {orphan.Title ?? orphan.SourceId}", ToView(orphan)));
+                $"Re-attached {orphan.Title ?? orphan.SourceId}", ToView(orphan), targetCollection.Id));
         }
         if (reattached > 0) await db.SaveChangesAsync(ct).ConfigureAwait(false);
         return reattached;
@@ -325,7 +349,69 @@ public sealed class IngestService
             select new { Board = s.SourceBoardId!, Source = ci.Asset.SourceId! })
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
-        return rows.Select(r => new KnownSourceItem(r.Board, r.Source)).ToList();
+        var known = new HashSet<KnownSourceItem>(rows.Select(r => new KnownSourceItem(r.Board, r.Source)));
+
+        // Section pins sit in child folders whose CollectionId carries no CollectionSource of its own (sources
+        // live on the root board), so the join above misses them and a re-sync would re-download every sectioned
+        // pin. For a targeted import, pair each held pin in a descendant folder with each of the board's source
+        // board ids — over-claiming a held pin is safe (it only ever skips content we already have).
+        if (targetCollectionId is int root)
+        {
+            var descendants = (await CollectionTree.SubtreeIdsAsync(db, root, ct).ConfigureAwait(false))
+                .Where(id => id != root).ToList();
+            if (descendants.Count > 0)
+            {
+                var rootBoards = await db.CollectionSources
+                    .Where(s => s.CollectionId == root && s.SourceBoardId != null)
+                    .Select(s => s.SourceBoardId!)
+                    .Distinct().ToListAsync(ct).ConfigureAwait(false);
+                if (rootBoards.Count > 0)
+                {
+                    var sectionPins = await db.CollectionItems
+                        .Where(ci => descendants.Contains(ci.CollectionId) && ci.Asset.SourceId != null)
+                        .Select(ci => ci.Asset.SourceId!)
+                        .Distinct().ToListAsync(ct).ConfigureAwait(false);
+                    foreach (var board in rootBoards)
+                        foreach (var pin in sectionPins)
+                            known.Add(new KnownSourceItem(board, pin));
+                }
+            }
+        }
+
+        return known.ToList();
+    }
+
+    /// <summary>
+    /// Find or create the child folder for a pin's source <i>section</i> (a child <see cref="Collection"/> of the
+    /// board, matched by parent + section id), so sectioned pins file into it instead of the board's main grid.
+    /// Cached per run; matches an existing folder on a re-import via <see cref="Collection.SourceSectionId"/>.
+    /// </summary>
+    private static async Task<Collection> GetOrCreateSectionFolderAsync(
+        HoardDbContext db, Dictionary<(Collection Parent, string SectionId), Collection> cache,
+        Collection parent, string sectionId, SourceMediaItem item, CancellationToken ct)
+    {
+        var key = (parent, sectionId);
+        if (cache.TryGetValue(key, out var folder)) return folder;
+
+        // A saved parent (the usual targeted-import case) may already have this folder from a prior import.
+        if (parent.Id != 0)
+            folder = await db.Collections.FirstOrDefaultAsync(
+                c => c.ParentId == parent.Id && c.SourceSectionId == sectionId, ct).ConfigureAwait(false);
+
+        if (folder is null)
+        {
+            folder = new Collection
+            {
+                Name = string.IsNullOrWhiteSpace(item.SectionName) ? "Section" : item.SectionName!.Trim(),
+                SourceConnector = parent.SourceConnector,
+                Parent = parent, // wires ParentId on save whether or not the parent is persisted yet
+                SourceSectionId = sectionId,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Collections.Add(folder);
+        }
+        cache[key] = folder;
+        return folder;
     }
 
     private AssetView ToView(Asset a) =>

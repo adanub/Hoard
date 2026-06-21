@@ -14,7 +14,7 @@ public static class SchemaInitializer
 {
     /// <summary>Bump this and add a matching <see cref="Upgrades"/> entry whenever the model gains additive objects.
     /// (v5 and v6 are data-only steps — the attribution backfill and the stale-tombstone repair — with no DDL.)</summary>
-    public const long LatestSchemaVersion = 6;
+    public const long LatestSchemaVersion = 7;
 
     /// <summary>
     /// Ordered additive patches applied to a pre-existing database whose <c>user_version</c> is below the
@@ -116,6 +116,39 @@ public static class SchemaInitializer
                 "AND (\"DeletionNote\" LIKE 'Removed with source “%' OR \"DeletionNote\" LIKE 'Removed with board “%');",
                 ct).ConfigureAwait(false);
             await SetVersionAsync(db, 6, ct).ConfigureAwait(false);
+        }
+
+        // v7 — nested folders (Pinterest sections as child Collections, via the long-present "ParentId").
+        // "SourceSectionId" records a child folder's source section id so a re-import re-finds it. Run as a
+        // *guarded* add rather than a blind ALTER: SQLite ADD COLUMN has no IF NOT EXISTS, and a fresh-model DB
+        // can be used to simulate an older one in tests, so adding it unconditionally would throw "duplicate
+        // column". Skip when the column already exists (fresh model) and add it only on a genuinely older DB.
+        if (current < 7)
+        {
+            if (!await ColumnExistsAsync(db, "Collections", "SourceSectionId", ct).ConfigureAwait(false))
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE \"Collections\" ADD COLUMN \"SourceSectionId\" TEXT NULL;", ct).ConfigureAwait(false);
+            await SetVersionAsync(db, 7, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<bool> ColumnExistsAsync(HoardDbContext db, string table, string column, CancellationToken ct)
+    {
+        var conn = db.Database.GetDbConnection();
+        await conn.OpenAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            // table_info yields one row per column: (cid, name, type, notnull, dflt_value, pk) — name is index 1.
+            cmd.CommandText = $"PRAGMA table_info(\"{table}\");";
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+        finally
+        {
+            await conn.CloseAsync().ConfigureAwait(false);
         }
     }
 

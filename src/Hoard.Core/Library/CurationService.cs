@@ -93,9 +93,12 @@ public sealed class CurationService
             .AnyAsync(s => s.CollectionId == source.CollectionId && s.Id != source.Id, ct).ConfigureAwait(false);
 
         // The board's live images to remove: those attributed to this source — plus, when it's the board's last
-        // source, any remaining (e.g. legacy un-attributed) pins, so nothing orphaned is left behind.
+        // source, any remaining (e.g. legacy un-attributed) pins, so nothing orphaned is left behind. Scoped to
+        // the board's whole subtree so a source's pins filed into child folders (Pinterest sections) go with it
+        // rather than being orphaned in a folder.
+        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, source.CollectionId, ct).ConfigureAwait(false);
         var items = db.CollectionItems
-            .Where(ci => ci.CollectionId == source.CollectionId && ci.Asset.DeletedAt == null);
+            .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.Asset.DeletedAt == null);
         if (!lastSource)
             items = items.Where(ci => ci.CollectionSourceId == source.Id);
         var assets = await items.Select(ci => ci.Asset).Distinct().ToListAsync(ct).ConfigureAwait(false);
@@ -124,10 +127,11 @@ public sealed class CurationService
     }
 
     /// <summary>
-    /// Delete a board (collection) <b>and its images completely</b>: removes the board's live images outright
-    /// (row + links gone everywhere), sends their files to the OS recycle bin, and removes the board grouping +
-    /// its links (cascade). Returns how many images were deleted. No-op (returns 0) if the board is gone. A
-    /// re-import re-fetches them fresh. (A separately tombstoned per-image delete is left alone.)
+    /// Delete a board (collection) <b>and its images completely</b>, including its whole subtree of child folders
+    /// (Pinterest sections / sub-folders): removes every live image across the subtree outright (row + links gone
+    /// everywhere), sends their files to the OS recycle bin, and removes the board + descendant folders + their
+    /// links (cascade). Returns how many images were deleted. No-op (returns 0) if the board is gone. A re-import
+    /// re-fetches them fresh. (A separately tombstoned per-image delete is left alone.)
     /// </summary>
     public async Task<int> DeleteBoardAsync(int collectionId, CancellationToken ct = default)
     {
@@ -135,17 +139,58 @@ public sealed class CurationService
         var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct).ConfigureAwait(false);
         if (collection is null) return 0;
 
+        // The board plus all descendant folders — deleting a board takes its whole subtree. The ParentId FK is
+        // SET NULL (it won't cascade-delete children), so the descendant rows are gathered and removed explicitly.
+        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, collectionId, ct).ConfigureAwait(false);
+
         var assets = await db.CollectionItems
-            .Where(ci => ci.CollectionId == collectionId && ci.Asset.DeletedAt == null)
+            .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.Asset.DeletedAt == null)
             .Select(ci => ci.Asset)
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
 
         var freed = StageAssetRemovals(db, assets);
-        db.Collections.Remove(collection); // cascade removes its CollectionItems
+        var collections = await db.Collections.Where(c => subtreeIds.Contains(c.Id)).ToListAsync(ct).ConfigureAwait(false);
+        db.Collections.RemoveRange(collections); // cascade removes each one's CollectionItems
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await FreeBlobsAsync(freed, ct).ConfigureAwait(false);
         return freed.Count;
+    }
+
+    /// <summary>
+    /// Move an asset's board link from one collection to another (e.g. file a loose pin into a folder, or move it
+    /// back). Re-points the existing <see cref="CollectionItem"/> rather than adding a second link, so the asset
+    /// lands in exactly one of the two. No-op if the asset isn't linked to <paramref name="fromCollectionId"/>;
+    /// if it's already in <paramref name="toCollectionId"/>, the source link is simply dropped (the unique
+    /// <c>(CollectionId, AssetId)</c> index allows only one). Manual filing detaches the pin from any per-source
+    /// attribution, so it's the user's organisation from then on.
+    /// </summary>
+    public async Task MoveAssetWithinBoardAsync(
+        int assetId, int fromCollectionId, int toCollectionId, CancellationToken ct = default)
+    {
+        if (fromCollectionId == toCollectionId) return;
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        var link = await db.CollectionItems
+            .FirstOrDefaultAsync(ci => ci.AssetId == assetId && ci.CollectionId == fromCollectionId, ct).ConfigureAwait(false);
+        if (link is null) return;
+
+        var destLink = await db.CollectionItems
+            .FirstOrDefaultAsync(ci => ci.AssetId == assetId && ci.CollectionId == toCollectionId, ct).ConfigureAwait(false);
+        if (destLink is not null)
+        {
+            // Already at the destination: drop the source link, and detach the surviving link's per-source
+            // attribution too — once the user has filed it, it's their organisation, not auto-attributed (so a
+            // later remove-source won't sweep it).
+            db.CollectionItems.Remove(link);
+            destLink.CollectionSourceId = null;
+        }
+        else
+        {
+            link.CollectionId = toCollectionId;
+            link.CollectionSourceId = null; // now user-organised, not auto-attributed to a merged source
+        }
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>

@@ -40,6 +40,18 @@ public partial class BoardEditSheet : UserControl
     public static readonly StyledProperty<bool> IsEditingProperty =
         AvaloniaProperty.Register<BoardEditSheet, bool>(nameof(IsEditing));
 
+    /// <summary>Popup heading — "Edit board" (default) or "Edit folder" when editing a child folder.</summary>
+    public static readonly StyledProperty<string?> HeadingProperty =
+        AvaloniaProperty.Register<BoardEditSheet, string?>(nameof(Heading), "Edit board");
+
+    /// <summary>Label of the destructive action — "Delete board…" (default) or "Delete folder…".</summary>
+    public static readonly StyledProperty<string?> DeleteLabelProperty =
+        AvaloniaProperty.Register<BoardEditSheet, string?>(nameof(DeleteLabel), "Delete board…");
+
+    /// <summary>Show the merged-source list + "Add source board…". False for a child folder (it has no sources).</summary>
+    public static readonly StyledProperty<bool> ShowSourcesProperty =
+        AvaloniaProperty.Register<BoardEditSheet, bool>(nameof(ShowSources), true);
+
     public static readonly StyledProperty<IEnumerable?> SourceBoardsProperty =
         AvaloniaProperty.Register<BoardEditSheet, IEnumerable?>(nameof(SourceBoards));
 
@@ -75,6 +87,9 @@ public partial class BoardEditSheet : UserControl
 
     public string? BoardName { get => GetValue(BoardNameProperty); set => SetValue(BoardNameProperty, value); }
     public bool IsEditing { get => GetValue(IsEditingProperty); set => SetValue(IsEditingProperty, value); }
+    public string? Heading { get => GetValue(HeadingProperty); set => SetValue(HeadingProperty, value); }
+    public string? DeleteLabel { get => GetValue(DeleteLabelProperty); set => SetValue(DeleteLabelProperty, value); }
+    public bool ShowSources { get => GetValue(ShowSourcesProperty); set => SetValue(ShowSourcesProperty, value); }
     public IEnumerable? SourceBoards { get => GetValue(SourceBoardsProperty); set => SetValue(SourceBoardsProperty, value); }
     public string? CountsText { get => GetValue(CountsTextProperty); set => SetValue(CountsTextProperty, value); }
     public string? CacheText { get => GetValue(CacheTextProperty); set => SetValue(CacheTextProperty, value); }

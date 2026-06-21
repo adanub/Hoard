@@ -24,6 +24,7 @@ public static class PinterestSidecarParser
                         ?? (pinId is not null ? $"https://www.pinterest.com/pin/{pinId}/" : null);
 
         var (boardName, boardId, boardUrl) = ParseBoard(root);
+        var (sectionId, sectionName, sectionUrl) = ParseSection(root, boardUrl);
 
         return new SourceMediaItem
         {
@@ -40,10 +41,47 @@ public static class PinterestSidecarParser
             BoardName = boardName,
             BoardId = boardId,
             BoardUrl = boardUrl,
+            SectionId = sectionId,
+            SectionName = sectionName,
+            SectionUrl = sectionUrl,
             Tags = ParseTags(root),
             RawJson = sidecarJson,
         };
     }
+
+    /// <summary>
+    /// Extract the pin's <i>section</i> (the sub-folder within a board it sits in), when present. gallery-dl
+    /// attaches a <c>section</c> object (id + title/slug) to pins crawled from a board section; we also probe
+    /// flat keys defensively, since Pinterest's metadata shape drifts. Returns nulls for a sectionless pin.
+    /// (The exact field shape should be confirmed against a live gallery-dl crawl.)
+    /// </summary>
+    private static (string? id, string? name, string? url) ParseSection(JsonElement root, string? boardUrl)
+    {
+        if (root.TryGetProperty("section", out var section) && section.ValueKind == JsonValueKind.Object)
+        {
+            var id = NormaliseSectionId(GetString(section, "id"));
+            if (id is not null)
+            {
+                var name = NullIfBlank(GetString(section, "title", "name"));
+                var slug = GetString(section, "slug");
+                var url = boardUrl is not null && !string.IsNullOrWhiteSpace(slug)
+                    ? boardUrl.TrimEnd('/') + "/" + slug!.Trim('/') + "/"
+                    : null;
+                return (id, name, url);
+            }
+            // A section object with no usable id falls through to the flat probe below rather than short-circuiting.
+        }
+
+        var flatId = NormaliseSectionId(GetString(root, "section_id", "board_section_id"));
+        if (flatId is not null)
+            return (flatId, NullIfBlank(GetString(root, "section_title", "section_name", "board_section_title")), null);
+
+        return (null, null, null);
+    }
+
+    // A sectionless pin may carry section_id 0/"0"/"" — treat those as "no section".
+    private static string? NormaliseSectionId(string? id)
+        => string.IsNullOrWhiteSpace(id) || id == "0" ? null : id;
 
     private static (string? name, string? id, string? url) ParseBoard(JsonElement root)
     {

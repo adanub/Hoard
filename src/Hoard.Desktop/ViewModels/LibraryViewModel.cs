@@ -12,6 +12,7 @@ using Hoard.Core.Connectors;
 using Hoard.Core.Ingest;
 using Hoard.Core.Library;
 using Hoard.Core.Projects;
+using Hoard.Desktop.Navigation;
 using Hoard.Desktop.Services;
 using Hoard.Ingest.GalleryDl;
 
@@ -71,7 +72,7 @@ public sealed record ImportTarget(string Display, int? CollectionId);
 /// project-wide search and an Import action. Opening a card (or searching) pushes the Board screen; the back
 /// chevron returns to Projects (switching project). Per-board editing/merge arrives with the board model.
 /// </summary>
-public partial class LibraryViewModel : ViewModelBase
+public partial class LibraryViewModel : ViewModelBase, IResumable
 {
     private readonly IngestService _ingest;
     private readonly LibraryService _library;
@@ -120,6 +121,10 @@ public partial class LibraryViewModel : ViewModelBase
         var q = SearchQuery.Trim();
         if (q.Length > 0) _openBoard(new BoardTarget(null, $"Results for “{q}”", q));
     }
+
+    /// <summary>Revealed again after a board was popped: refresh the cards — a board's subtree count, size, and
+    /// covers may have changed (folders created, sections imported, pins moved) while it was open.</summary>
+    public void OnResumed() => _ = RefreshAsync();
 
     [RelayCommand]
     private async Task RefreshAsync()
@@ -261,31 +266,10 @@ public partial class LibraryViewModel : ViewModelBase
         SelectedImportTarget = ImportTargets.FirstOrDefault(t => t.CollectionId == r.CollectionId) ?? SelectedImportTarget;
     }
 
-    // Load each board card's 3-up collage covers (newest images) via the thumbnail cache, off the UI thread.
-    // Per-board try/catch so one bad board (e.g. a missing blob) can't abort covers for all the others.
-    private async Task LoadCoversAsync()
-    {
-        foreach (var r in Tiles.OfType<BoardCardRef>().ToArray())
-        {
-            try
-            {
-                var covers = await _library.GetCoverAssetsAsync(r.CollectionId, 3);
-                for (var i = 0; i < covers.Count; i++)
-                {
-                    var bmp = _thumbnails is not null
-                        ? await _thumbnails.GetAsync(covers[i].Sha256, covers[i].AbsolutePath, 240)
-                        : null;
-                    if (i == 0) r.Thumb0 = bmp;
-                    else if (i == 1) r.Thumb1 = bmp;
-                    else r.Thumb2 = bmp;
-                }
-            }
-            catch
-            {
-                // A board whose covers can't load just keeps its placeholder tiles.
-            }
-        }
-    }
+    // Load each board card's 3-up collage covers (spread across the board) via the thumbnail cache, off the UI
+    // thread — shared with the Board screen's folder cards.
+    private Task LoadCoversAsync()
+        => BoardCardCovers.LoadAsync(Tiles.OfType<BoardCardRef>().ToArray(), _library, _thumbnails);
 
     // ── Import ────────────────────────────────────────────────────────────────
 
@@ -344,7 +328,7 @@ public partial class LibraryViewModel : ViewModelBase
 
         // Resolve the target board UP FRONT — create the new board first so it appears immediately with a
         // progress strip and the pins have somewhere to land.
-        var (card, targetId) = await ResolveImportTargetAsync(url);
+        var (card, targetId, isNew) = await ResolveImportTargetAsync(url);
         card.IsImporting = true;
         card.ImportStatusText = "Importing… starting";
         _importStatus.Begin(targetId); // share with the Board screen
@@ -372,7 +356,11 @@ public partial class LibraryViewModel : ViewModelBase
                 card.ImportStatusText = $"Importing… {p.Processed} so far";
                 _importStatus.Text = card.ImportStatusText;
             }
-            if (p.ImportedAsset is { } asset) _importStatus.LastImported = asset; // stream into an open Board screen
+            if (p.ImportedAsset is { } asset)
+            {
+                _importStatus.LastImportedCollectionId = p.ImportedIntoCollectionId; // set first — read on the pin change
+                _importStatus.LastImported = asset; // stream into an open Board screen (its actual collection)
+            }
         });
 
         try
@@ -388,12 +376,26 @@ public partial class LibraryViewModel : ViewModelBase
             transcript.AppendLine("EXCEPTION:");
             transcript.AppendLine(ex.ToString());
             var logPath = WriteImportLog(transcript);
-            var msg = $"Import into “{card.Name}” failed: {ex.Message}".Trim();
-            if (logPath is not null) msg += $"  (log: {logPath})";
-            _toasts.Show(msg, isError: true);
+
             card.IsImporting = false;
             IsImporting = false;
             _importStatus.End();
+
+            // Discard a board this import just created if it landed nothing — don't leave an empty board behind.
+            // A new board that DID get some pins before failing is kept (a partial import the user can finish via
+            // Sync); an existing merge/sync target is never touched.
+            var discarded = false;
+            if (isNew && (await _library.GetBoardAssetShasAsync(targetId)).Count == 0)
+            {
+                try { await _curation.DeleteBoardAsync(targetId); } catch { /* best-effort cleanup */ }
+                Tiles.Remove(card);
+                discarded = true;
+            }
+
+            var msg = $"Import into “{card.Name}” failed: {ex.Message}".Trim();
+            if (discarded) msg += " — the empty board was discarded.";
+            if (logPath is not null) msg += $"  (log: {logPath})";
+            _toasts.Show(msg, isError: true);
             return;
         }
 
@@ -405,19 +407,25 @@ public partial class LibraryViewModel : ViewModelBase
     }
 
     // Create the new board (or locate the chosen existing one) and ensure it has a card in the grid.
-    private async Task<(BoardCardRef Card, int TargetId)> ResolveImportTargetAsync(string url)
+    // IsNew distinguishes a board created for this import (safe to discard if the import fails empty) from an
+    // existing board merged/synced into (never discarded).
+    private async Task<(BoardCardRef Card, int TargetId, bool IsNew)> ResolveImportTargetAsync(string url)
     {
         if (SelectedImportTarget?.CollectionId is int existingId)
         {
             var existing = Tiles.OfType<BoardCardRef>().First(r => r.CollectionId == existingId);
-            return (existing, existingId);
+            return (existing, existingId, false);
         }
 
         var name = string.IsNullOrWhiteSpace(NewBoardName) ? DeriveBoardName(url) : NewBoardName.Trim();
         var newId = await _ingest.CreateBoardAsync(name, url);
-        var card = new BoardCardRef(newId, name, OpenBoardRef, edit: null) { MetaText = "0 images" };
+        // Wire the real Edit action from creation — the board exists in the DB now, so it must be editable/
+        // deletable even with 0 images (e.g. when the import that created it then fails before the grid
+        // refreshes). It was previously left null and only fixed by the post-import refresh, which a failed
+        // import skips — leaving an empty board with no pencil.
+        var card = new BoardCardRef(newId, name, OpenBoardRef, BeginEditBoard) { MetaText = "0 images" };
         Tiles.Insert(Math.Min(2, Tiles.Count), card); // after "+ New board" + "All images"
-        return (card, newId);
+        return (card, newId, true);
     }
 
     private bool CanImport() => !IsImporting && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);

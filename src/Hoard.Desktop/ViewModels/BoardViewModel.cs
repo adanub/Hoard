@@ -11,14 +11,29 @@ using Hoard.Core.Connectors;
 using Hoard.Core.Ingest;
 using Hoard.Core.Library;
 using Hoard.Core.Projects;
+using Hoard.Desktop.Navigation;
 using Hoard.Desktop.Services;
 using Hoard.Ingest.GalleryDl;
 
 namespace Hoard.Desktop.ViewModels;
 
 /// <summary>Where a board screen points: a specific board, or the whole project ("All images"), optionally
-/// pre-filtered by a search query (used for project-wide search results).</summary>
-public sealed record BoardTarget(int? CollectionId, string Title, string? Search = null);
+/// pre-filtered by a search query (used for project-wide search results). <see cref="ParentId"/> is set when
+/// drilling into a child folder (a Pinterest section / sub-folder), carrying the parent so the folder screen
+/// can offer "move up" + edit-this-folder.</summary>
+public sealed record BoardTarget(
+    int? CollectionId, string Title, string? Search = null, int? ParentId = null, string? ParentTitle = null);
+
+/// <summary>Marker for the leading "+ New folder" tile in the Board screen's folder row (own template).</summary>
+public sealed class NewFolderTile : ViewModelBase
+{
+    public static readonly NewFolderTile Instance = new();
+    private NewFolderTile() { }
+}
+
+/// <summary>One destination the selected pin can be filed to: a child folder of the board, or (CollectionId
+/// null) "up" to the parent board when viewing inside a folder.</summary>
+public sealed record MoveTarget(string Display, int? CollectionId);
 
 /// <summary>
 /// The Board screen: a masonry grid of one board's images (or the whole project for "All images" / search
@@ -26,7 +41,7 @@ public sealed record BoardTarget(int? CollectionId, string Title, string? Search
 /// tracks what's visible), the detail panel, and per-asset delete/restore. Pushed above the Library screen;
 /// the back chevron pops back.
 /// </summary>
-public partial class BoardViewModel : ViewModelBase, IDisposable
+public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
 {
     private readonly LibraryService _library;
     private readonly CurationService _curation;
@@ -36,7 +51,10 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
     private readonly ImportStatus _importStatus;
     private readonly ProjectManager? _projects;
     private readonly int? _collectionId;
+    private readonly int? _parentId;
+    private readonly string? _parentTitle;
     private readonly Action _requestBack;
+    private readonly Action<BoardTarget> _openBoard;
     private CancellationTokenSource? _searchDebounce;
     private IReadOnlyList<string> _sourceUrls = Array.Empty<string>();
 
@@ -47,7 +65,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
     public BoardViewModel(
         LibraryService library, CurationService curation, IngestService ingest,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus, ProjectManager? projects,
-        int? collectionId, string title, Action requestBack, string? initialSearch = null)
+        BoardTarget target, Action requestBack, Action<BoardTarget> openBoard)
     {
         _library = library;
         _curation = curation;
@@ -56,21 +74,25 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
         _toasts = toasts;
         _importStatus = importStatus;
         _projects = projects;
-        _collectionId = collectionId;
-        Title = title;
+        _collectionId = target.CollectionId;
+        _parentId = target.ParentId;
+        _parentTitle = target.ParentTitle;
+        _title = target.Title;
         _requestBack = requestBack;
-        _searchQuery = initialSearch ?? "";
+        _openBoard = openBoard;
+        _searchQuery = target.Search ?? "";
 
         _importStatus.PropertyChanged += OnImportStatusChanged;
         UpdateImportState();
         _ = LoadAssetsAsync();
         _ = LoadSourcesAsync(); // for the Sync button (a real board with at least one URL'd source)
+        _ = LoadFoldersAsync(); // child folders (Pinterest sections / sub-folders) shown above the grid
     }
 
     // Design-time constructor for the XAML previewer.
-    public BoardViewModel() : this(null!, null!, null!, null, new ToastService(), new ImportStatus(), null, null, "All images", () => { }) { }
+    public BoardViewModel() : this(null!, null!, null!, null, new ToastService(), new ImportStatus(), null, new BoardTarget(null, "All images"), () => { }, _ => { }) { }
 
-    public string Title { get; }
+    [ObservableProperty] private string _title;
     public ObservableCollection<AssetTileViewModel> Assets { get; } = new();
 
     [ObservableProperty] private AssetTileViewModel? _selectedAsset;
@@ -96,8 +118,13 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
         }
         var wasImporting = IsBoardImporting;
         UpdateImportState();
-        // An import into this board just finished → reload to get the correct order, counts, and any filter.
-        if (wasImporting && !IsBoardImporting) _ = LoadAssetsAsync();
+        // An import into this board just finished → reload the grid (order/counts/filter) AND the folder row
+        // (sections may have been created/grown).
+        if (wasImporting && !IsBoardImporting)
+        {
+            _ = LoadAssetsAsync();
+            _ = LoadFoldersAsync();
+        }
     }
 
     private void UpdateImportState()
@@ -106,15 +133,260 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
         ImportStatusText = ImportTargetsThisBoard ? _importStatus.Text : "";
     }
 
-    // Append a freshly-imported pin into the open board live (skip if filtered, or already shown).
+    // File a freshly-imported pin into the open board live, in the SAME place the ingest actually put it — never
+    // dumped on the root grid to be reorganised at the end. A loose pin (or any pin in the global "All images"
+    // view) shows on this grid; a sectioned pin belongs to a child folder, so reflect it in the folder row
+    // (debounced to coalesce a burst) and keep it OFF the root grid. (Skip if filtered, or already shown.)
     private void AppendImportedIfRelevant()
     {
         if (!ImportTargetsThisBoard || !string.IsNullOrEmpty(SearchQuery)) return;
-        if (_importStatus.LastImported is not { } a || Assets.Any(t => t.Model.Id == a.Id)) return;
-        Assets.Insert(0, NewTile(a)); // newest pin first (final order reconciled on the post-import reload)
+        if (_importStatus.LastImported is not { } a) return;
+
+        if (_collectionId is null || _importStatus.LastImportedCollectionId == _collectionId)
+        {
+            if (!Assets.Any(t => t.Model.Id == a.Id))
+                Assets.Insert(0, NewTile(a)); // newest first (final order reconciled on the post-import reload)
+        }
+        else
+        {
+            _ = DebouncedFolderReloadAsync(); // landed in a child folder → update the folder row, not the grid
+        }
     }
 
-    public void Dispose() => _importStatus.PropertyChanged -= OnImportStatusChanged;
+    private CancellationTokenSource? _folderReloadDebounce;
+
+    // Coalesce a rapid burst of sectioned pins into one folder-row reload (counts/covers) so it stays live
+    // without re-querying per pin.
+    private async Task DebouncedFolderReloadAsync()
+    {
+        var cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _folderReloadDebounce, cts)?.Cancel();
+        try { await Task.Delay(400, cts.Token); }
+        catch (TaskCanceledException) { return; }
+        await LoadFoldersAsync();
+    }
+
+    public void Dispose()
+    {
+        _importStatus.PropertyChanged -= OnImportStatusChanged;
+        _searchDebounce?.Dispose();
+        _folderReloadDebounce?.Dispose();
+    }
+
+    /// <summary>Revealed again after a drilled-into folder was popped: reload only the folder row (a folder may
+    /// have been renamed/deleted/created, or its count changed). The grid is left untouched so the scroll
+    /// position and any open detail panel survive — a pin moved out to this board reflects on the next genuine
+    /// reload (import/sync/re-open) rather than resetting the view on every back.</summary>
+    public void OnResumed() => _ = LoadFoldersAsync();
+
+    // ── Folders (child boards / Pinterest sections), shown as board cards before the images ──
+
+    /// <summary>The folder grid above the images: a leading "+ New folder" tile then one card per child folder,
+    /// rendered exactly like a top-level board (collage cover, count, pencil edit). Empty for "All images" /
+    /// search results (no parent to nest under).</summary>
+    public ObservableCollection<ViewModelBase> FolderTiles { get; } = new();
+
+    /// <summary>True when this screen can hold folders (a real board or a folder), so the folder grid shows.</summary>
+    public bool ShowFolderRow => _collectionId is not null;
+
+    /// <summary>True when this screen IS a child folder (drilled into) — lets a pin "move up" to the parent.</summary>
+    public bool IsFolder => _parentId is not null;
+
+    private async Task LoadFoldersAsync()
+    {
+        if (_library is null || _collectionId is not int id) return;
+
+        // Build the new tiles first, then swap in one go — so a failed query (or the board being popped
+        // mid-flight) never leaves FolderTiles cleared-but-not-repopulated. Fire-and-forget callers can't observe
+        // a throw, so it's caught here.
+        List<ViewModelBase> tiles;
+        try
+        {
+            var children = await _library.GetChildBoardsAsync(id);
+            tiles = new List<ViewModelBase> { NewFolderTile.Instance };
+            foreach (var c in children)
+            {
+                var count = c.ItemCount == 1 ? "1 image" : $"{c.ItemCount} images";
+                // A folder card opens the folder (drill-down) and edits via its pencil — same as a top-level board.
+                tiles.Add(new BoardCardRef(c.Id, c.Name, DrillIntoFolder, BeginEditFolder)
+                {
+                    MetaText = $"{count} · {ByteFormat.Format(c.SizeBytes)}",
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _toasts.Show($"Couldn't load folders: {ex.Message}", isError: true);
+            return; // leave the existing folder row intact
+        }
+
+        FolderTiles.Clear();
+        foreach (var t in tiles) FolderTiles.Add(t);
+        OnPropertyChanged(nameof(CanMoveSelected));
+        _ = LoadFolderCoversAsync();
+    }
+
+    private void DrillIntoFolder(BoardCardRef r)
+        => _openBoard(new BoardTarget(r.CollectionId, r.Name, ParentId: _collectionId, ParentTitle: Title));
+
+    // Load each folder card's 3-up collage covers (spread across the folder), same as the Library board cards.
+    private Task LoadFolderCoversAsync()
+        => BoardCardCovers.LoadAsync(FolderTiles.OfType<BoardCardRef>().ToArray(), _library!, _thumbnails);
+
+    // ── New folder ─────────────────────────────────────────────────────────────
+
+    [ObservableProperty] private bool _isNewFolderSheetOpen;
+    [ObservableProperty] private string _newFolderName = "";
+
+    [RelayCommand]
+    private void OpenNewFolderSheet()
+    {
+        NewFolderName = "";
+        IsNewFolderSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseNewFolderSheet() => IsNewFolderSheetOpen = false;
+
+    [RelayCommand]
+    private async Task CreateFolderAsync()
+    {
+        if (_ingest is null || _collectionId is not int parentId) return;
+        var name = string.IsNullOrWhiteSpace(NewFolderName) ? "New folder" : NewFolderName.Trim();
+        IsNewFolderSheetOpen = false;
+        try
+        {
+            await _ingest.CreateBoardAsync(name, "", parentId: parentId);
+            await LoadFoldersAsync();
+            _toasts.Show($"Created folder “{name}”.");
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't create folder: {ex.Message}", isError: true); }
+    }
+
+    // ── Folder Edit popup (per card — the pencil — exactly like the Library board edit) ──
+
+    [ObservableProperty] private BoardCardRef? _folderEditTarget;
+    [ObservableProperty] private bool _isFolderEditSheetOpen;
+
+    [RelayCommand]
+    private void CloseFolderEditSheet() => IsFolderEditSheetOpen = false;
+
+    /// <summary>Open a folder card's Edit popup (rename / clear cache / delete) and fill its detail rows lazily.</summary>
+    public void BeginEditFolder(BoardCardRef r)
+    {
+        FolderEditTarget = r;
+        IsFolderEditSheetOpen = true;
+        _ = LoadFolderDetailAsync(r);
+    }
+
+    private async Task LoadFolderDetailAsync(BoardCardRef r)
+    {
+        if (_library is null || r.CollectionId is not int id) return;
+        r.CountsText = "Counting…";
+        r.CacheText = "";
+        try
+        {
+            var detail = await _library.GetBoardDetailAsync(id);
+            if (detail is null) { r.CountsText = "No details."; return; }
+            r.CountsText = $"{detail.Images} images · {detail.Gifs} GIFs · {detail.Videos} videos";
+            r.CacheText = ByteFormat.Format(detail.SizeBytes) + " on disk";
+            r.AddedText = "Added " + detail.CreatedAt.LocalDateTime.ToString("d MMM yyyy");
+        }
+        catch (Exception ex)
+        {
+            r.CountsText = "Couldn't load details.";
+            _toasts.Show($"Couldn't load folder details: {ex.Message}", isError: true);
+        }
+    }
+
+    /// <summary>Rename the folder under edit (a local display-name override). Called from the folder Edit popup.</summary>
+    public async Task RenameFolderAsync(string? newName)
+    {
+        if (_curation is null || FolderEditTarget is not { CollectionId: int id } r || string.IsNullOrWhiteSpace(newName)) return;
+        try
+        {
+            await _curation.RenameBoardAsync(id, newName.Trim());
+            r.Name = newName.Trim();
+            _toasts.Show($"Renamed to “{r.Name}”.");
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't rename: {ex.Message}", isError: true); }
+    }
+
+    /// <summary>Clear the folder-under-edit's cached thumbnails (regenerated on demand).</summary>
+    public async Task ClearFolderCacheAsync()
+    {
+        if (_library is null || FolderEditTarget is not { CollectionId: int id } r) return;
+        var shas = await _library.GetBoardAssetShasAsync(id);
+        if (_thumbnails is not null)
+            foreach (var sha in shas) _thumbnails.Evict(sha);
+        _toasts.Show($"Cleared cached thumbnails for “{r.Name}”.");
+    }
+
+    /// <summary>Delete the folder under edit and its whole subtree (files to the recycle bin); drop its card.</summary>
+    public async Task DeleteFolderAsync()
+    {
+        if (_curation is null || FolderEditTarget is not { CollectionId: int id } r) return;
+        try
+        {
+            var removed = await _curation.DeleteBoardAsync(id);
+            FolderTiles.Remove(r);
+            OnPropertyChanged(nameof(CanMoveSelected));
+            _toasts.Show($"Deleted folder “{r.Name}” — {removed} image(s) sent to the recycle bin.");
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't delete folder: {ex.Message}", isError: true); }
+    }
+
+    // ── Move the selected pin into a folder (one at a time) ─────────────────────
+
+    [ObservableProperty] private bool _isMoveSheetOpen;
+    public ObservableCollection<MoveTarget> MoveTargets { get; } = new();
+    [ObservableProperty] private MoveTarget? _selectedMoveTarget;
+
+    /// <summary>The selected live pin can be filed somewhere when this board has folders, or this screen is a
+    /// folder (so the pin can move back up to the parent board).</summary>
+    public bool CanMoveSelected =>
+        SelectedAsset is { IsDeleted: false } && (IsFolder || FolderTiles.OfType<BoardCardRef>().Any());
+
+    /// <summary>Open the move picker for the selected pin: this board's folders (+ "move out" to the parent
+    /// when inside a folder).</summary>
+    public void OpenMoveSheet()
+    {
+        if (!CanMoveSelected) { _toasts.Show("Create a folder first to file images into it."); return; }
+        MoveTargets.Clear();
+        if (IsFolder) MoveTargets.Add(new MoveTarget($"⬆  Out to “{_parentTitle ?? "board"}”", null));
+        foreach (var f in FolderTiles.OfType<BoardCardRef>())
+            MoveTargets.Add(new MoveTarget(f.Name, f.CollectionId));
+        SelectedMoveTarget = MoveTargets.FirstOrDefault();
+        IsMoveSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseMoveSheet() => IsMoveSheetOpen = false;
+
+    [RelayCommand]
+    private async Task ConfirmMoveAsync()
+    {
+        if (_curation is null || SelectedAsset is not { } tile || _collectionId is not int fromId
+            || SelectedMoveTarget is not { } target)
+            return;
+        var dest = target.CollectionId ?? _parentId;
+        IsMoveSheetOpen = false;
+        if (dest is not int toId) return;
+
+        var title = tile.Model.Title ?? "image";
+        try
+        {
+            await _curation.MoveAssetWithinBoardAsync(tile.Model.Id, fromId, toId);
+            // The pin left this grid: drop the tile, refresh folder counts, close the detail panel.
+            var node = _playing.Find(tile);
+            if (node is not null) _playing.Remove(node);
+            Assets.Remove(tile);
+            SelectedAsset = null;
+            await LoadFoldersAsync();
+            _toasts.Show($"Moved “{title}”.");
+        }
+        catch (Exception ex) { _toasts.Show($"Couldn't move: {ex.Message}", isError: true); }
+    }
 
     // ── Sync (re-fetch this board from its sources) ────────────────────────────
 
@@ -177,7 +449,11 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
         {
             if (p.Phase is IngestPhase.Downloading or IngestPhase.Storing)
                 _importStatus.Text = $"Syncing… {processed + p.Processed} so far";
-            if (p.ImportedAsset is { } asset) _importStatus.LastImported = asset;
+            if (p.ImportedAsset is { } asset)
+            {
+                _importStatus.LastImportedCollectionId = p.ImportedIntoCollectionId; // set first — read on the pin change
+                _importStatus.LastImported = asset;
+            }
         });
 
         var newCount = 0;
@@ -213,7 +489,11 @@ public partial class BoardViewModel : ViewModelBase, IDisposable
     private void ClearSearch() => SearchQuery = "";
 
     // Load full metadata for the detail panel whenever the selected tile changes.
-    partial void OnSelectedAssetChanged(AssetTileViewModel? value) => _ = LoadDetailsAsync(value);
+    partial void OnSelectedAssetChanged(AssetTileViewModel? value)
+    {
+        OnPropertyChanged(nameof(CanMoveSelected)); // the Move action depends on there being a live selection
+        _ = LoadDetailsAsync(value);
+    }
 
     // Reload after a short pause so we don't query on every keystroke.
     partial void OnSearchQueryChanged(string value) => _ = DebouncedSearchAsync();

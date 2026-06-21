@@ -62,8 +62,10 @@ public partial class MainWindowViewModel : ViewModelBase
             openBoard: ShowBoard, requestSwitchProject: ShowLauncher));
     }
 
+    // Drilling into a child folder pushes another Board screen for that folder (openBoard = ShowBoard), so
+    // nesting works to any depth via the back-stack.
     private void ShowBoard(BoardTarget target)
         => Navigation.Push(new BoardViewModel(
             _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus, _projects,
-            target.CollectionId, target.Title, requestBack: Navigation.Pop, target.Search));
+            target, requestBack: Navigation.Pop, openBoard: ShowBoard));
 }

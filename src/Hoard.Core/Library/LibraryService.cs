@@ -41,17 +41,90 @@ public sealed class LibraryService
         _store = store;
     }
 
+    /// <summary>The project's <b>top-level</b> boards for the Library grid. Child folders (Pinterest sections /
+    /// locally-created sub-folders, which have a <see cref="Collection.ParentId"/>) are excluded — they show on
+    /// their parent's Board screen, not here. Each card's count/size is its <b>whole subtree</b> (its sections /
+    /// sub-folders count toward it), so the board shows the total it actually holds.</summary>
     public async Task<IReadOnlyList<CollectionView>> GetCollectionsAsync(CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        // Count + total bytes of the board's live (non-tombstoned) assets — for the card's "N images · X" meta.
-        return await db.Collections
-            .OrderBy(c => c.DisplayName ?? c.Name)
-            .Select(c => new CollectionView(
-                c.Id, c.DisplayName ?? c.Name,
-                c.Items.Count(ci => ci.Asset.DeletedAt == null),
-                c.Items.Where(ci => ci.Asset.DeletedAt == null).Sum(ci => (long?)ci.Asset.Bytes) ?? 0L))
+        var (totals, childIds) = await LoadSubtreeRollupAsync(db, scope: null, ct); // every board → whole project
+        var roots = await db.Collections
+            .Where(c => c.ParentId == null)
+            .Select(c => new { c.Id, Name = c.DisplayName ?? c.Name })
+            .OrderBy(c => c.Name)
             .ToListAsync(ct);
+        return roots.Select(c =>
+        {
+            var (count, size) = Subtree(c.Id, totals, childIds);
+            return new CollectionView(c.Id, c.Name, count, size);
+        }).ToList();
+    }
+
+    /// <summary>The child folders of a board (its Pinterest sections + any locally-created sub-folders), for the
+    /// folder-card row on the Board screen. Same shape as <see cref="GetCollectionsAsync"/> but scoped to one
+    /// parent; each folder's count/size also rolls up its own sub-folders.</summary>
+    public async Task<IReadOnlyList<CollectionView>> GetChildBoardsAsync(int parentId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        // Only the parent's subtree is shown, so scope the rollup to it instead of aggregating the whole project
+        // (this runs on every board open / resume / live-import folder refresh).
+        var scope = await CollectionTree.SubtreeIdsAsync(db, parentId, ct);
+        var (totals, childIds) = await LoadSubtreeRollupAsync(db, scope, ct);
+        var children = await db.Collections
+            .Where(c => c.ParentId == parentId)
+            .Select(c => new { c.Id, Name = c.DisplayName ?? c.Name })
+            .OrderBy(c => c.Name)
+            .ToListAsync(ct);
+        return children.Select(c =>
+        {
+            var (count, size) = Subtree(c.Id, totals, childIds);
+            return new CollectionView(c.Id, c.Name, count, size);
+        }).ToList();
+    }
+
+    /// <summary>Load the per-collection live (non-tombstoned) image count + size and the parent→child edges, so a
+    /// board's subtree total can be rolled up in memory. <paramref name="scope"/> null = the whole project (all
+    /// top-level boards need it); otherwise restrict both queries to that set of collection ids (one board's
+    /// subtree). A pin is linked to exactly one collection of a subtree — import links it once and a move
+    /// re-points (never adds) the link — so summing per-collection counts never double-counts.</summary>
+    private static async Task<(Dictionary<int, (int Count, long Size)> Totals, ILookup<int, int> ChildIds)>
+        LoadSubtreeRollupAsync(HoardDbContext db, IReadOnlyCollection<int>? scope, CancellationToken ct)
+    {
+        var countsQuery = db.CollectionItems.Where(ci => ci.Asset.DeletedAt == null);
+        if (scope is not null) countsQuery = countsQuery.Where(ci => scope.Contains(ci.CollectionId));
+        var perCollection = await countsQuery
+            .GroupBy(ci => ci.CollectionId)
+            .Select(g => new { CollectionId = g.Key, Count = g.Count(), Size = g.Sum(ci => (long?)ci.Asset.Bytes) ?? 0L })
+            .ToListAsync(ct);
+        var totals = perCollection.ToDictionary(r => r.CollectionId, r => (r.Count, r.Size));
+
+        var edgesQuery = db.Collections.Where(c => c.ParentId != null);
+        if (scope is not null) edgesQuery = edgesQuery.Where(c => scope.Contains(c.ParentId!.Value));
+        var edges = await edgesQuery
+            .Select(c => new { Parent = c.ParentId!.Value, Child = c.Id })
+            .ToListAsync(ct);
+        return (totals, edges.ToLookup(e => e.Parent, e => e.Child));
+    }
+
+    /// <summary>Total live image count + size across a collection and every descendant. Iterative (arbitrary
+    /// depth) with a cycle guard.</summary>
+    private static (int Count, long Size) Subtree(
+        int rootId, Dictionary<int, (int Count, long Size)> totals, ILookup<int, int> childIds)
+    {
+        var count = 0;
+        long size = 0;
+        var seen = new HashSet<int>();
+        var stack = new Stack<int>();
+        stack.Push(rootId);
+        while (stack.Count > 0)
+        {
+            var id = stack.Pop();
+            if (!seen.Add(id)) continue;
+            if (totals.TryGetValue(id, out var t)) { count += t.Count; size += t.Size; }
+            foreach (var child in childIds[id]) stack.Push(child);
+        }
+        return (count, size);
     }
 
     /// <summary>
@@ -69,12 +142,15 @@ public sealed class LibraryService
             .ToListAsync(ct);
     }
 
-    /// <summary>The content hashes of a board's assets (for evicting its cached thumbnails).</summary>
+    /// <summary>The content hashes of a board's assets <b>across its whole subtree</b> (sections / sub-folders) —
+    /// for evicting its cached thumbnails, and as the board's true non-empty test (e.g. the failed-import discard
+    /// must not see a board whose pins all landed in sections as empty).</summary>
     public async Task<IReadOnlyList<string>> GetBoardAssetShasAsync(int collectionId, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, collectionId, ct);
         return await db.CollectionItems
-            .Where(ci => ci.CollectionId == collectionId)
+            .Where(ci => subtreeIds.Contains(ci.CollectionId))
             .Select(ci => ci.Asset.Sha256)
             .Distinct()
             .ToListAsync(ct);
@@ -87,10 +163,13 @@ public sealed class LibraryService
         var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct);
         if (collection is null) return null;
 
+        // Counts span the board's whole subtree (its sections / sub-folders), matching the card.
+        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, collectionId, ct);
+
         // One round-trip for all four kind/size aggregates (GroupBy(_ => 1) → conditional COUNT/SUM) rather
         // than four sequential count/sum queries.
         var agg = await db.CollectionItems
-            .Where(ci => ci.CollectionId == collectionId && ci.Asset.DeletedAt == null)
+            .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.Asset.DeletedAt == null)
             .GroupBy(_ => 1)
             .Select(g => new
             {
@@ -110,11 +189,12 @@ public sealed class LibraryService
             .Select(s => new { s.Id, s.SourceBoardId, s.SourceUrl, s.Name })
             .ToListAsync(ct);
 
-        // Live images attributed to each source — what removing that source deletes. When the board has a
-        // single source, removing it sweeps the whole board (incl. un-attributed legacy pins), so that source's
-        // count is the board's total live pins.
+        // Live images attributed to each source — what removing that source deletes (now subtree-scoped, so a
+        // source's pins filed into section folders count toward it, matching remove-source's subtree sweep). When
+        // the board has a single source, removing it sweeps the whole subtree, so that source's count is the
+        // board's total live pins.
         var countBySource = (await db.CollectionItems
-            .Where(ci => ci.CollectionId == collectionId && ci.CollectionSourceId != null && ci.Asset.DeletedAt == null)
+            .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.CollectionSourceId != null && ci.Asset.DeletedAt == null)
             .GroupBy(ci => ci.CollectionSourceId!.Value)
             .Select(g => new { SourceId = g.Key, Count = g.Count() })
             .ToListAsync(ct))
@@ -195,9 +275,12 @@ public sealed class LibraryService
     }
 
     /// <summary>
-    /// Up to <paramref name="count"/> cover thumbnails (newest first) for a board's grid card: the SHA + blob
-    /// path of recent live image/GIF assets. <paramref name="collectionId"/> null = across the whole project
-    /// (the "All images" card). Lean projection — no full asset load — since it runs once per board card.
+    /// Up to <paramref name="count"/> cover thumbnails for a board's grid card (the SHA + blob path of live
+    /// image/GIF assets), picked <b>spread across the collection</b> — the most recent, the midpoint(s), and the
+    /// oldest — rather than the N newest (which cluster in the last import / one board). That gives a board's
+    /// 3-up its variety and, for the "All images" card (<paramref name="collectionId"/> null), pulls from across
+    /// the project's whole history so the covers come from different boards. A board's covers span its <b>whole
+    /// subtree</b>, so a board whose pins are all sectioned still gets a cover.
     /// </summary>
     public async Task<IReadOnlyList<(string Sha256, string AbsolutePath)>> GetCoverAssetsAsync(
         int? collectionId, int count, CancellationToken ct = default)
@@ -206,14 +289,27 @@ public sealed class LibraryService
         IQueryable<Asset> query = db.Assets
             .Where(a => a.DeletedAt == null && (a.Kind == MediaKind.Image || a.Kind == MediaKind.Gif));
         if (collectionId is int id)
-            query = query.Where(a => a.CollectionItems.Any(ci => ci.CollectionId == id));
+        {
+            var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, id, ct);
+            query = query.Where(a => a.CollectionItems.Any(ci => subtreeIds.Contains(ci.CollectionId)));
+        }
 
-        var rows = await query
-            .OrderByDescending(a => a.Id)
-            .Take(count)
-            .Select(a => new { a.Sha256, a.RelativePath })
-            .ToListAsync(ct);
-        return rows.Select(r => (r.Sha256, _store.GetAbsolutePath(r.RelativePath))).ToList();
+        var n = await query.CountAsync(ct);
+        if (n == 0) return Array.Empty<(string, string)>();
+
+        // Fetch only the spread positions (most recent → oldest) — never the whole id list. Each position is
+        // seeked from whichever end is nearer (desc from the top, asc from the bottom) so the deepest Skip is
+        // ~n/2, and only `count` single rows are ever materialised.
+        var covers = new List<(string Sha256, string AbsolutePath)>(count);
+        foreach (var p in SpreadSelect.Positions(n, count))
+        {
+            var ordered = p <= n - 1 - p
+                ? query.OrderByDescending(a => a.Id).Skip(p)
+                : query.OrderBy(a => a.Id).Skip(n - 1 - p);
+            var row = await ordered.Take(1).Select(a => new { a.Sha256, a.RelativePath }).FirstOrDefaultAsync(ct);
+            if (row is not null) covers.Add((row.Sha256, _store.GetAbsolutePath(row.RelativePath)));
+        }
+        return covers;
     }
 
     /// <summary>Full metadata for one asset (for the detail panel), or null if it no longer exists.</summary>

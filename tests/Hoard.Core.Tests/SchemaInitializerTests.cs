@@ -228,13 +228,103 @@ public class SchemaInitializerTests : IDisposable
 
         await using (var db = _dbFactory.CreateDbContext())
         {
-            Assert.Equal(6, await ReadUserVersionAsync(db));
+            Assert.Equal(SchemaInitializer.LatestSchemaVersion, await ReadUserVersionAsync(db));
             var shas = await db.Assets.Select(a => a.Sha256).ToListAsync();
             Assert.DoesNotContain("s1", shas);                      // stale source-removal tombstone removed
             Assert.Contains("s2", shas);                            // per-image delete kept (the real blacklist)
             Assert.Contains("s3", shas);                            // live asset untouched
             Assert.Equal(2, await db.CollectionItems.CountAsync()); // s1's link cascaded away
         }
+    }
+
+    [Fact]
+    public async Task V7_adds_a_usable_SourceSectionId_column_to_a_pre_v7_database()
+    {
+        // Simulate a pre-v7 DB: full model, then drop the v7 column and rewind the version.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync();
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Collections\" DROP COLUMN \"SourceSectionId\";");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 6;");
+        }
+
+        await using (var db = _dbFactory.CreateDbContext())
+            await SchemaInitializer.InitializeAsync(db); // v7 adds the column back
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            Assert.Equal(SchemaInitializer.LatestSchemaVersion, await ReadUserVersionAsync(db));
+            // A child folder carrying a section id round-trips through the restored column.
+            var board = new Collection { Name = "Interiors", SourceConnector = "pinterest", CreatedAt = DateTimeOffset.UtcNow };
+            db.Collections.Add(board);
+            await db.SaveChangesAsync();
+            db.Collections.Add(new Collection
+            {
+                Name = "Kitchen", SourceConnector = "pinterest",
+                ParentId = board.Id, SourceSectionId = "sec-1", CreatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            var folder = await db.Collections.SingleAsync(c => c.ParentId == board.Id);
+            Assert.Equal("sec-1", folder.SourceSectionId);
+        }
+    }
+
+    [Fact]
+    public async Task V7_is_a_no_op_when_the_column_already_exists()
+    {
+        // A fresh-model DB rewound below v7 still has SourceSectionId; the guarded add must not throw.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync();
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 6;");
+        }
+        await using (var db = _dbFactory.CreateDbContext())
+            await SchemaInitializer.InitializeAsync(db); // sees the column present → skips the ALTER, stamps v7
+        await using (var db = _dbFactory.CreateDbContext())
+            Assert.Equal(SchemaInitializer.LatestSchemaVersion, await ReadUserVersionAsync(db));
+    }
+
+    [Fact]
+    public async Task V7_SourceSectionId_column_definition_matches_the_EF_model()
+    {
+        // Fresh DB: EF builds the column from the model. Upgraded DB: the hand-written v7 ALTER builds it. Column
+        // ORDER legitimately differs for an ADD COLUMN (and DisplayName already diverged it at v3), so we assert
+        // the column DEFINITION — type affinity + nullability + default — matches, per CLAUDE.md's DDL-parity rule.
+        var fresh = new TestDbContextFactory(Path.Combine(_dir, "fresh7.db"));
+        await using (var db = fresh.CreateDbContext()) await SchemaInitializer.InitializeAsync(db);
+
+        var upgraded = new TestDbContextFactory(Path.Combine(_dir, "upgraded7.db"));
+        await using (var db = upgraded.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync();
+            await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Collections\" DROP COLUMN \"SourceSectionId\";");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 6;");
+        }
+        await using (var db = upgraded.CreateDbContext()) await SchemaInitializer.InitializeAsync(db);
+
+        var freshDef = await ReadColumnDefAsync(fresh, "Collections", "SourceSectionId");
+        var upgradedDef = await ReadColumnDefAsync(upgraded, "Collections", "SourceSectionId");
+        Assert.Equal(freshDef, upgradedDef);
+        Assert.Equal("TEXT|notnull=0|dflt=null", freshDef); // and it is what EF generates for a nullable string
+    }
+
+    // The column's definition (type affinity, NOT NULL flag, default) from pragma table_info — order-independent.
+    private static async Task<string> ReadColumnDefAsync(TestDbContextFactory factory, string table, string column)
+    {
+        await using var db = factory.CreateDbContext();
+        var conn = db.Database.GetDbConnection();
+        await conn.OpenAsync();
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"PRAGMA table_info(\"{table}\");"; // cols: cid, name, type, notnull, dflt_value, pk
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    return $"{reader.GetString(2)}|notnull={reader.GetInt32(3)}|dflt={(reader.IsDBNull(4) ? "null" : reader.GetValue(4))}";
+            return "(missing)";
+        }
+        finally { await conn.CloseAsync(); }
     }
 
     private static async Task<string> ReadObjectSqlAsync(TestDbContextFactory factory, string tableName)

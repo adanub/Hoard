@@ -3,21 +3,50 @@
 Progress tracker so a fresh session can resume. Architecture/conventions are in `CLAUDE.md`; the
 user-facing model is in `README.md`. Keep this file current as work lands.
 
-**Status (2026-06-19):** Phase 1 complete. Phase 2 — UI/UX redesign **integrated into the real screens** plus a
-deep pass on the import/library data model. The **Projects → Library → Board** nav flow runs end to end, and on
-top of it this session added: the **board-merge model** (a board gathers pins from several Pinterest sources;
-schema v3 `CollectionSources` + v4 per-pin provenance), **non-destructive rename** (`DisplayName`), **board Sync**
-(re-fetch a board from its sources, Board-screen top-bar), **hard-delete-to-recycle-bin** for remove-source and
-delete-board (per-image delete still tombstones+restores), **compatibility/resilience** (marker adopt, recents
-pruning, lazy "file missing" + re-download), and **import-correctness fixes** so re-import/Sync actually
-repopulate a board (target-aware skip-archive + orphan re-attach by sidecar board id). Schema is at **v6** (v5 =
-attribution backfill, v6 = stale-tombstone repair — both verified on a copy of the real DB). A subsequent
-xhigh **code-review pass** landed the cheap follow-ups (url-less-source refresh, tighter v6 match, batched
-recycle, `AsNoTracking` orphan scan, re-sync seeding, confirm wording); the bigger refactors are in "Next up →
-review follow-ups". All of this is a **large uncommitted batch** on top of `116b91e`. Tests: **74 (Core) + 29
-(Desktop)**, green; build clean (the running app locks output DLLs — close it to produce a runnable binary).
-**Next:** sub-boards/sections, the Image-detail screen, retiring FluentTheme, and the deeper review refactors.
-Material-shader background was dropped earlier (don't resurrect).
+**Status (2026-06-21):** Phase 1 complete. Phase 2 — UI/UX redesign **integrated into the real screens** plus a
+deep pass on the import/library data model. The **Projects → Library → Board** nav flow runs end to end. The
+board-merge model, rename, Sync, hard-delete-to-recycle-bin, compatibility/resilience, and import-correctness
+fixes landed earlier and are **committed** as `e8285d3` (schema **v6**).
+
+**This session — nested folders (Pinterest sections):** a section/sub-folder is a **child `Collection`** (via the
+long-present `ParentId`); schema bumped to **v7** (additive `Collection.SourceSectionId`, guarded add).
+**Phase 1 (Core, done + tested):** `GetCollectionsAsync` lists only top-level boards, new `GetChildBoardsAsync`,
+`CreateBoardAsync(parentId, sectionId)`, `DeleteBoardAsync` recurses the subtree (recycle), new
+`MoveAssetWithinBoardAsync`. **Phase 2 (Desktop, done — needs runtime verification):** the Board screen shows its
+child folders as **board cards** (identical to top-level boards — collage + pencil edit), **sorted before the
+images in one scroll**, led by a **+ New folder** card; a folder card opens its own Board screen (drill-down to
+any depth), and its pencil renames/deletes it (`BoardEditSheet` with `ShowSources=false`); the detail panel gains
+**Move to folder…**. The masonry stays virtualized under the folder header (`MasonryLayout` realizes from the
+effective viewport). A new `IResumable` nav hook reloads a board's folders + grid when revealed.
+**Phase 3 (ingest side, done + tested):** `SourceMediaItem` gains `SectionId/Name/Url`; `ImportAsync` files a
+sectioned pin into a child folder (`GetOrCreateSectionFolderAsync`, matched by `SourceSectionId`) while a loose
+pin lands on the board; `RemoveSourceAsync` is now subtree-scoped (shared `CollectionTree.SubtreeIdsAsync`) so a
+source's foldered pins go with it; `GetKnownItemsAsync` pre-skips held section pins on re-sync; a defensive
+`PinterestSidecarParser` section probe. **Phase 0 (pending — user runs):** a gallery-dl spike to confirm the
+exact per-pin section field/flag (the real archive shows only `board.section_count`); until then the connector
+passes no section flag and auto-foldering is a graceful no-op. **Live-routing + card counts:** imported pins now
+stream into the right place live (a sectioned pin updates its folder, never the root grid) via
+`IngestProgress.ImportedIntoCollectionId`; board/folder **card counts roll up the whole subtree**; covers are
+**spread (most-recent · midpoint · oldest)** across the subtree so the 3-up and "All images"/project collages
+pull from a variety of boards. **An `xhigh` code-review pass** (15 findings) was then applied: the failed-import
+empty-check is subtree-aware (no recycling of downloaded section pins), the move "already-there" branch detaches
+attribution, `LibraryViewModel` is `IResumable` (cards refresh on return), re-attached orphans carry their
+collection id, `LoadFoldersAsync` is exception-safe (build-then-swap), `OnResumed` reloads folders only (keeps
+scroll/selection), `GetCoverAssetsAsync` seeks spread positions instead of loading all ids, `GetChildBoardsAsync`
+scopes the rollup to the parent subtree, the section-folder cache is keyed by parent reference, `ParseSection`
+falls through to the flat probe, `ImportStatus` resets the collection id symmetrically, a v7 column-definition
+parity test was added, and shared `SpreadSelect`/`BoardCardCovers` helpers removed cover/spread duplication.
+All uncommitted on top of `e8285d3`. Tests: **95 (Core) + 29 (Desktop)**, green; build clean. **Next:** Phase 0
+spike → confirm/adjust the connector + parser; the Image-detail screen; retiring FluentTheme; deeper review
+refactors. Material-shader background was dropped earlier (don't resurrect).
+
+**Review follow-ups (deferred, not bugs):** (1) the **folder-edit block** in `BoardViewModel`
+(`BeginEditFolder`/rename/clear-cache/delete, ~70 lines) still duplicates `LibraryViewModel`'s board-edit — both
+operate on `BoardCardRef`; extract a shared `BoardCardEditor` rather than refactoring the MVVM blind. (2) The
+**last-source** `RemoveSourceAsync` sweep deletes the board's whole subtree incl. user-filed (null-attribution)
+folder pins — this is **intended** ("remove the board's last source = empty the board, no orphaned churn"); a
+*multi-source* removal now spares user-moved pins (their attribution is detached on move). (3) `ReattachOrphans`
+re-files a restored sectioned orphan onto the **root**, not its section (the sidecar carries no section id).
 
 ## Done
 
@@ -60,7 +89,7 @@ Material-shader background was dropped earlier (don't resurrect).
   connector rebuilds `download-archive.db` from what the library tracks (live + tombstoned, via
   `ConnectorOptions.KnownItems`), so it can never drift from the DB or silently hide an item.
 
-**Design system / UI redesign (slice 1 committed; large refinement batch uncommitted)**
+**Design system / UI redesign (committed — `c43c06a`…`e8285d3`)**
 - Own Avalonia styles, **no third-party UI library**; shadcn/ui reference + Lucide icons (embedded geometries).
   Full spec in **`DESIGN.md`** (now reconciled to the tokens). Clean/minimal, **dark-primary**, glossy soft-UI
   depth, indigo accent.
@@ -112,7 +141,7 @@ Material-shader background was dropped earlier (don't resurrect).
 - **Convention (CLAUDE.md):** custom interactive control templates set content `IsHitTestVisible=False` so the
   fill Border is the single hover/hit surface (else `:pointerover`/`:pressed` flickers across the boundary).
 
-**Phase 2 — screen integration (uncommitted batch on top of `116b91e`)**
+**Phase 2 — screen integration (committed in `e8285d3`)**
 - **Nav flow Projects → Library → Board** via `NavigationService` (now **disposes popped/reset pages** so
   per-board VMs + their subscriptions don't leak). `MainWindowViewModel` is the page factory and holds the
   per-project `ThumbnailCache` shared by Library covers + Board tiles.
@@ -144,7 +173,7 @@ Material-shader background was dropped earlier (don't resurrect).
   styles) — `BoardCard` / `NewCard` / `NewProjectCard` match the `ItemCard`. `NewProjectCard` sizes from an
   **invisible sizer** mirroring the `ProjectCard` content box, so heights match exactly (no magic number).
 
-**Phase 2 — board-merge data model (uncommitted, on top of the integration batch)**
+**Phase 2 — board-merge data model (committed in `e8285d3`)**
 - A local board can now gather pins from **several Pinterest source boards** (a "merge"). Additive schema v3:
   - `Collection.DisplayName` — a **local rename override**; `Name` keeps the source/original name, so the shown
     title is `DisplayName ?? Name` and renames survive re-import. `CurationService.RenameBoardAsync` writes it.
@@ -186,7 +215,7 @@ Material-shader background was dropped earlier (don't resurrect).
   v3/v5 backfills + **v6 stale-tombstone repair** + the upgrade on a copy of the real DB (574/574 pins attributed;
   v6 cleared 81 stale tombstones, kept 3 real deletes). **74 Core / 29 Desktop.**
 
-**Phase 2 — compatibility & resilience (uncommitted)**
+**Phase 2 — compatibility & resilience (committed in `e8285d3`)**
 - **Older project DBs**: already upgraded in place by `SchemaInitializer` on open (the v1→v5 chain).
 - **Marker recovery**: `HoardProject.Open` tolerates a present-but-malformed marker (derives the name);
   `HoardProject.Adopt`/`ProjectManager.Adopt` rewrite a missing/corrupt marker. Offered only via the explicit
@@ -216,7 +245,7 @@ Material-shader background was dropped earlier (don't resurrect).
   sidecars carry no `tags`/`hashtags` field, so a tag filter would be empty. Revisit only if a connector
   surfaces real tags.
 
-### Review follow-ups (from the xhigh code-review; cheap ones already applied)
+### Review follow-ups (from the earlier **board-merge** xhigh review; still open. The **nested-folders** review's deferred items are in **Status** above.)
 
 - **Pin-id-keyed link model (the deep one).** Today four mechanisms cooperate to get a pin into a board —
   crawl+link, dedup-by-SHA, the target-aware skip-archive, and orphan re-attach — because dedup keys on content
@@ -306,21 +335,27 @@ The settled decisions and how far each is implemented after the integration batc
   `ProjectEditSheet`, `SheetHost`/`ToastHost`/`FlexWrapPanel`, the top-left-light-source token pass.
 - `116b91e` **`ItemCard`, `ConfirmSheet`, `BoardEditSheet` as gallery components** (+ icons, gallery wiring).
 
-## Uncommitted (working tree) — the screen-integration batch
+## Uncommitted (working tree) — the nested-folders batch (on top of `e8285d3`)
 
-The whole "Phase 2 — screen integration" + "board-merge data model" Done blocks above. New files:
-`Core/Domain/CollectionSource.cs`, `Core/Library/ProjectStatsReader.cs`, `Core/Storage/IFileRecycler.cs`,
-`Desktop/Services/WindowsFileRecycler.cs`, `Desktop/ViewModels/BoardViewModel.cs`, `Desktop/ViewModels/ImportStatus.cs`,
-`Desktop/Views/BoardView.{axaml,axaml.cs}`, `Desktop/Controls/NewCard.{cs,axaml}`, `Desktop/Controls/NewProjectCard.{cs,axaml}`,
-`tests/Hoard.Core.Tests/BoardMergeTests.cs`, `Core/Metadata/SourceAttributionBackfill.cs`, `Core/Metadata/SidecarBoardId.cs`.
-Modified across Core (`Domain/Collection`, `Domain/CollectionItem`, `Metadata/HoardDbContext`, `Metadata/SchemaInitializer`,
-`Storage/IFileRecycler`, `IngestService`, `LibraryService`, `CurationService`, `ProjectManager`, `HoardProject`) and Desktop
-(`LibraryViewModel`, `MainWindowViewModel`, `ProjectLauncherViewModel`, `AssetTileViewModel`, `BoardViewModel`, `NavigationService`,
-`App.axaml.cs`, `BoardCard`, `BoardEditSheet`, `ConfirmSheet`, `ItemCard`, `Services/WindowsFileRecycler`, `Surfaces.axaml`,
-the `Board`/`Library`/`ProjectLauncher` views, gallery) + tests + docs. Build + 74 (Core) / 29 (Desktop) tests green.
-**Runtime-verify the flow** (import → progress; board edit + merge a second board + rename; **board Sync → re-fetches
-sources, pulls new items, skips deleted**; **re-importing a board brings back orphaned/restored images not on the
-source anymore**; **remove-source / delete-board → images vanish + go to the Windows recycle bin (one batched recycle),
-re-import brings them back; single-image trash still tombstones + restores**; **on first open, the v6 repair clears the
-old stale "Deleted" tiles so boards re-import**; project recycle delete; marker adopt; missing-file re-download;
-masonry/GIF) then commit.
+Everything in **Status** above (nested folders Phase 1–3 + live-routing/counts/covers + the `xhigh` code-review
+fixes). **New files:** `Core/Metadata/CollectionTree.cs` (subtree BFS, shared by delete/remove-source/known-items/
+counts/covers), `Core/Library/SpreadSelect.cs` (even-spread index math), `Desktop/ViewModels/BoardCardCovers.cs`
+(shared cover loader), `tests/Hoard.Core.Tests/NestedBoardTests.cs`, `tests/Hoard.Core.Tests/PinterestSectionParseTests.cs`.
+**Modified — Core:** `Domain/Collection` (+`SourceSectionId`), `Connectors/ISourceConnector` (+`Section*` on
+`SourceMediaItem`), `Ingest/IngestProgress` (+`ImportedIntoCollectionId`), `Ingest/IngestService` (section folders,
+known-items subtree, reattach id), `Library/CurationService` (subtree delete/remove-source, move), `Library/LibraryService`
+(subtree counts + scoped rollup, spread covers, child boards, subtree shas/detail), `Metadata/SchemaInitializer`
+(v7 guarded add). **Ingest:** `PinterestSidecarParser` (`ParseSection`). **Desktop:** `BoardViewModel` (folders,
+move, live routing, debounce dispose, OnResumed folders-only), `LibraryViewModel` (`IResumable`, edit-button +
+auto-discard fixes, live routing), `MainWindowViewModel`, `ProjectLauncherViewModel` (spread thumbnails),
+`ImportStatus` (+`LastImportedCollectionId`), `Navigation/NavigationService` (`IResumable`),
+`Views/BoardView.{axaml,axaml.cs}` (folder grid, sheets, move), `Controls/BoardEditSheet.{cs,axaml}`
+(`ShowSources`/`Heading`/`DeleteLabel`). + `SchemaInitializerTests`, docs. **Tests: 95 (Core) / 29 (Desktop) green;
+build clean** (the running app locks the Desktop DLLs — close it to build/run the Desktop suite).
+
+**Before commit — runtime-verify** (close the app first): import a board → loose pins stream onto the grid while
+sectioned pins file into their folder cards live; drill into a folder (any depth) + back keeps scroll/selection;
+create/rename/delete a folder via its pencil; move a pin to a folder from the detail panel; board/folder card
+counts include section images; "All images" + project covers pull from varied boards; a failed import discards
+only a *truly* empty new board (an all-sectioned partial survives). **Phase 0 spike still pending** (gallery-dl
+section field) before auto-foldering does anything against real Pinterest.
