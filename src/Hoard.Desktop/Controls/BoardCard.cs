@@ -57,14 +57,23 @@ public partial class BoardCard : UserControl
         InitializeComponent();
     }
 
+    // True while the in-progress press is the primary (left) button — so only a primary click opens the card,
+    // not a right / middle / thumb-button tap (the Tapped gesture fires for every button).
+    private bool _primaryPressed;
+
     private void OnCardTapped(object? sender, TappedEventArgs e)
     {
+        if (!_primaryPressed) return;
         if (OpenCommand is { } cmd && cmd.CanExecute(null)) cmd.Execute(null);
     }
 
     // Press feedback toggles a "pressed" class on the card (:pointerover is automatic). Handlers are on the
     // card Border itself, so the pencil (a separate control below) never triggers the card's press/scale.
-    private void OnCardPressed(object? sender, PointerPressedEventArgs e) => SetPressed(true);
+    private void OnCardPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _primaryPressed = e.GetCurrentPoint(this).Properties.IsLeftButtonPressed;
+        if (_primaryPressed) SetPressed(true);
+    }
     private void OnCardReleased(object? sender, PointerReleasedEventArgs e) => SetPressed(false);
     private void OnCardExited(object? sender, PointerEventArgs e) => SetPressed(false);
     private void OnCardCaptureLost(object? sender, PointerCaptureLostEventArgs e) => SetPressed(false);

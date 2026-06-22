@@ -44,8 +44,11 @@
 
         <Border CornerRadius="{DynamicResource RadiusMd}" ClipToBounds="True">
             <Panel>
-                <!-- Still thumbnail -->
-                <Image Source="{Binding #Root.Thumbnail}" Stretch="UniformToFill"/>
+                <!-- Still thumbnail. Hidden while the GIF plays so a transparent GIF's see-through regions show the
+                     card background (MutedBrush) rather than this static frame underneath — otherwise the still
+                     ghosts through as onion-skin artifacts (the detail screen hides its still the same way). -->
+                <Image Source="{Binding #Root.Thumbnail}" Stretch="UniformToFill"
+                       IsVisible="{Binding #Root.PlaySource, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
 
                 <!-- Animated GIF, played once the tile is opened (kept while loaded) -->
                 <ctrl:AnimatedImageControl x:Name="TileGif" Source="{Binding #Root.PlaySource}"

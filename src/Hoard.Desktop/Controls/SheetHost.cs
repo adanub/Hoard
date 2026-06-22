@@ -36,8 +36,12 @@ public class SheetHost : ContentControl
     {
         base.OnApplyTemplate(e);
         // The scrim (the dimmed backdrop) is the click-away target; the card sits above it and swallows clicks.
+        // Dismiss on a primary (left) click only — a right / middle / thumb press over the scrim shouldn't close it.
         if (e.NameScope.Find<Control>("PART_Scrim") is { } scrim)
-            scrim.PointerPressed += (_, _) => Dismiss();
+            scrim.PointerPressed += (_, ev) =>
+            {
+                if (ev.GetCurrentPoint(scrim).Properties.IsLeftButtonPressed) Dismiss();
+            };
     }
 
     protected override void OnKeyDown(KeyEventArgs e)

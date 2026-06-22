@@ -79,8 +79,13 @@ public partial class ItemCard : UserControl
         InitializeComponent();
     }
 
+    // True while the in-progress press is the primary (left) button — so only a primary click opens the tile,
+    // not a right / middle / thumb-button tap (the Tapped gesture fires for every button).
+    private bool _primaryPressed;
+
     private void OnCardTapped(object? sender, TappedEventArgs e)
     {
+        if (!_primaryPressed) return;
         // Ignore taps that came from a button inside the tile (e.g. the Unload button): the Tapped gesture
         // bubbles up past the button's Click, and re-firing OpenCommand would re-activate/replay the tile.
         if (e.Source is Visual source && source.FindAncestorOfType<Button>(includeSelf: true) is not null)
@@ -90,7 +95,11 @@ public partial class ItemCard : UserControl
 
     // Press feedback toggles a "pressed" class on the card (:pointerover is automatic). The Unload button
     // handles its own pointer events, so pressing it never triggers the card's press/scale or its tap.
-    private void OnCardPressed(object? sender, PointerPressedEventArgs e) => SetPressed(true);
+    private void OnCardPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _primaryPressed = e.GetCurrentPoint(this).Properties.IsLeftButtonPressed;
+        if (_primaryPressed) SetPressed(true);
+    }
     private void OnCardReleased(object? sender, PointerReleasedEventArgs e) => SetPressed(false);
     private void OnCardExited(object? sender, PointerEventArgs e) => SetPressed(false);
     private void OnCardCaptureLost(object? sender, PointerCaptureLostEventArgs e) => SetPressed(false);
