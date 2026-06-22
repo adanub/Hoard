@@ -190,16 +190,19 @@ public sealed class LibraryService
             .ToListAsync(ct);
 
         // Live images attributed to each source — what removing that source deletes (now subtree-scoped, so a
-        // source's pins filed into section folders count toward it, matching remove-source's subtree sweep). When
-        // the board has a single source, removing it sweeps the whole subtree, so that source's count is the
-        // board's total live pins.
-        var countBySource = (await db.CollectionItems
-            .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.CollectionSourceId != null && ci.Asset.DeletedAt == null)
-            .GroupBy(ci => ci.CollectionSourceId!.Value)
-            .Select(g => new { SourceId = g.Key, Count = g.Count() })
-            .ToListAsync(ct))
-            .ToDictionary(x => x.SourceId, x => x.Count);
+        // source's pins filed into section folders count toward it, matching remove-source's subtree sweep). Only
+        // needed when the board merges ≥2 sources: a single-source board's source shows the board's whole live
+        // total (removing it sweeps the subtree, see below) and a sourceless board has nothing to attribute — so
+        // the per-source query is skipped in both cases.
         var totalLive = (agg?.Images ?? 0) + (agg?.Gifs ?? 0) + (agg?.Videos ?? 0);
+        var countBySource = sourceRows.Count > 1
+            ? (await db.CollectionItems
+                .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.CollectionSourceId != null && ci.Asset.DeletedAt == null)
+                .GroupBy(ci => ci.CollectionSourceId!.Value)
+                .Select(g => new { SourceId = g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+                .ToDictionary(x => x.SourceId, x => x.Count)
+            : new Dictionary<int, int>();
 
         var sources = sourceRows
             .Select(s => new BoardSource(s.Id, s.SourceBoardId, s.SourceUrl, s.Name,

@@ -137,6 +137,10 @@ public class NestedBoardTests : IDisposable
         Assert.Contains(p1Blob, recycler.Recycled);
         Assert.Contains(p2Blob, recycler.Recycled);
         Assert.False(File.Exists(p1Blob));
+        Assert.False(File.Exists(p2Blob));
+        // The recycle path prunes the now-empty shard dirs it left behind (matching the DeleteAsync path), so the
+        // store keeps no orphaned ab/cd folders once every blob is gone.
+        Assert.Empty(Directory.EnumerateDirectories(Path.Combine(_dir, "store")));
         await using (var db = _dbFactory.CreateDbContext())
         {
             Assert.Equal(0, await db.Collections.CountAsync());     // board + Kitchen + Sink all gone

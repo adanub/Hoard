@@ -38,4 +38,6 @@ public sealed class ProjectMediaStore : IMediaStore
     public bool Exists(string sha256, string extension) => Store.Exists(sha256, extension);
 
     public Task DeleteAsync(string relativePath, CancellationToken ct = default) => Store.DeleteAsync(relativePath, ct);
+
+    public void PruneEmptyShards(IEnumerable<string> relativePaths) => Store.PruneEmptyShards(relativePaths);
 }

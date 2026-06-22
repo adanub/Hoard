@@ -56,6 +56,12 @@ public sealed class ContentAddressedStore : IMediaStore
         return Task.CompletedTask;
     }
 
+    public void PruneEmptyShards(IEnumerable<string> relativePaths)
+    {
+        foreach (var relativePath in relativePaths)
+            PruneEmptyParents(Path.GetDirectoryName(Path.Combine(_root, relativePath)));
+    }
+
     /// <summary>Remove empty parent directories up to (but not including) the store root.</summary>
     private void PruneEmptyParents(string? directory)
     {

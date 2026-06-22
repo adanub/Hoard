@@ -23,4 +23,9 @@ public interface IMediaStore
     /// it outright (no shared-reference counting needed).
     /// </summary>
     Task DeleteAsync(string relativePath, CancellationToken ct = default);
+
+    /// <summary>Remove any now-empty shard directories left behind after blobs were removed out-of-band — e.g.
+    /// recycled in one batched shell call rather than via <see cref="DeleteAsync"/> (which prunes as it goes).
+    /// Paths whose blob is already gone are fine; only empty shard dirs (below the store root) are removed.</summary>
+    void PruneEmptyShards(IEnumerable<string> relativePaths);
 }

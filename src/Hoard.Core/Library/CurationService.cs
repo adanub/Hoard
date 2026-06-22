@@ -222,11 +222,14 @@ public sealed class CurationService
         if (_recycler is not null)
         {
             // One batched shell call for the whole set — far cheaper than recycling blob-by-blob on a large
-            // board delete. (Empty shard dirs aren't pruned on this path — harmless.)
+            // board delete.
             var absolute = new List<string>(relativePaths.Count);
             foreach (var relativePath in relativePaths) absolute.Add(_store.GetAbsolutePath(relativePath));
             try { _recycler.RecycleFiles(absolute); }
             catch { /* a missing/locked blob shouldn't fail the delete */ }
+            // The batch recycle removed the files out-of-band, so tidy the now-empty shard dirs it left behind
+            // (the DeleteAsync path prunes as it goes; this matches it).
+            _store.PruneEmptyShards(relativePaths);
             return;
         }
         foreach (var relativePath in relativePaths)
