@@ -59,11 +59,26 @@ Concepts that span multiple files:
   `SaveChanges` as the change so the history can't drift. Ops are keyed by the asset's SHA-256, not its local
   row id, so they replay on another device that holds the same content under a different id. This is the
   Phase 3 (cloud sync) foundation; nothing reads it yet — keep it append-only (never mutate/delete ops).
-- **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a page back-stack
-  (`Reset`/`Push`/`Pop`/`CanGoBack`) — and is the page factory: `ShowLauncher` (`Reset` root) → `ShowLibrary`
-  (`Push`, board grid) → `ShowBoard` (`Push`, one board's masonry). The shell binds `Navigation.Current`; the
-  template `ViewLocator` maps each page VM to its `…View` by name. **`Pop`/`Reset` dispose any `IDisposable`
-  page** so a popped `BoardViewModel` releases its subscriptions (don't leak the per-board tiles). The old
+- **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a browser-style page
+  back/forward stack (`Reset`/`Push`/`Pop`/`GoForward`/`CanGoBack`/`CanGoForward`) — and is the page factory:
+  `ShowLauncher` (`Reset` root) → `ShowLibrary` (`Push`, board grid) → `ShowBoard` (`Push`, one board's masonry).
+  The shell binds `Navigation.Current`; the template `ViewLocator` maps each page VM to its `…View` by name.
+  **`Pop`/`Reset` dispose any `IDisposable` page** so a popped `BoardViewModel` releases its subscriptions (don't
+  leak the per-board tiles). **The whole Projects → Library → Board → … chain is one back/forward stack:** `Reset`
+  builds the root launcher **only at startup**; everything else is `Push`/`Pop`, so the Library's back **pops to
+  the launcher** (which is `IResumable` and reloads its recents on reveal) rather than resetting — that's what
+  lets forward re-enter a project. **Forward history keeps only a lightweight rebuild *thunk*, never a live
+  page** — `Push` takes an optional `Func<ViewModelBase?> recreate` (`ShowLibrary` + `ShowBoard` pass one; the
+  launcher is the root, never popped-to-forward); `Pop` disposes the page but stashes its thunk, and `GoForward`
+  rebuilds a *fresh* copy (so a backed-out board/library still frees its thumbnails; forward re-loads it — its
+  ctor reloads, so no `OnResumed`). A new `Push` clears the forward history, like a browser. A forward thunk
+  always rebuilds for the **currently-open project** because the only way to change `ProjectManager.Current`
+  (opening a project) goes through `Push`, which clears forward; a thunk **returns null when its project was
+  deleted** while backed out (`_projects.Current is null`) so `GoForward` drops the dead entry instead of building
+  a blank page. **Mouse back/forward (XButton1/XButton2)** is handled on `MainWindow` and routed to
+  `MainWindowViewModel.NavigateBack/Forward`: back runs the current page's own `IHasBack.BackCommand` (so it
+  matches the on-screen ← — a Board pops, the Library pops to Projects), forward is `GoForward` — but the gesture
+  is **swallowed while any `SheetHost` is open** so it can't pop the page out from under a modal. The old
   single-screen `LibraryView` was **split**: `LibraryViewModel` = the board grid, `BoardViewModel` = a board's
   asset grid (the GIF/detail/delete logic moved there). `MainWindowViewModel` holds the per-project
   `ThumbnailCache` shared by both. Image-detail is still a Board-screen overlay (becomes its own pushed screen later).
@@ -136,8 +151,10 @@ Concepts that span multiple files:
   viewport, not the measure height). **Drilling into a folder reuses the whole Board screen** — `ShowBoard(new BoardTarget(childId, …, ParentId: …))` pushes another
   `BoardViewModel`, so nesting works to any depth via the back-stack; an `IResumable.OnResumed` nav hook reloads a
   board's folders + grid when a child is popped (a folder may have been renamed/deleted, or a pin moved out).
-  A folder is renamed/deleted via its **card pencil** (`BeginEditFolder` → `BoardEditSheet` with
-  `ShowSources=false`), same as editing a board from the Library;
+  A folder is renamed/deleted via its **card pencil**, the *same* rename/clear-cache/delete flow as editing a
+  board from the Library: both view models hold a shared **`BoardCardEditor`** (`ViewModels/BoardCardEditor.cs`)
+  that drives the `BoardEditSheet` over a `BoardCardRef` — the Library board edit also lists merged sources (via
+  a `loadExtraDetail` hook), the folder edit sets `ShowSources=false`;
   `CurationService.DeleteBoardAsync` **recurses the subtree** (the `ParentId` FK is `SET NULL`, so children are
   removed explicitly, not cascaded) and `MoveAssetWithinBoardAsync` re-points a `CollectionItem` to file a pin
   into a folder (one at a time, via the detail panel). **Auto-import (ingest side) is wired:** `SourceMediaItem`
@@ -226,7 +243,12 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   `ContentPresenter`/content `IsHitTestVisible="False"`** so the fill `Border` is the *single* hover/hit
   surface — otherwise the content (text/icon) is its own hit target and dragging across the content↔fill
   boundary fires enter/leave that flickers the control's `:pointerover`/`:pressed` (the fill `Border` must keep
-  a hit-testable background, even `Transparent`). See `Theme/Controls/Button.axaml`. **A `BoxShadow` draws
+  a hit-testable background, even `Transparent`). See `Theme/Controls/Button.axaml`. **The `Tapped` gesture fires
+  for *every* pointer button (left/right/middle/thumb), so a custom click-to-activate surface that opens on
+  `Tapped` (the `*Card` controls) must gate it on a primary press — track `IsLeftButtonPressed` from
+  `PointerPressed` and bail in the `Tapped` handler when it wasn't the left button — otherwise right/middle/mouse4-5
+  clicks all activate it. The scrim's click-away dismiss filters the same way. `Button`/`ListBox` already
+  primary-filter, so this only bites hand-rolled `Tapped` controls.** See `Controls/BoardCard.cs`. **A `BoxShadow` draws
   OUTSIDE the element's layout box, so any surface with one (cards, the `.card` style, badges) must reserve
   room for its shadow and not be self-clipped — else it crops at the element's edge.** Bake a `Margin` ≥ the
   shadow's blur+offset extent onto the shadowed element itself (size it for the *largest* theme — light

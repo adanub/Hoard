@@ -26,11 +26,11 @@ public partial class LibraryView : UserControl
     {
         BoardEditSheet.RenameCommand = new RelayCommand<object?>(name =>
         {
-            if (Vm is { } vm) _ = vm.RenameBoardAsync(name as string);
+            if (Vm is { } vm) _ = vm.BoardEditor.RenameAsync(name as string);
         });
         BoardEditSheet.ClearCacheCommand = new RelayCommand(() =>
         {
-            if (Vm is { } vm) _ = vm.ClearBoardCacheAsync();
+            if (Vm is { } vm) _ = vm.BoardEditor.ClearCacheAsync();
         });
         BoardEditSheet.AddSourceCommand = new RelayCommand(() => Vm?.AddSourceToEditTarget());
         BoardEditSheet.OpenSourceCommand = new RelayCommand<BoardSourceRef?>(s =>
@@ -62,7 +62,7 @@ public partial class LibraryView : UserControl
 
     private void ShowBoardDeleteConfirm()
     {
-        if (Vm?.BoardEditTarget is not { } r) return;
+        if (Vm?.BoardEditor.EditTarget is not { } r) return;
         BoardConfirmContent.Title = "Delete board?";
         BoardConfirmContent.Message =
             $"Delete the board “{r.Name}” and its images — files go to your recycle bin (any also in another board are removed there too).";
@@ -70,7 +70,7 @@ public partial class LibraryView : UserControl
         BoardConfirmContent.ConfirmCommand = new RelayCommand(() =>
         {
             BoardConfirmHost.IsOpen = false;
-            if (Vm is { } vm) { vm.CloseBoardEditSheetCommand.Execute(null); _ = vm.DeleteBoardAsync(); }
+            if (Vm is { } vm) { vm.BoardEditor.CloseCommand.Execute(null); _ = vm.BoardEditor.DeleteAsync(); }
         });
         BoardConfirmContent.CancelCommand = new RelayCommand(() => BoardConfirmHost.IsOpen = false);
         BoardConfirmContent.Begin(5);

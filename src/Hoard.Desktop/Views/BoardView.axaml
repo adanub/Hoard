@@ -274,14 +274,14 @@
         <!-- Folder Edit popup (a folder card's pencil): rename / clear cache / delete. No source list (folders
              have no sources). Bound to the folder card under edit; commands wired in code-behind, delete routes
              through the confirm. -->
-        <ctrl:SheetHost x:Name="FolderEditHost" IsOpen="{Binding IsFolderEditSheetOpen}"
-                        DismissCommand="{Binding CloseFolderEditSheetCommand}">
+        <ctrl:SheetHost x:Name="FolderEditHost" IsOpen="{Binding FolderEditor.IsSheetOpen}"
+                        DismissCommand="{Binding FolderEditor.CloseCommand}">
             <ctrl:BoardEditSheet x:Name="FolderEditSheet"
                                  Heading="Edit folder" DeleteLabel="Delete folder…" ShowSources="False"
-                                 BoardName="{Binding FolderEditTarget.Name, Mode=OneWay}"
-                                 CountsText="{Binding FolderEditTarget.CountsText}"
-                                 CacheText="{Binding FolderEditTarget.CacheText}"
-                                 AddedText="{Binding FolderEditTarget.AddedText}"/>
+                                 BoardName="{Binding FolderEditor.EditTarget.Name, Mode=OneWay}"
+                                 CountsText="{Binding FolderEditor.EditTarget.CountsText}"
+                                 CacheText="{Binding FolderEditor.EditTarget.CacheText}"
+                                 AddedText="{Binding FolderEditor.EditTarget.AddedText}"/>
         </ctrl:SheetHost>
 
         <!-- Shared confirm popup (the folder delete), layered on top. -->

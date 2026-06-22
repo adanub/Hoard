@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Core.Library;
 using Hoard.Core.Projects;
+using Hoard.Desktop.Navigation;
 using Hoard.Desktop.Services;
 
 namespace Hoard.Desktop.ViewModels;
@@ -63,7 +64,7 @@ public partial class RecentProjectRef : ViewModelBase
 /// creating/adopting a project via the new-project sheet) raises a callback so the shell pushes the library.
 /// Per-project management (open / clear cache / remove / delete) acts on a specific card; feedback is toasted.
 /// </summary>
-public partial class ProjectLauncherViewModel : ViewModelBase
+public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
 {
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
@@ -79,16 +80,26 @@ public partial class ProjectLauncherViewModel : ViewModelBase
         _onProjectOpened = onProjectOpened;
 
         Tiles.Add(NewProjectTile.Instance);
-        if (projects is not null) // skip in the design-time (null) ctor
-        {
-            foreach (var path in projects.RecentProjects)
-                Tiles.Add(NewRef(path, new DirectoryInfo(path).Name));
-            _ = LoadRecentsAsync();
-        }
+        if (projects is not null) ReloadRecents(); // skip in the design-time (null) ctor
     }
 
     // Design-time constructor for the XAML previewer.
     public ProjectLauncherViewModel() : this(null!, null!, new ToastService(), () => { }) { }
+
+    /// <summary>Revealed again after a project's Library was popped back to Projects (the mouse/⌫ back): reload the
+    /// recents — the just-used project floats to the top, a cache size may have grown, one may have been removed.</summary>
+    public void OnResumed() => ReloadRecents();
+
+    // Rebuild the recent-project cards from the current recents list (the leading "+ New project" tile stays put),
+    // then refresh their cache sizes + collage covers off the UI thread.
+    private void ReloadRecents()
+    {
+        for (var i = Tiles.Count - 1; i >= 0; i--)
+            if (Tiles[i] is RecentProjectRef) Tiles.RemoveAt(i);
+        foreach (var path in _projects.RecentProjects)
+            Tiles.Add(NewRef(path, new DirectoryInfo(path).Name));
+        _ = LoadRecentsAsync();
+    }
 
     /// <summary>Build a recent-project card wired to this launcher's Open/Edit actions.</summary>
     private RecentProjectRef NewRef(string path, string name)

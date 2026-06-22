@@ -41,7 +41,7 @@ public sealed record MoveTarget(string Display, int? CollectionId);
 /// tracks what's visible), the detail panel, and per-asset delete/restore. Pushed above the Library screen;
 /// the back chevron pops back.
 /// </summary>
-public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
+public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IHasBack
 {
     private readonly LibraryService _library;
     private readonly CurationService _curation;
@@ -56,6 +56,9 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
     private readonly Action _requestBack;
     private readonly Action<BoardTarget> _openBoard;
     private CancellationTokenSource? _searchDebounce;
+    // Cancelled when the board is navigated away from (disposed), so an in-flight re-download doesn't keep running
+    // and mutate this dead VM / toast for a screen you've left.
+    private readonly CancellationTokenSource _disposeCts = new();
     private IReadOnlyList<string> _sourceUrls = Array.Empty<string>();
 
     // GIFs the user has tapped keep autoplaying in the grid; bounded (LRU) so memory stays sane.
@@ -81,6 +84,10 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
         _requestBack = requestBack;
         _openBoard = openBoard;
         _searchQuery = target.Search ?? "";
+        FolderEditor = new BoardCardEditor(
+            library, curation, thumbnails, toasts, "folder",
+            removeCard: r => FolderTiles.Remove(r),
+            afterChange: () => OnPropertyChanged(nameof(CanMoveSelected)));
 
         _importStatus.PropertyChanged += OnImportStatusChanged;
         UpdateImportState();
@@ -169,8 +176,14 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
     public void Dispose()
     {
         _importStatus.PropertyChanged -= OnImportStatusChanged;
+        // Cancel (not just Dispose) so a debounced search/folder-reload mid-Task.Delay bails instead of waking up
+        // to query + rebuild on this disposed VM — Dispose() alone does NOT cancel a pending Task.Delay.
+        _searchDebounce?.Cancel();
         _searchDebounce?.Dispose();
+        _folderReloadDebounce?.Cancel();
         _folderReloadDebounce?.Dispose();
+        _disposeCts.Cancel(); // abort any in-flight re-download before it touches this disposed VM
+        _disposeCts.Dispose();
     }
 
     /// <summary>Revealed again after a drilled-into folder was popped: reload only the folder row (a folder may
@@ -208,7 +221,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
             {
                 var count = c.ItemCount == 1 ? "1 image" : $"{c.ItemCount} images";
                 // A folder card opens the folder (drill-down) and edits via its pencil — same as a top-level board.
-                tiles.Add(new BoardCardRef(c.Id, c.Name, DrillIntoFolder, BeginEditFolder)
+                tiles.Add(new BoardCardRef(c.Id, c.Name, DrillIntoFolder, FolderEditor.Begin)
                 {
                     MetaText = $"{count} · {ByteFormat.Format(c.SizeBytes)}",
                 });
@@ -263,78 +276,12 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
         catch (Exception ex) { _toasts.Show($"Couldn't create folder: {ex.Message}", isError: true); }
     }
 
-    // ── Folder Edit popup (per card — the pencil — exactly like the Library board edit) ──
+    // ── Folder Edit popup (a folder card's pencil — the shared BoardCardEditor, same as the Library board edit) ──
 
-    [ObservableProperty] private BoardCardRef? _folderEditTarget;
-    [ObservableProperty] private bool _isFolderEditSheetOpen;
-
-    [RelayCommand]
-    private void CloseFolderEditSheet() => IsFolderEditSheetOpen = false;
-
-    /// <summary>Open a folder card's Edit popup (rename / clear cache / delete) and fill its detail rows lazily.</summary>
-    public void BeginEditFolder(BoardCardRef r)
-    {
-        FolderEditTarget = r;
-        IsFolderEditSheetOpen = true;
-        _ = LoadFolderDetailAsync(r);
-    }
-
-    private async Task LoadFolderDetailAsync(BoardCardRef r)
-    {
-        if (_library is null || r.CollectionId is not int id) return;
-        r.CountsText = "Counting…";
-        r.CacheText = "";
-        try
-        {
-            var detail = await _library.GetBoardDetailAsync(id);
-            if (detail is null) { r.CountsText = "No details."; return; }
-            r.CountsText = $"{detail.Images} images · {detail.Gifs} GIFs · {detail.Videos} videos";
-            r.CacheText = ByteFormat.Format(detail.SizeBytes) + " on disk";
-            r.AddedText = "Added " + detail.CreatedAt.LocalDateTime.ToString("d MMM yyyy");
-        }
-        catch (Exception ex)
-        {
-            r.CountsText = "Couldn't load details.";
-            _toasts.Show($"Couldn't load folder details: {ex.Message}", isError: true);
-        }
-    }
-
-    /// <summary>Rename the folder under edit (a local display-name override). Called from the folder Edit popup.</summary>
-    public async Task RenameFolderAsync(string? newName)
-    {
-        if (_curation is null || FolderEditTarget is not { CollectionId: int id } r || string.IsNullOrWhiteSpace(newName)) return;
-        try
-        {
-            await _curation.RenameBoardAsync(id, newName.Trim());
-            r.Name = newName.Trim();
-            _toasts.Show($"Renamed to “{r.Name}”.");
-        }
-        catch (Exception ex) { _toasts.Show($"Couldn't rename: {ex.Message}", isError: true); }
-    }
-
-    /// <summary>Clear the folder-under-edit's cached thumbnails (regenerated on demand).</summary>
-    public async Task ClearFolderCacheAsync()
-    {
-        if (_library is null || FolderEditTarget is not { CollectionId: int id } r) return;
-        var shas = await _library.GetBoardAssetShasAsync(id);
-        if (_thumbnails is not null)
-            foreach (var sha in shas) _thumbnails.Evict(sha);
-        _toasts.Show($"Cleared cached thumbnails for “{r.Name}”.");
-    }
-
-    /// <summary>Delete the folder under edit and its whole subtree (files to the recycle bin); drop its card.</summary>
-    public async Task DeleteFolderAsync()
-    {
-        if (_curation is null || FolderEditTarget is not { CollectionId: int id } r) return;
-        try
-        {
-            var removed = await _curation.DeleteBoardAsync(id);
-            FolderTiles.Remove(r);
-            OnPropertyChanged(nameof(CanMoveSelected));
-            _toasts.Show($"Deleted folder “{r.Name}” — {removed} image(s) sent to the recycle bin.");
-        }
-        catch (Exception ex) { _toasts.Show($"Couldn't delete folder: {ex.Message}", isError: true); }
-    }
+    /// <summary>The folder pencil's Edit popup (rename / clear cache / delete); a folder is just a child board, so
+    /// it reuses the same editor as the Library board cards. Constructed in the ctor with "folder" wording, its
+    /// card removed from <see cref="FolderTiles"/> on delete, and re-evaluating <see cref="CanMoveSelected"/>.</summary>
+    public BoardCardEditor FolderEditor { get; }
 
     // ── Move the selected pin into a folder (one at a time) ─────────────────────
 
@@ -432,6 +379,14 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
     private async Task SyncAsync()
     {
         if (_ingest is null || _collectionId is not int boardId || _sourceUrls.Count == 0) return;
+
+        // The whole pipeline shares one ImportStatus; starting a sync while a Library import (or another sync) is
+        // mid-flight would clobber its live count + streamed pins. Refuse rather than overlap.
+        if (_importStatus.IsImporting)
+        {
+            _toasts.Show("An import is already running — wait for it to finish before syncing.");
+            return;
+        }
 
         var cookies = BrowserCookies.Resolve(SyncCookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
@@ -627,9 +582,13 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
     {
         if (_ingest is null || tile.IsRefetching) return;
         tile.IsRefetching = true;
+        var token = _disposeCts.Token; // captured before the await — safe to read even after the CTS is disposed
         try
         {
-            var view = await _ingest.RefetchAsync(tile.Model.Id);
+            var view = await _ingest.RefetchAsync(tile.Model.Id, token);
+            // Completed-just-before-Cancel race: if we navigated away during the await, drop it silently rather
+            // than mutating the dead tile / toasting over the screen we left (the catch only covers a thrown cancel).
+            if (token.IsCancellationRequested) return;
             if (view is null)
             {
                 _toasts.Show("Couldn't re-download — the item may no longer exist.", isError: true);
@@ -638,6 +597,10 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable
             tile.ApplyUpdate(view);
             _ = tile.EnsureThumbnailAsync();
             _toasts.Show($"Re-downloaded “{view.Title ?? "image"}”.");
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away from the board mid-refetch (the VM was disposed) — drop it silently.
         }
         catch (Exception ex)
         {

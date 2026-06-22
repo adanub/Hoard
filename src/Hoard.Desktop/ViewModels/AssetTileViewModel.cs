@@ -95,8 +95,11 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
         if (IsDeleted) return; // a tombstone shows its note, not media
 
         // Lazy per-tile existence check: a live asset whose blob has vanished from the store (deleted/moved
-        // outside the app) shows a "file missing" state with a re-download, instead of a blank placeholder.
-        if (!System.IO.File.Exists(Model.AbsolutePath)) { IsFileMissing = true; return; }
+        // outside the app) shows a "file missing" state with a re-download, instead of a blank placeholder. Probed
+        // off the realising thread (this runs as the masonry realises a container) so a slow drive can't jank
+        // scroll; the continuation resumes on the UI thread to set the bound state.
+        var path = Model.AbsolutePath;
+        if (!await Task.Run(() => System.IO.File.Exists(path))) { IsFileMissing = true; return; }
         if (!IsImage) return; // video/other: no thumbnail, but the file is present
 
         IsThumbnailLoading = true;

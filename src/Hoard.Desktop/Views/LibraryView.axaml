@@ -14,7 +14,7 @@
 
     <Panel>
         <DockPanel>
-            <!-- Top bar: back (← to Projects) · project name. Importing is done via the "+ New board" card.
+            <!-- Top bar: back (← to Projects) · project name. Importing is done via the "+ Import" card.
                  (Search goes elsewhere later.) -->
             <Border DockPanel.Dock="Top" Padding="16,12"
                     BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
@@ -30,7 +30,7 @@
                 </Grid>
             </Border>
 
-            <!-- Board grid: "+ New board" + "All images" + one card per board, reflowing by width. ClipToBounds
+            <!-- Board grid: "+ Import" + "All images" + one card per board, reflowing by width. ClipToBounds
                  =False down to the item ContentPresenter so the raised cards' shadow + hover-scale aren't cropped
                  to their cells (see the CLAUDE.md raised-card-in-grid rule). -->
             <ScrollViewer>
@@ -47,7 +47,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.DataTemplates>
                         <DataTemplate DataType="vm:NewBoardTile">
-                            <ctrl:NewCard Label="New board" Margin="0,0,16,16"
+                            <ctrl:NewCard Label="Import" Margin="0,0,16,16"
                                           Command="{Binding $parent[ItemsControl].((vm:LibraryViewModel)DataContext).OpenImportSheetCommand}"/>
                         </DataTemplate>
                         <DataTemplate DataType="vm:BoardCardRef">
@@ -104,15 +104,15 @@
 
         <!-- Board Edit popup (the pencil): rename / sources / info / clear cache / delete. Commands wired in
              code-behind (the delete routes through the confirm popup below). -->
-        <ctrl:SheetHost x:Name="BoardEditHost" IsOpen="{Binding IsBoardEditSheetOpen}"
-                        DismissCommand="{Binding CloseBoardEditSheetCommand}">
+        <ctrl:SheetHost x:Name="BoardEditHost" IsOpen="{Binding BoardEditor.IsSheetOpen}"
+                        DismissCommand="{Binding BoardEditor.CloseCommand}">
             <ctrl:BoardEditSheet x:Name="BoardEditSheet"
-                                 BoardName="{Binding BoardEditTarget.Name, Mode=OneWay}"
-                                 SourceBoards="{Binding BoardEditTarget.Sources}"
-                                 CountsText="{Binding BoardEditTarget.CountsText}"
-                                 CacheText="{Binding BoardEditTarget.CacheText}"
-                                 AddedText="{Binding BoardEditTarget.AddedText}"
-                                 ImportedText="{Binding BoardEditTarget.ImportedText}"/>
+                                 BoardName="{Binding BoardEditor.EditTarget.Name, Mode=OneWay}"
+                                 SourceBoards="{Binding BoardEditor.EditTarget.Sources}"
+                                 CountsText="{Binding BoardEditor.EditTarget.CountsText}"
+                                 CacheText="{Binding BoardEditor.EditTarget.CacheText}"
+                                 AddedText="{Binding BoardEditor.EditTarget.AddedText}"
+                                 ImportedText="{Binding BoardEditor.EditTarget.ImportedText}"/>
         </ctrl:SheetHost>
 
         <!-- Shared confirm popup (the board delete), layered on top. -->

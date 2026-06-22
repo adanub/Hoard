@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -72,7 +74,7 @@ public sealed record ImportTarget(string Display, int? CollectionId);
 /// project-wide search and an Import action. Opening a card (or searching) pushes the Board screen; the back
 /// chevron returns to Projects (switching project). Per-board editing/merge arrives with the board model.
 /// </summary>
-public partial class LibraryViewModel : ViewModelBase, IResumable
+public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, IHasBack
 {
     private readonly IngestService _ingest;
     private readonly LibraryService _library;
@@ -82,12 +84,15 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
     private readonly ToastService _toasts;
     private readonly ImportStatus _importStatus;
     private readonly Action<BoardTarget> _openBoard;
-    private readonly Action _requestSwitchProject;
+    private readonly Action _requestBack;
+    // Cancelled when the Library is navigated away from (disposed), so an in-flight import doesn't keep running
+    // and toast / rebuild the grid on this dead VM after the user has left.
+    private readonly CancellationTokenSource _disposeCts = new();
 
     public LibraryViewModel(
         IngestService ingest, LibraryService library, CurationService curation, ProjectManager projects,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus,
-        Action<BoardTarget> openBoard, Action requestSwitchProject)
+        Action<BoardTarget> openBoard, Action requestBack)
     {
         _ingest = ingest;
         _library = library;
@@ -97,8 +102,50 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
         _toasts = toasts;
         _importStatus = importStatus;
         _openBoard = openBoard;
-        _requestSwitchProject = requestSwitchProject;
+        _requestBack = requestBack;
+        BoardEditor = new BoardCardEditor(
+            library, curation, thumbnails, toasts, "board",
+            removeCard: r => Tiles.Remove(r), loadExtraDetail: LoadBoardSourcesAsync);
+        // Watch the shared import state so a board card lights up whoever started the import — this grid's own
+        // import sheet OR a board's Sync button (which drives only ImportStatus, not this grid directly).
+        _importStatus.PropertyChanged += OnImportStatusChanged;
         _ = RefreshAsync();
+    }
+
+    /// <summary>True while THIS grid's <see cref="ImportAsync"/> owns the in-flight import — it updates the card +
+    /// refreshes itself (and owns the failed-import discard), so the shared-status watcher mustn't double up.</summary>
+    private bool _selfImporting;
+
+    // Mirror the shared ImportStatus onto the matching board card so a running import/sync shows its progress
+    // strip + live count here, even when it was started from the Board screen's Sync button.
+    private void OnImportStatusChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        var card = _importStatus.CollectionId is int id
+            ? Tiles.OfType<BoardCardRef>().FirstOrDefault(r => r.CollectionId == id)
+            : null;
+
+        switch (e.PropertyName)
+        {
+            case nameof(ImportStatus.Text):
+                if (card is not null) card.ImportStatusText = _importStatus.Text;
+                break;
+            case nameof(ImportStatus.IsImporting):
+                if (card is not null) card.IsImporting = _importStatus.IsImporting;
+                // Any in-flight import/sync (even one started from a Board screen) blocks a new Library import, so
+                // re-evaluate the Import button against the shared status.
+                ImportCommand.NotifyCanExecuteChanged();
+                // An external sync just finished → reload counts/covers. A Library-initiated import refreshes
+                // itself afterwards (and owns the empty-board discard), so don't double-refresh for that case.
+                if (!_importStatus.IsImporting && !_selfImporting) _ = RefreshAsync();
+                break;
+        }
+    }
+
+    public void Dispose()
+    {
+        _importStatus.PropertyChanged -= OnImportStatusChanged;
+        _disposeCts.Cancel(); // abort any in-flight import before it touches this disposed VM
+        _disposeCts.Dispose();
     }
 
     // Design-time constructor for the XAML previewer.
@@ -112,7 +159,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
     [ObservableProperty] private string _searchQuery = "";
 
     [RelayCommand]
-    private void Back() => _requestSwitchProject();
+    private void Back() => _requestBack();
 
     /// <summary>Run the project-wide search: open the Board screen over "All images" filtered to the query.</summary>
     [RelayCommand]
@@ -137,10 +184,25 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
         foreach (var c in await _library.GetCollectionsAsync())
         {
             var count = c.ItemCount == 1 ? "1 image" : $"{c.ItemCount} images";
-            Tiles.Add(new BoardCardRef(c.Id, c.Name, OpenBoardRef, BeginEditBoard)
+            // Seed the importing strip if a sync/import is in flight for this board (e.g. rebuilt on return to the
+            // Library while a board Sync is still running), so the card doesn't briefly drop its progress.
+            var importing = _importStatus.IsImporting && _importStatus.CollectionId == c.Id;
+            Tiles.Add(new BoardCardRef(c.Id, c.Name, OpenBoardRef, BoardEditor.Begin)
             {
                 MetaText = $"{count} · {ByteFormat.Format(c.SizeBytes)}",
+                IsImporting = importing,
+                ImportStatusText = importing ? _importStatus.Text : "",
             });
+        }
+
+        // If the board Edit popup is open (e.g. an external sync just refreshed the grid under it), re-bind it to
+        // the freshly-rebuilt card so a subsequent rename/delete acts on a card that's actually in Tiles, not the
+        // discarded instance; close it if that board is gone.
+        if (BoardEditor.IsSheetOpen && BoardEditor.EditTarget is { CollectionId: int editId })
+        {
+            var rebuilt = Tiles.OfType<BoardCardRef>().FirstOrDefault(r => r.CollectionId == editId);
+            if (rebuilt is null) BoardEditor.IsSheetOpen = false;
+            else BoardEditor.Begin(rebuilt);
         }
 
         _ = LoadCoversAsync();
@@ -149,84 +211,22 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
     private void OpenBoardRef(BoardCardRef r) => _openBoard(new BoardTarget(r.CollectionId, r.Name));
 
     // ── Board Edit popup ──────────────────────────────────────────────────────
+    // The rename / clear-cache / delete lifecycle lives in the shared BoardCardEditor (constructed in the ctor,
+    // also used by the Board screen's folder cards). Only the board-specific source-merge actions stay here.
 
-    [ObservableProperty] private BoardCardRef? _boardEditTarget;
-    [ObservableProperty] private bool _isBoardEditSheetOpen;
+    /// <summary>The board pencil's Edit popup (shared with the Board screen's folder cards).</summary>
+    public BoardCardEditor BoardEditor { get; }
 
-    [RelayCommand]
-    private void CloseBoardEditSheet() => IsBoardEditSheetOpen = false;
-
-    /// <summary>Open a board's Edit popup (the pencil) and fill its detail rows + source list lazily.</summary>
-    public void BeginEditBoard(BoardCardRef r)
+    // The extra detail a board shows over a plain folder: its provenance line + the merged-source list.
+    private Task LoadBoardSourcesAsync(BoardCardRef r, BoardDetail detail)
     {
-        BoardEditTarget = r;
-        IsBoardEditSheetOpen = true;
-        _ = LoadBoardDetailAsync(r);
-    }
-
-    private async Task LoadBoardDetailAsync(BoardCardRef r)
-    {
-        if (r.CollectionId is not int id) return;
-        r.CountsText = "Counting…";
-        r.CacheText = "";
-        r.Sources.Clear();
-
-        try
+        r.ImportedText = ImportedSummary(detail.Sources.Count);
+        foreach (var s in detail.Sources)
         {
-            var detail = await _library.GetBoardDetailAsync(id);
-            if (detail is null) { r.CountsText = "No details."; return; }
-            r.CountsText = $"{detail.Images} images · {detail.Gifs} GIFs · {detail.Videos} videos";
-            r.CacheText = ByteFormat.Format(detail.SizeBytes) + " on disk";
-            r.AddedText = "Added " + detail.CreatedAt.LocalDateTime.ToString("d MMM yyyy");
-            r.ImportedText = ImportedSummary(detail.Sources.Count);
-            foreach (var s in detail.Sources)
-            {
-                var name = s.Name ?? s.SourceBoardId ?? DeriveBoardName(s.SourceUrl);
-                r.Sources.Add(new Controls.BoardSourceRef(s.Id, name, s.SourceUrl, s.ImageCount));
-            }
+            var name = s.Name ?? s.SourceBoardId ?? DeriveBoardName(s.SourceUrl);
+            r.Sources.Add(new Controls.BoardSourceRef(s.Id, name, s.SourceUrl, s.ImageCount));
         }
-        catch (Exception ex)
-        {
-            // Don't leave the popup stuck on "Counting…" if the read fails — say so and surface the reason.
-            r.CountsText = "Couldn't load details.";
-            _toasts.Show($"Couldn't load board details: {ex.Message}", isError: true);
-        }
-    }
-
-    /// <summary>Rename a board (its local name).</summary>
-    public async Task RenameBoardAsync(string? newName)
-    {
-        if (BoardEditTarget is not { CollectionId: int id } r || string.IsNullOrWhiteSpace(newName)) return;
-        try
-        {
-            await _curation.RenameBoardAsync(id, newName.Trim());
-            r.Name = newName.Trim();
-            _toasts.Show($"Renamed to “{r.Name}”.");
-        }
-        catch (Exception ex) { _toasts.Show($"Couldn't rename: {ex.Message}", isError: true); }
-    }
-
-    /// <summary>Clear a board's cached thumbnails (regenerated on demand).</summary>
-    public async Task ClearBoardCacheAsync()
-    {
-        if (BoardEditTarget is not { CollectionId: int id } r) return;
-        var shas = await _library.GetBoardAssetShasAsync(id);
-        if (_thumbnails is not null)
-            foreach (var sha in shas) _thumbnails.Evict(sha);
-        _toasts.Show($"Cleared cached thumbnails for “{r.Name}”.");
-    }
-
-    /// <summary>Delete a board and its images completely (files to the recycle bin).</summary>
-    public async Task DeleteBoardAsync()
-    {
-        if (BoardEditTarget is not { CollectionId: int id } r) return;
-        try
-        {
-            var removed = await _curation.DeleteBoardAsync(id);
-            Tiles.Remove(r);
-            _toasts.Show($"Deleted board “{r.Name}” — {removed} image(s) sent to the recycle bin.");
-        }
-        catch (Exception ex) { _toasts.Show($"Couldn't delete board: {ex.Message}", isError: true); }
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -235,7 +235,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
     /// </summary>
     public async Task RemoveSource(Controls.BoardSourceRef? source)
     {
-        if (BoardEditTarget is not { CollectionId: int } r || source is null) return;
+        if (BoardEditor.EditTarget is not { CollectionId: int } r || source is null) return;
         try
         {
             var removed = await _curation.RemoveSourceAsync(source.Id);
@@ -260,8 +260,8 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
     /// <summary>"Add source board" — import another Pinterest board into this local board (a merge).</summary>
     public void AddSourceToEditTarget()
     {
-        if (BoardEditTarget is not { CollectionId: int } r) return;
-        IsBoardEditSheetOpen = false;
+        if (BoardEditor.EditTarget is not { CollectionId: int } r) return;
+        BoardEditor.IsSheetOpen = false;
         OpenImportSheet();
         SelectedImportTarget = ImportTargets.FirstOrDefault(t => t.CollectionId == r.CollectionId) ?? SelectedImportTarget;
     }
@@ -318,6 +318,11 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
     private async Task ImportAsync()
     {
         if (_ingest is null || _projects?.Current is null) return;
+        // A board Sync (or another import) may already own the single shared ImportStatus; refuse rather than
+        // clobber its live count + streamed pins. CanImport also gates the button, but a sync can start after the
+        // sheet was opened.
+        if (_importStatus.IsImporting) { _toasts.Show("An import is already running — wait for it to finish."); return; }
+        var token = _disposeCts.Token; // captured before any await — safe to read even after the CTS is disposed
         var url = NormalizeUrl(BoardUrl);
 
         var cookies = BrowserCookies.Resolve(CookiesBrowser);
@@ -331,6 +336,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
         var (card, targetId, isNew) = await ResolveImportTargetAsync(url);
         card.IsImporting = true;
         card.ImportStatusText = "Importing… starting";
+        _selfImporting = true; // we drive this card + refresh ourselves; keep the watcher from doubling up
         _importStatus.Begin(targetId); // share with the Board screen
 
         var options = new ConnectorOptions
@@ -365,11 +371,19 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
 
         try
         {
-            var result = await _ingest.ImportAsync(url, options, progress, targetId);
+            var result = await _ingest.ImportAsync(url, options, progress, targetId, token);
             transcript.AppendLine($"RESULT: {result.NewAssets} new, {result.DuplicateAssets} duplicate.");
             _toasts.Show(result.TotalItems == 0
                 ? $"“{card.Name}”: already up to date — nothing new."
                 : $"Imported {result.NewAssets} new image(s) into “{card.Name}”.");
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away from the Library mid-import (this VM disposed) — abort quietly, releasing the shared
+            // status so the shell isn't left stuck "importing".
+            _importStatus.End();
+            _selfImporting = false;
+            return;
         }
         catch (Exception ex)
         {
@@ -380,6 +394,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
             card.IsImporting = false;
             IsImporting = false;
             _importStatus.End();
+            _selfImporting = false;
 
             // Discard a board this import just created if it landed nothing — don't leave an empty board behind.
             // A new board that DID get some pins before failing is kept (a partial import the user can finish via
@@ -399,9 +414,13 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
             return;
         }
 
+        // Completed-just-before-Cancel race: if we were disposed during the await, don't mutate the dead VM.
+        if (token.IsCancellationRequested) { _importStatus.End(); _selfImporting = false; return; }
+
         card.IsImporting = false;
         IsImporting = false;
         _importStatus.End();
+        _selfImporting = false;
         await RefreshAsync();   // reload counts + covers (the importing card is rebuilt fresh)
         WriteImportLog(transcript);
     }
@@ -423,12 +442,15 @@ public partial class LibraryViewModel : ViewModelBase, IResumable
         // deletable even with 0 images (e.g. when the import that created it then fails before the grid
         // refreshes). It was previously left null and only fixed by the post-import refresh, which a failed
         // import skips — leaving an empty board with no pencil.
-        var card = new BoardCardRef(newId, name, OpenBoardRef, BeginEditBoard) { MetaText = "0 images" };
+        var card = new BoardCardRef(newId, name, OpenBoardRef, BoardEditor.Begin) { MetaText = "0 images" };
         Tiles.Insert(Math.Min(2, Tiles.Count), card); // after "+ New board" + "All images"
         return (card, newId, true);
     }
 
-    private bool CanImport() => !IsImporting && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);
+    // Block while THIS grid is importing, and also while any other import/sync owns the single shared ImportStatus
+    // (a board Sync sets only the shared flag, not this VM's IsImporting) — overlapping runs clobber its state.
+    private bool CanImport() =>
+        !IsImporting && !_importStatus.IsImporting && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);
 
     /// <summary>Derive a default board name from a board URL's last path segment.</summary>
     private static string DeriveBoardName(string url)

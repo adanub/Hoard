@@ -30,11 +30,11 @@ public partial class BoardView : UserControl
     {
         FolderEditSheet.RenameCommand = new RelayCommand<object?>(name =>
         {
-            if (Vm is { } vm) _ = vm.RenameFolderAsync(name as string);
+            if (Vm is { } vm) _ = vm.FolderEditor.RenameAsync(name as string);
         });
         FolderEditSheet.ClearCacheCommand = new RelayCommand(() =>
         {
-            if (Vm is { } vm) _ = vm.ClearFolderCacheAsync();
+            if (Vm is { } vm) _ = vm.FolderEditor.ClearCacheAsync();
         });
         FolderEditSheet.DeleteCommand = new RelayCommand(ShowFolderDeleteConfirm);
         FolderConfirmHost.DismissCommand = new RelayCommand(() => FolderConfirmHost.IsOpen = false);
@@ -42,7 +42,7 @@ public partial class BoardView : UserControl
 
     private void ShowFolderDeleteConfirm()
     {
-        if (Vm is not { FolderEditTarget: { } folder }) return;
+        if (Vm is not { FolderEditor.EditTarget: { } folder }) return;
         FolderConfirmContent.Title = "Delete folder?";
         FolderConfirmContent.Message =
             $"Delete the folder “{folder.Name}” and its images — files go to your recycle bin (any also in another board are removed there too).";
@@ -50,7 +50,7 @@ public partial class BoardView : UserControl
         FolderConfirmContent.ConfirmCommand = new RelayCommand(() =>
         {
             FolderConfirmHost.IsOpen = false;
-            if (Vm is { } v) { v.CloseFolderEditSheetCommand.Execute(null); _ = v.DeleteFolderAsync(); }
+            if (Vm is { } v) { v.FolderEditor.CloseCommand.Execute(null); _ = v.FolderEditor.DeleteAsync(); }
         });
         FolderConfirmContent.CancelCommand = new RelayCommand(() => FolderConfirmHost.IsOpen = false);
         FolderConfirmContent.Begin(3); // a brief cooldown — it deletes images

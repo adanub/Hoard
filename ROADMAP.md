@@ -36,13 +36,14 @@ scroll/selection), `GetCoverAssetsAsync` seeks spread positions instead of loadi
 scopes the rollup to the parent subtree, the section-folder cache is keyed by parent reference, `ParseSection`
 falls through to the flat probe, `ImportStatus` resets the collection id symmetrically, a v7 column-definition
 parity test was added, and shared `SpreadSelect`/`BoardCardCovers` helpers removed cover/spread duplication.
-All uncommitted on top of `e8285d3`. Tests: **95 (Core) + 29 (Desktop)**, green; build clean. **Next:** Phase 0
+**Committed as `56d8689`** (schema **v7**). Tests: **95 (Core) + 29 (Desktop)**, green; build clean. **Next:** Phase 0
 spike → confirm/adjust the connector + parser; the Image-detail screen; retiring FluentTheme; deeper review
 refactors. Material-shader background was dropped earlier (don't resurrect).
 
-**Review follow-ups (deferred, not bugs):** (1) the **folder-edit block** in `BoardViewModel`
-(`BeginEditFolder`/rename/clear-cache/delete, ~70 lines) still duplicates `LibraryViewModel`'s board-edit — both
-operate on `BoardCardRef`; extract a shared `BoardCardEditor` rather than refactoring the MVVM blind. (2) The
+**Review follow-ups:** (1) **Done** — the folder-edit block is extracted into a shared `BoardCardEditor`
+(`ViewModels/BoardCardEditor.cs`), used by both `LibraryViewModel` (board cards) and `BoardViewModel` (folder
+cards) over a `BoardCardRef`; the Library board edit adds its merged-source list via a `loadExtraDetail` hook,
+the folder edit passes none. (2) The
 **last-source** `RemoveSourceAsync` sweep deletes the board's whole subtree incl. user-filed (null-attribution)
 folder pins — this is **intended** ("remove the board's last source = empty the board, no orphaned churn"); a
 *multi-source* removal now spares user-moved pins (their attribution is detached on move). (3) `ReattachOrphans`
@@ -261,17 +262,20 @@ re-files a restored sectioned orphan onto the **root**, not its section (the sid
   they're never invisible.
 - **`RestoreAsync`/`RefetchAsync` reassign `Sha256`** — if a re-download ever yields bytes matching another
   asset, the unique `Sha256` index throws. Dedup/merge onto the existing asset instead of blindly assigning.
-- **`SyncAsync` re-entrancy + `RefetchTile` is `async void`** — add a guard so two syncs/imports can't overlap on
-  the shared `ImportStatus`, and give the refetch a `CancellationToken` (navigating away mid-refetch mutates a
-  disposed VM).
-- **`AssetTileViewModel.EnsureThumbnailAsync` does `File.Exists` inline** (on the realising thread) — move the
-  missing-file probe into the existing off-thread decode path so it can't jank masonry scroll on a slow drive.
-- **`GetBoardDetailAsync` runs the per-source count query even for single-source boards** where the result is
-  discarded — skip it when `Sources.Count <= 1`.
+- ~~**`SyncAsync` re-entrancy + `RefetchTile` cancellation**~~ — **done:** `SyncAsync` refuses to start while
+  `ImportStatus.IsImporting` (no clobbering a running Library import); and `BoardViewModel` holds a dispose-linked
+  `CancellationTokenSource` passed to `RefetchAsync`, cancelled (+ disposed) in `Dispose`, so navigating away
+  mid-refetch aborts the download and the `OperationCanceledException` is swallowed instead of mutating a dead VM.
+- ~~**`AssetTileViewModel.EnsureThumbnailAsync` does `File.Exists` inline**~~ — **done:** the missing-file probe
+  runs in `Task.Run` off the realising thread (continuation resumes on the UI thread for the bound state), so a
+  slow drive can't jank masonry scroll.
+- ~~**`GetBoardDetailAsync` runs the per-source count query even for single-source boards**~~ — **done:** the
+  per-source count query is skipped unless the board merges ≥2 sources (single-/zero-source boards never use it).
 - **Last-source sweep + manual collections:** `RemoveSourceAsync`'s last-source branch hard-deletes *every*
   remaining live pin; once manual (non-source) collections land, exclude manually-added images from the sweep.
-- **Recycle path doesn't prune empty shard dirs** (the permanent-delete path does) — harmless empties accumulate;
-  fold pruning into the recycle path (or route recycle through the store).
+- ~~**Recycle path doesn't prune empty shard dirs**~~ — **done:** `IMediaStore.PruneEmptyShards` exposes the
+  store's empty-parent pruning; `CurationService.FreeBlobsAsync` calls it after the batched recycle, so the
+  recycle path tidies `ab/cd` dirs like `DeleteAsync` does (covered by a `NestedBoardTests` assertion).
 - **Denormalised `Collection.SourceBoardId`/`SourceUrl` "primary pointer"** is now write-mostly (only the
   auto-folder import path reads it); fold it into a computed `Sources.First()` or drop it to remove the
   two-sources-of-truth maintenance.
@@ -335,27 +339,83 @@ The settled decisions and how far each is implemented after the integration batc
   `ProjectEditSheet`, `SheetHost`/`ToastHost`/`FlexWrapPanel`, the top-left-light-source token pass.
 - `116b91e` **`ItemCard`, `ConfirmSheet`, `BoardEditSheet` as gallery components** (+ icons, gallery wiring).
 
-## Uncommitted (working tree) — the nested-folders batch (on top of `e8285d3`)
+## Uncommitted (working tree) — review-follow-ups + sync-card fix + nav/UX + review-fixes (on top of `56d8689`)
 
-Everything in **Status** above (nested folders Phase 1–3 + live-routing/counts/covers + the `xhigh` code-review
-fixes). **New files:** `Core/Metadata/CollectionTree.cs` (subtree BFS, shared by delete/remove-source/known-items/
-counts/covers), `Core/Library/SpreadSelect.cs` (even-spread index math), `Desktop/ViewModels/BoardCardCovers.cs`
-(shared cover loader), `tests/Hoard.Core.Tests/NestedBoardTests.cs`, `tests/Hoard.Core.Tests/PinterestSectionParseTests.cs`.
-**Modified — Core:** `Domain/Collection` (+`SourceSectionId`), `Connectors/ISourceConnector` (+`Section*` on
-`SourceMediaItem`), `Ingest/IngestProgress` (+`ImportedIntoCollectionId`), `Ingest/IngestService` (section folders,
-known-items subtree, reattach id), `Library/CurationService` (subtree delete/remove-source, move), `Library/LibraryService`
-(subtree counts + scoped rollup, spread covers, child boards, subtree shas/detail), `Metadata/SchemaInitializer`
-(v7 guarded add). **Ingest:** `PinterestSidecarParser` (`ParseSection`). **Desktop:** `BoardViewModel` (folders,
-move, live routing, debounce dispose, OnResumed folders-only), `LibraryViewModel` (`IResumable`, edit-button +
-auto-discard fixes, live routing), `MainWindowViewModel`, `ProjectLauncherViewModel` (spread thumbnails),
-`ImportStatus` (+`LastImportedCollectionId`), `Navigation/NavigationService` (`IResumable`),
-`Views/BoardView.{axaml,axaml.cs}` (folder grid, sheets, move), `Controls/BoardEditSheet.{cs,axaml}`
-(`ShowSources`/`Heading`/`DeleteLabel`). + `SchemaInitializerTests`, docs. **Tests: 95 (Core) / 29 (Desktop) green;
-build clean** (the running app locks the Desktop DLLs — close it to build/run the Desktop suite).
+**An `xhigh` multi-agent code-review** (10 finder angles → verify → sweep) was run over this whole batch and **8
+confirmed bugs fixed:** (1) **import-overlap guard made symmetric** — `CanImport`/`ImportAsync` now also block on
+the shared `ImportStatus.IsImporting` (a board Sync no longer leaves the Library Import button live to clobber it);
+(2) **mouse back/forward swallowed while a modal sheet is open** (`MainWindow` checks for any open `SheetHost`) so
+the gesture can't tear the page out from under an overlay; (3) **forward thunks return null when their project was
+deleted** (the `_forward` thunk type is now `Func<ViewModelBase?>`, `GoForward` drops a dead entry) so forward
+can't rebuild a blank Library for a gone project; (4) **`RefetchTile` re-checks cancellation after its await** (the
+completed-just-before-dispose race); (5) **the Library Edit popup re-binds to the rebuilt card** when an external
+sync refreshes the grid under it; (6) **`LibraryViewModel.ImportAsync` is dispose-cancellable** (a `_disposeCts`
+like Board's) so backing out mid-import doesn't toast/rebuild on the dead VM; (7) **`BoardViewModel.Dispose`
+**Cancel**s (not just Disposes) the search/folder-reload debounces** so a mid-`Task.Delay` reload bails; (8) **`Pop`
+records the forward thunk before assigning `Current`** so the `CanGoForward` notification isn't stale. One review
+finding (off-thread `Tiles` mutation crash) was judged a **false positive** — the caller's `await` resumes on the
+UI `SynchronizationContext`, and the identical committed Board-watcher proves it; two **altitude** notes (the
+`ShowBoard` thunk reading the mutable `_thumbnails` field, the `_selfImporting` ordering dependence) were left as-is.
 
-**Before commit — runtime-verify** (close the app first): import a board → loose pins stream onto the grid while
-sectioned pins file into their folder cards live; drill into a folder (any depth) + back keeps scroll/selection;
-create/rename/delete a folder via its pencil; move a pin to a folder from the detail panel; board/folder card
-counts include section images; "All images" + project covers pull from varied boards; a failed import discards
-only a *truly* empty new board (an all-sectioned partial survives). **Phase 0 spike still pending** (gallery-dl
-section field) before auto-foldering does anything against real Pinterest.
+**Input — primary-click filtering (user-reported).** The custom tappable cards (`BoardCard`/`ItemCard`/`NewCard`/
+`NewProjectCard`) opened on **any** mouse button because Avalonia's `Tapped` gesture fires for left/right/middle/
+thumb alike; they now track `IsLeftButtonPressed` from `PointerPressed` and only activate on a primary click (the
+`SheetHost` scrim's click-away dismiss filters the same way). `Button`/`ListBox` already primary-filter.
+
+**GIF tile transparency (user-reported).** A playing GIF tile kept its **still thumbnail painted behind** the
+`AnimatedImageControl`, so a transparent GIF's see-through regions ghosted the static frame as onion-skin
+artifacts (the detail screen was fine — there the still and the player are mutually exclusive). `ItemCard` now
+**hides the still thumbnail while `PlaySource` is set**, so transparent areas show the card background instead.
+
+**UX — browser-style mouse back/forward + Import rename.** The mouse thumb buttons (XButton1/XButton2) now drive
+back/forward: `NavigationService` gained a **forward stack** (`GoForward`/`CanGoForward`) that holds only a
+rebuild *thunk* per backed-out page (the popped VM is still disposed — no kept-alive board/tiles), cleared on a
+fresh `Push`; `MainWindow` routes the buttons to `MainWindowViewModel.NavigateBack/Forward`, where back runs the
+current page's own `IHasBack.BackCommand` and forward rebuilds the page fresh. **The whole Projects → Library →
+Board chain is now one back/forward stack** — `Reset` only builds the root launcher at startup; the Library's
+back **pops to the launcher** (made `IResumable`, reloads recents on reveal) instead of resetting, and
+`ShowLibrary` records a rebuild thunk — so **forward re-enters a project after you back out to Projects** (the
+reported bug). A forward thunk always rebuilds for the currently-open project (changing `ProjectManager.Current`
+goes through `Push`, which clears forward). The Library grid's leading **"New board" card is renamed "Import"**
+(it opens the import sheet).
+
+**Bug fix — the Library card now reflects a board Sync.** Syncing a board (from the Board screen) drove only the
+shared `ImportStatus`, which `LibraryViewModel` never observed — so unlike an import, the board's **card in the
+Library showed no progress strip / live count**. `LibraryViewModel` now **subscribes to `ImportStatus`** (and is
+`IDisposable`, unsubscribed on nav dispose) and mirrors it onto the matching `BoardCardRef`, so an import *or* a
+sync lights the card up. A `_selfImporting` guard stops the watcher double-refreshing (or racing the failed-import
+discard) for the grid's own imports; `RefreshAsync` seeds a rebuilt card's strip from `ImportStatus` so returning
+to the Library mid-sync doesn't drop it.
+
+Otherwise internal cleanup, **no user-facing feature change.** **New file:** `Desktop/ViewModels/BoardCardEditor.cs` — the
+shared rename / clear-cache / delete lifecycle behind a `BoardCardRef`'s Edit popup, replacing the near-identical
+board-edit (in `LibraryViewModel`) and folder-edit (in `BoardViewModel`) blocks. Each VM constructs one with its
+own noun ("board"/"folder"), card-removal callback, optional post-change hook (folder re-evaluates `CanMoveSelected`),
+and optional `loadExtraDetail` hook (the board edit lists merged sources; the folder edit passes none).
+**Modified — Desktop:** `LibraryViewModel`/`BoardViewModel` (drop the duplicated edit blocks → `BoardEditor`/`FolderEditor`),
+`Views/LibraryView.{axaml,axaml.cs}` + `Views/BoardView.{axaml,axaml.cs}` (bind the sheets to `*Editor.*`),
+`AssetTileViewModel` (missing-file `File.Exists` probe now off the realising thread), `BoardViewModel` (`SyncAsync`
+refuses to start while `ImportStatus.IsImporting`; a dispose-linked `CancellationTokenSource` cancels an in-flight
+`RefetchTile` so navigating away can't mutate the dead VM). **Modified — Core:** `Library/LibraryService.GetBoardDetailAsync`
+(skip the per-source count query unless ≥2 sources); `Storage/IMediaStore` + `ContentAddressedStore` +
+`ProjectMediaStore` (new `PruneEmptyShards`) + `Library/CurationService.FreeBlobsAsync` (prune empty shard dirs
+after the batched recycle, matching `DeleteAsync`; `NestedBoardTests` asserts it). + docs (`CLAUDE.md`, this
+file). **Tests: 95 (Core) / 29 (Desktop) green; build clean.**
+
+**Before commit — runtime-verify** (close the app first): **mouse back/forward (thumb buttons) navigate the
+Projects ↔ Library ↔ Board ↔ folder stack** — back matches each ← button (Board pops, Library → Projects), forward
+returns to a backed-out board *and re-enters a project after backing out to Projects* (rebuilt fresh), and opening
+a different project from Projects clears the forward history; the Library's leading card reads **"Import"** and opens the import
+sheet; **sync a board → its Library card shows a progress strip + live count and refreshes its total when done**
+(matching an import); board pencil (Library) and folder pencil
+(Board screen) both rename / clear-cache / delete and show the right counts/sources; deleting a board/folder drops
+its card and recycles its images; a folder card's pencil still re-enables/disables the detail-panel Move after
+delete; Sync is blocked with a toast while an import runs. **Review-fix checks:** the thumb back/forward buttons do
+nothing while a sheet (import/edit/confirm/sync/move) is open; the Library Import button is disabled while a board
+Sync runs; deleting the open project from Projects then pressing forward does nothing (no blank Library).
+**Click-type check:** right / middle / mouse-4-5 clicking a card (project/board/folder/tile, "+ New", "Import")
+does **not** open or activate it — only a left click does. **GIF check:** play a transparent-background GIF tile
+in the grid — its see-through regions show the card background, with no ghost of the still thumbnail behind it.
+**Still pending (unchanged):** the **Phase 0 gallery-dl section spike**
+(before auto-foldering does anything against real Pinterest) and the larger deferred follow-ups (pin-id-keyed link
+model, "Unfiled" view, `RefetchTile` cancellation, recycle empty-shard pruning).
