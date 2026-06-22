@@ -163,10 +163,11 @@ Concepts that span multiple files:
   a sectionless pin lands on the board; the section pin keeps the **board's** source attribution, so
   `RemoveSourceAsync` (now subtree-scoped via `CollectionTree.SubtreeIdsAsync`, shared with delete-board) sweeps a
   source's foldered pins too, and `GetKnownItemsAsync` pairs held descendant-folder pins with the root board's
-  source ids so a re-sync pre-skips them. **What's NOT confirmed:** the exact gallery-dl sidecar field/flag —
-  `PinterestSidecarParser` probes a nested `section` object + flat `section_id` defensively (graceful no-op when
-  absent, so sections just don't form), pending a **live gallery-dl spike** (the connector passes no section flag
-  yet; the real archive shows only `board.section_count`, no per-pin attribution).
+  source ids so a re-sync pre-skips them. **Confirmed working end-to-end** (the user runs it against real boards
+  with sections): a plain board crawl emits per-pin section metadata in the sidecar — no section flag on the
+  connector — which `PinterestSidecarParser` extracts (it handles either a nested `section` object or a flat
+  `section_id`/`board_section_id`, probed defensively since Pinterest's shape drifts; still a graceful no-op for a
+  sectionless pin). So importing a board auto-creates a child folder per section and files its pins there.
 - **Compatibility / resilience to outside changes (cheap on open, deep on demand).** Older project DBs are
   upgraded by `SchemaInitializer` on open (above). Beyond that: **(marker)** a folder with project data but a
   missing/corrupt `hoard.project.json` is recoverable — `HoardProject.Open` tolerates a malformed marker (derives

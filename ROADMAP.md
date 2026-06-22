@@ -22,9 +22,10 @@ effective viewport). A new `IResumable` nav hook reloads a board's folders + gri
 sectioned pin into a child folder (`GetOrCreateSectionFolderAsync`, matched by `SourceSectionId`) while a loose
 pin lands on the board; `RemoveSourceAsync` is now subtree-scoped (shared `CollectionTree.SubtreeIdsAsync`) so a
 source's foldered pins go with it; `GetKnownItemsAsync` pre-skips held section pins on re-sync; a defensive
-`PinterestSidecarParser` section probe. **Phase 0 (pending — user runs):** a gallery-dl spike to confirm the
-exact per-pin section field/flag (the real archive shows only `board.section_count`); until then the connector
-passes no section flag and auto-foldering is a graceful no-op. **Live-routing + card counts:** imported pins now
+`PinterestSidecarParser` section probe. **Phase 0 (done — confirmed against real boards with sections):** a plain
+board crawl emits per-pin section metadata in the sidecar (no section flag needed on the connector); the parser
+handles either a nested `section` object or a flat `section_id`, so importing a board auto-creates a folder per
+section and files its pins there. **Live-routing + card counts:** imported pins now
 stream into the right place live (a sectioned pin updates its folder, never the root grid) via
 `IngestProgress.ImportedIntoCollectionId`; board/folder **card counts roll up the whole subtree**; covers are
 **spread (most-recent · midpoint · oldest)** across the subtree so the 3-up and "All images"/project collages
@@ -36,8 +37,8 @@ scroll/selection), `GetCoverAssetsAsync` seeks spread positions instead of loadi
 scopes the rollup to the parent subtree, the section-folder cache is keyed by parent reference, `ParseSection`
 falls through to the flat probe, `ImportStatus` resets the collection id symmetrically, a v7 column-definition
 parity test was added, and shared `SpreadSelect`/`BoardCardCovers` helpers removed cover/spread duplication.
-**Committed as `56d8689`** (schema **v7**). Tests: **95 (Core) + 29 (Desktop)**, green; build clean. **Next:** Phase 0
-spike → confirm/adjust the connector + parser; the Image-detail screen; retiring FluentTheme; deeper review
+**Committed as `56d8689`** (schema **v7**). Tests: **95 (Core) + 29 (Desktop)**, green; build clean. Section
+auto-foldering is **confirmed working** against real boards (Phase 0 done). **Next:** the Image-detail screen; retiring FluentTheme; deeper review
 refactors. Material-shader background was dropped earlier (don't resurrect).
 
 **Review follow-ups:** (1) **Done** — the folder-edit block is extracted into a shared `BoardCardEditor`
@@ -421,6 +422,5 @@ Sync runs; deleting the open project from Projects then pressing forward does no
 **Click-type check:** right / middle / mouse-4-5 clicking a card (project/board/folder/tile, "+ New", "Import")
 does **not** open or activate it — only a left click does. **GIF check:** play a transparent-background GIF tile
 in the grid — its see-through regions show the card background, with no ghost of the still thumbnail behind it.
-**Still pending (unchanged):** the **Phase 0 gallery-dl section spike**
-(before auto-foldering does anything against real Pinterest) and the larger deferred follow-ups (pin-id-keyed link
-model, "Unfiled" view, `RefetchTile` cancellation, recycle empty-shard pruning).
+**Still deferred:** the larger architectural follow-ups (pin-id-keyed link model, an "Unfiled" view for orphaned
+assets, `Sha256`-reassign dedup on restore). Section auto-foldering and the small review cleanups are done.
