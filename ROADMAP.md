@@ -3,7 +3,7 @@
 Progress tracker so a fresh session can resume. Architecture/conventions are in `CLAUDE.md`; the
 user-facing model is in `README.md`. Keep this file current as work lands.
 
-**Status (2026-06-21):** Phase 1 complete. Phase 2 — UI/UX redesign **integrated into the real screens** plus a
+**Status (2026-06-22):** Phase 1 complete. Phase 2 — UI/UX redesign **integrated into the real screens** plus a
 deep pass on the import/library data model. The **Projects → Library → Board** nav flow runs end to end. The
 board-merge model, rename, Sync, hard-delete-to-recycle-bin, compatibility/resilience, and import-correctness
 fixes landed earlier and are **committed** as `e8285d3` (schema **v6**).
@@ -339,7 +339,12 @@ The settled decisions and how far each is implemented after the integration batc
   `ProjectEditSheet`, `SheetHost`/`ToastHost`/`FlexWrapPanel`, the top-left-light-source token pass.
 - `116b91e` **`ItemCard`, `ConfirmSheet`, `BoardEditSheet` as gallery components** (+ icons, gallery wiring).
 
-## Uncommitted (working tree) — review-follow-ups + sync-card fix + nav/UX + review-fixes (on top of `56d8689`)
+## Committed this session — review-follow-ups + sync-card fix + nav/UX + review-fixes
+
+**Committed on top of `56d8689` as three commits:** `b6ae660` `refactor(core):` (single-source detail skip +
+recycle shard pruning), `fa1e20f` `fix(ui):` (primary-click filtering on cards + transparent-GIF tile ghosting),
+`ff3798c` `feat:` (mouse back/forward nav + Import rename + sync-aware Library cards + BoardCardEditor + the
+review bug-fixes). The user runtime-verified the nav, click-type, and GIF behaviour across the session.
 
 **An `xhigh` multi-agent code-review** (10 finder angles → verify → sweep) was run over this whole batch and **8
 confirmed bugs fixed:** (1) **import-overlap guard made symmetric** — `CanImport`/`ImportAsync` now also block on
