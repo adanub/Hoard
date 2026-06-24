@@ -39,6 +39,19 @@ public partial class App : Application
 
         Log.Information("Hoard starting. App data: {AppData}", appPaths.AppDataRoot);
 
+        // Capture otherwise-silent crashes (an unhandled UI-thread exception terminates the process before
+        // anything is written), and flush the file sink so the stack trace actually lands in hoard.log.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            Log.Fatal(e.ExceptionObject as Exception, "Unhandled exception (terminating: {Terminating})", e.IsTerminating);
+            Log.CloseAndFlush();
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Log.Error(e.Exception, "Unobserved task exception");
+            e.SetObserved();
+        };
+
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddSerilog(dispose: true));
         services.AddSingleton<Hoard.Core.Storage.IFileRecycler, Services.WindowsFileRecycler>(); // delete → recycle bin

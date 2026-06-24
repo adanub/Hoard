@@ -31,6 +31,25 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     [ObservableProperty] private bool _isFileMissing;
     [ObservableProperty] private bool _isRefetching;
 
+    /// <summary>This tile is the one expanded inline into the full-width detail band (the grid packs around it).
+    /// The small tile chrome hides while expanded; GIF playback is independent of this (a played GIF keeps
+    /// animating in its tile whether or not it's expanded).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BandPlaySource))]
+    private bool _isExpanded;
+
+    /// <summary>The GIF path for the inline detail band to animate — non-null ONLY when this tile is the expanded
+    /// one (and is a GIF). The band's <see cref="AnimatedImageControl"/> loads on its <c>Source</c> regardless of
+    /// visibility, and the band markup is instantiated in every realized tile, so binding it to the shared detail's
+    /// path would decode/play the selected GIF in every collapsed tile too. Gating on <see cref="IsExpanded"/>
+    /// keeps it to the one tile actually showing it.</summary>
+    public string? BandPlaySource => IsExpanded && IsGif && !IsDeleted ? Model.AbsolutePath : null;
+
+    /// <summary>Opacity of the expanded band's content (0 while the masonry is reflowing to make room, 1 once it
+    /// has settled), so the band fades in only after the tiles finish moving — and out before they reflow back.
+    /// The band Border tweens this via a transition; the view sets the target. -1 is never used; default 0.</summary>
+    [ObservableProperty] private double _bandContentOpacity;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PlaySource))]
     private bool _isPlaying;

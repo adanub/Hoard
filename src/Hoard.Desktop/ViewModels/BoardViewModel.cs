@@ -90,6 +90,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
             afterChange: () => OnPropertyChanged(nameof(CanMoveSelected)));
 
         _importStatus.PropertyChanged += OnImportStatusChanged;
+        Assets.CollectionChanged += (_, _) => SyncExpandedIndex(); // keep the band on the selected tile as items shift
         UpdateImportState();
         _ = LoadAssetsAsync();
         _ = LoadSourcesAsync(); // for the Sync button (a real board with at least one URL'd source)
@@ -103,7 +104,13 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     public ObservableCollection<AssetTileViewModel> Assets { get; } = new();
 
     [ObservableProperty] private AssetTileViewModel? _selectedAsset;
+    /// <summary>Index of <see cref="SelectedAsset"/> in <see cref="Assets"/> (-1 when nothing is expanded), bound
+    /// to the masonry layout so it lays that item out as the full-width inline detail band.</summary>
+    [ObservableProperty] private int _expandedIndex = -1;
     [ObservableProperty] private AssetDetailViewModel? _details;
+    /// <summary>True while the selected asset's detail is loading, so the band shows a spinner instead of a blank
+    /// rail (the band opens on <c>IsExpanded</c>, which flips before the async detail load completes).</summary>
+    [ObservableProperty] private bool _isDetailLoading;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private bool _isBusy;
 
@@ -438,36 +445,101 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     private void Back() => _requestBack();
 
     [RelayCommand]
-    private void CloseDetails() => SelectedAsset = null;
+    private void CloseDetails() => RequestCollapse();
+
+    // ── Closing the inline band is a sequence (fade the band out, THEN reflow the tiles back), so it's split
+    //    across the view: RequestCollapse → (view fades) → CommitCollapse → (layout reflows) → FinishCollapse.
+
+    /// <summary>Raised when a user-initiated close begins: the view fades the band out, then calls
+    /// <see cref="CommitCollapse"/>. With no view attached the collapse is immediate.</summary>
+    public event Action? CollapseStarting;
+
+    // True between CommitCollapse and FinishCollapse: the selection/expanded tile is kept alive (invisible) while
+    // the tiles reflow back, so SyncExpandedIndex must report -1 (the band is already leaving the layout).
+    private bool _collapsing;
+
+    /// <summary>Begin closing the band: ask the view to fade it out first (it then calls <see cref="CommitCollapse"/>).
+    /// Falls back to an immediate collapse when nothing is listening (design-time / no view).</summary>
+    public void RequestCollapse()
+    {
+        if (SelectedAsset is null) return;
+        if (CollapseStarting is null) { CommitCollapse(); FinishCollapse(); return; }
+        CollapseStarting.Invoke();
+    }
+
+    /// <summary>Step 2 of a close (after the fade-out): drop the band from the layout so the tiles reflow back up,
+    /// keeping the expanded tile selected-but-hidden (IsExpanded stays true) so it doesn't flash as a stretched
+    /// tile mid-reflow.</summary>
+    public void CommitCollapse()
+    {
+        if (SelectedAsset is null) return;
+        _collapsing = true;
+        ExpandedIndex = -1; // → the layout tweens the tiles back to the band-free packing
+    }
+
+    /// <summary>Step 3 of a close (after the reflow-back settles): clear the selection — the tile chrome returns
+    /// and the band element is released.</summary>
+    public void FinishCollapse()
+    {
+        if (!_collapsing) return;
+        _collapsing = false;
+        SelectedAsset = null;
+    }
 
     [RelayCommand]
     private void ClearSearch() => SearchQuery = "";
 
-    // Load full metadata for the detail panel whenever the selected tile changes.
-    partial void OnSelectedAssetChanged(AssetTileViewModel? value)
+    // The selected tile is the one expanded inline into the detail band: flip its IsExpanded, keep the masonry's
+    // ExpandedIndex in sync, and load its metadata for the band rail.
+    partial void OnSelectedAssetChanged(AssetTileViewModel? oldValue, AssetTileViewModel? newValue)
     {
+        // The deselected tile collapses; reset its band opacity (while it's hidden, so no flash) so re-expanding
+        // it fades fresh from 0.
+        if (oldValue is not null) { oldValue.IsExpanded = false; oldValue.BandContentOpacity = 0; }
+        if (newValue is not null) newValue.IsExpanded = true;
+        // Any genuine selection change ends a close-in-progress — covers a reload/move that clears SelectedAsset
+        // mid-collapse, which would otherwise leave _collapsing stuck true and SyncExpandedIndex pinned at -1.
+        _collapsing = false;
+        SyncExpandedIndex();
         OnPropertyChanged(nameof(CanMoveSelected)); // the Move action depends on there being a live selection
-        _ = LoadDetailsAsync(value);
+        _ = LoadDetailsAsync(newValue);
     }
+
+    // The expanded item's index shifts when tiles stream in/out (e.g. a live import inserts at the top), so
+    // recompute it whenever the collection changes — the band must follow the selected tile, not a stale index.
+    // While collapsing, report -1 (the band is leaving the layout) even though the tile is still selected.
+    private void SyncExpandedIndex() =>
+        ExpandedIndex = _collapsing || SelectedAsset is null ? -1 : Assets.IndexOf(SelectedAsset);
 
     // Reload after a short pause so we don't query on every keystroke.
     partial void OnSearchQueryChanged(string value) => _ = DebouncedSearchAsync();
 
     private async Task LoadDetailsAsync(AssetTileViewModel? tile)
     {
-        if (_library is null || tile is null) { Details = null; return; }
-        var detail = await _library.GetAssetDetailAsync(tile.Model.Id);
-        if (ReferenceEquals(SelectedAsset, tile)) // ignore if selection changed while loading
-            Details = detail is null ? null : new AssetDetailViewModel(detail);
+        Details = null; // clear immediately so a switch never shows the PREVIOUS asset's metadata while this loads
+        if (_library is null || tile is null) { IsDetailLoading = false; return; }
+        IsDetailLoading = true;
+        try
+        {
+            var detail = await _library.GetAssetDetailAsync(tile.Model.Id);
+            if (ReferenceEquals(SelectedAsset, tile)) // ignore if selection changed while loading
+                Details = detail is null ? null : new AssetDetailViewModel(detail);
+        }
+        finally
+        {
+            if (ReferenceEquals(SelectedAsset, tile)) IsDetailLoading = false;
+        }
     }
 
     private Task ReloadDetailsAsync() => LoadDetailsAsync(SelectedAsset);
 
-    /// <summary>Tapping a tile selects it (opens the detail panel) and, for a GIF, starts it autoplaying in
-    /// the grid. It keeps playing after the detail panel is closed, until pushed out by newer plays.</summary>
+    /// <summary>Tapping a tile expands it inline into the detail band (tapping the expanded tile again collapses
+    /// it). Independently, a tapped GIF starts autoplaying in its tile and keeps playing — whether or not it's
+    /// expanded, and after it collapses — until pushed out of the bounded LRU by newer plays.</summary>
     public void ActivateTile(AssetTileViewModel tile)
     {
-        SelectedAsset = tile;
+        if (ReferenceEquals(SelectedAsset, tile)) RequestCollapse(); // tap the open tile again → animated close
+        else SelectedAsset = tile;                                   // open (or switch directly to) this tile
         if (!tile.IsGif) return;
 
         var existing = _playing.Find(tile);

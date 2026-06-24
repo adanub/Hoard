@@ -57,9 +57,14 @@
              with a floating detail overlay on top. The masonry stays virtualized (its layout realizes from the
              effective viewport, not the measure height), so a folder header above it is free. -->
         <Panel>
-            <ScrollViewer Name="GridScroll" Padding="10"
+            <!-- Horizontal inset is a Margin on the content, NOT ScrollViewer.Padding. The masonry fills its width
+                 edge-to-edge, and SV horizontal padding cropped the right edge (the scrollbar/padding placement ate
+                 it — the measured width was already correct, so it wasn't an overflow). A content Margin gives a
+                 reliable, symmetric left/right inset. Vertical padding stays on the SV (its scroll-direction padding
+                 behaves, and the scroll-to-top math reads GridScroll.Padding.Top). -->
+            <ScrollViewer Name="GridScroll" Padding="0,10"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="6" ClipToBounds="False">
+                <StackPanel Spacing="6" Margin="10,0" ClipToBounds="False">
                     <!-- Folder grid: "+ New folder" + one BoardCard per child folder, rendered exactly like
                          top-level boards. Hidden for "All images" / search results. ClipToBounds=False down to
                          the item ContentPresenter so the cards' hover-scale + shadow aren't cropped (the same
@@ -97,116 +102,137 @@
                         </ItemsRepeater.Layout>
                         <ItemsRepeater.ItemTemplate>
                             <DataTemplate x:DataType="vm:AssetTileViewModel">
-                                <ctrl:ItemCard Thumbnail="{Binding Thumbnail}" PlaySource="{Binding PlaySource}"
-                                               IsImage="{Binding IsImage}" KindLabel="{Binding KindLabel}"
-                                               ShowGifTag="{Binding IsGifBadgeVisible}"
-                                               IsDeleted="{Binding IsDeleted}" DeletionNote="{Binding DeletionNote}"
-                                               IsThumbnailLoading="{Binding IsThumbnailLoading}"
-                                               IsFileMissing="{Binding IsFileMissing}" IsRefetching="{Binding IsRefetching}"
-                                               OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"
-                                               RefetchCommand="{Binding RefetchCommand}"/>
+                                <!-- Dual-mode item: the masonry tile when collapsed, a full-width inline detail
+                                     band when this tile is expanded (the layout sizes the item to the band rect). -->
+                                <Panel x:Name="ItemRoot" ClipToBounds="False">
+                                    <ctrl:ItemCard IsVisible="{Binding !IsExpanded}"
+                                                   Thumbnail="{Binding Thumbnail}" PlaySource="{Binding PlaySource}"
+                                                   IsImage="{Binding IsImage}" KindLabel="{Binding KindLabel}"
+                                                   ShowGifTag="{Binding IsGifBadgeVisible}"
+                                                   IsDeleted="{Binding IsDeleted}" DeletionNote="{Binding DeletionNote}"
+                                                   IsThumbnailLoading="{Binding IsThumbnailLoading}"
+                                                   IsFileMissing="{Binding IsFileMissing}" IsRefetching="{Binding IsRefetching}"
+                                                   OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"
+                                                   RefetchCommand="{Binding RefetchCommand}"/>
+
+                                    <!-- Inline detail band: big media (left) + info/actions rail (right), reusing
+                                         the board's loaded Details. IsVisible binds the TILE's IsExpanded; Opacity is
+                                         the BandContentOpacity the view drives (0 while the masonry reflows to make
+                                         room, 1 once it settles) — the transition fades it in after the tiles move
+                                         (and out before they reflow back). The inner content switches DataContext to
+                                         the AssetDetailViewModel. -->
+                                    <Border IsVisible="{Binding IsExpanded}" Opacity="{Binding BandContentOpacity}"
+                                            CornerRadius="{DynamicResource RadiusMd}"
+                                            Background="{DynamicResource PopoverBrush}" ClipToBounds="True"
+                                            BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                                            BoxShadow="{DynamicResource ShadowMd}">
+                                        <Border.Transitions>
+                                            <Transitions>
+                                                <DoubleTransition Property="Opacity" Duration="0:0:0.2"/>
+                                            </Transitions>
+                                        </Border.Transitions>
+                                        <Grid DataContext="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).Details}"
+                                              x:DataType="vm:AssetDetailViewModel">
+                                            <!-- Rail width is shared with the layout's band-height math (single source). -->
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="{x:Static ctrl:MasonryLayout.RailColumnWidth}"/>
+                                            </Grid.ColumnDefinitions>
+                                            <!-- Big media -->
+                                            <Panel Grid.Column="0" Background="{DynamicResource MutedBrush}">
+                                                <Image Source="{Binding Preview}" Stretch="Uniform" Margin="6"
+                                                       IsVisible="{Binding IsStaticImage}"/>
+                                                <!-- Source is gated on the TILE's IsExpanded (via BandPlaySource), so the
+                                                     GIF only decodes/plays in the one expanded tile, not in every realized
+                                                     band (AnimatedImageControl loads on Source regardless of visibility). -->
+                                                <ctrl:AnimatedImageControl Name="BandGif" Margin="6" IsVisible="{Binding IsGif}"
+                                                                           Source="{Binding #ItemRoot.((vm:AssetTileViewModel)DataContext).BandPlaySource}"/>
+                                                <TextBlock Text="🎬  Video — use “Open file” to play" IsVisible="{Binding IsVideo}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource MutedForegroundBrush}"/>
+                                                <StackPanel IsVisible="{Binding IsDeleted}" Spacing="6"
+                                                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap" MaxWidth="360"
+                                                               Foreground="{DynamicResource MutedForegroundBrush}"
+                                                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                                                </StackPanel>
+                                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                             IsVisible="{Binding IsPreviewLoading}"/>
+                                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                             IsVisible="{Binding #BandGif.IsLoading}"/>
+                                                <!-- Shown while Details itself is loading (DataContext here is null then,
+                                                     so this binds the board VM directly, not Details). Only renders for
+                                                     the expanded tile, since the whole band is IsVisible=IsExpanded. -->
+                                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
+                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                             IsVisible="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).IsDetailLoading}"/>
+                                            </Panel>
+
+                                            <!-- Info + actions rail -->
+                                            <DockPanel Grid.Column="1" Background="{DynamicResource PopoverBrush}">
+                                                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="16,12,10,6">
+                                                    <TextBlock Text="Details" Classes="h2" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
+                                                            Width="34" Height="34" Padding="0" ToolTip.Tip="Close (Esc)"
+                                                            Command="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).CloseDetailsCommand}">
+                                                        <ctrl:Icon Data="{StaticResource Icon.x}" Width="16" Height="16"/>
+                                                    </Button>
+                                                </Grid>
+                                                <ScrollViewer>
+                                                    <StackPanel Margin="16,0,16,16" Spacing="10">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding Description}" TextWrapping="Wrap"
+                                                                   Foreground="{DynamicResource MutedForegroundBrush}"
+                                                                   IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                                        <StackPanel Spacing="8" Margin="0,4,0,0">
+                                                            <StackPanel IsVisible="{Binding Dimensions, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                                <TextBlock Text="Dimensions" Classes="muted" FontSize="11"/>
+                                                                <TextBlock Text="{Binding Dimensions}"/>
+                                                            </StackPanel>
+                                                            <StackPanel>
+                                                                <TextBlock Text="File size" Classes="muted" FontSize="11"/>
+                                                                <TextBlock Text="{Binding FileSize}"/>
+                                                            </StackPanel>
+                                                            <StackPanel>
+                                                                <TextBlock Text="Type" Classes="muted" FontSize="11"/>
+                                                                <TextBlock Text="{Binding TypeText}"/>
+                                                            </StackPanel>
+                                                            <StackPanel IsVisible="{Binding Boards, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                                <TextBlock Text="Boards" Classes="muted" FontSize="11"/>
+                                                                <TextBlock Text="{Binding Boards}" TextWrapping="Wrap"/>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                        <StackPanel Spacing="6" Margin="0,6,0,0">
+                                                            <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open source on Pinterest"
+                                                                    HorizontalAlignment="Stretch" Click="OnOpenSource"
+                                                                    IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                                            <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open file"
+                                                                    HorizontalAlignment="Stretch" Click="OnOpenImage" IsVisible="{Binding IsLive}"/>
+                                                            <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Move to folder…"
+                                                                    HorizontalAlignment="Stretch" Click="OnMoveAsset"
+                                                                    IsVisible="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).CanMoveSelected}"/>
+                                                            <Button Theme="{StaticResource HoardButton}" Content="♻ Restore from source"
+                                                                    HorizontalAlignment="Stretch" Click="OnRestoreAsset" Margin="0,8,0,0"
+                                                                    IsVisible="{Binding IsDeleted}" IsEnabled="{Binding CanRestore}"/>
+                                                            <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete from archive"
+                                                                    HorizontalAlignment="Stretch" Click="OnDeleteAsset" Margin="0,8,0,0"
+                                                                    IsVisible="{Binding IsLive}"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </ScrollViewer>
+                                            </DockPanel>
+                                        </Grid>
+                                    </Border>
+                                </Panel>
                             </DataTemplate>
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- Detail overlay (floats over the grid). Delete/restore route through the view model. -->
-            <Border Width="360" HorizontalAlignment="Right" VerticalAlignment="Stretch"
-                    IsVisible="{Binding Details, Converter={x:Static ObjectConverters.IsNotNull}}"
-                    Background="{DynamicResource PopoverBrush}"
-                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,0,0,0"
-                    BoxShadow="{DynamicResource ShadowMd}">
-                <DockPanel>
-                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="16,12,10,8">
-                        <TextBlock Text="Details" Classes="h2" VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
-                                Width="34" Height="34" Padding="0" Command="{Binding CloseDetailsCommand}"
-                                ToolTip.Tip="Close (Esc)">
-                            <ctrl:Icon Data="{StaticResource Icon.x}" Width="16" Height="16"/>
-                        </Button>
-                    </Grid>
-
-                    <ScrollViewer>
-                        <StackPanel Margin="16,0,16,16" Spacing="10"
-                                    DataContext="{Binding Details}" x:DataType="vm:AssetDetailViewModel">
-                            <Border CornerRadius="{DynamicResource RadiusMd}" ClipToBounds="True"
-                                    Background="{DynamicResource MutedBrush}" IsVisible="{Binding IsImage}" MinHeight="80">
-                                <Panel>
-                                    <Image Source="{Binding Preview}" MaxHeight="320" Stretch="Uniform"
-                                           IsVisible="{Binding IsStaticImage}"/>
-                                    <ctrl:AnimatedImageControl Name="GifPlayer" Source="{Binding FilePath}"
-                                                               MaxHeight="320" IsVisible="{Binding IsGif}"/>
-                                    <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                 IsVisible="{Binding IsPreviewLoading}"/>
-                                    <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                 IsVisible="{Binding #GifPlayer.IsLoading}"/>
-                                </Panel>
-                            </Border>
-                            <Border CornerRadius="{DynamicResource RadiusMd}" Background="{DynamicResource MutedBrush}"
-                                    Padding="16" IsVisible="{Binding IsVideo}">
-                                <TextBlock Text="🎬  Video — use “Open file” to play" HorizontalAlignment="Center"
-                                           Foreground="{DynamicResource MutedForegroundBrush}"/>
-                            </Border>
-
-                            <Border CornerRadius="{DynamicResource RadiusMd}" Background="{DynamicResource RecessedBrush}"
-                                    BoxShadow="{DynamicResource ShadowInset}" Padding="16" IsVisible="{Binding IsDeleted}">
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap"
-                                               Foreground="{DynamicResource MutedForegroundBrush}"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-
-                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap"
-                                       Foreground="{DynamicResource MutedForegroundBrush}"
-                                       IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-
-                            <StackPanel Spacing="8" Margin="0,4,0,0">
-                                <StackPanel IsVisible="{Binding Dimensions, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                    <TextBlock Text="Dimensions" Classes="muted" FontSize="11"/>
-                                    <TextBlock Text="{Binding Dimensions}"/>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="File size" Classes="muted" FontSize="11"/>
-                                    <TextBlock Text="{Binding FileSize}"/>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="Type" Classes="muted" FontSize="11"/>
-                                    <TextBlock Text="{Binding TypeText}"/>
-                                </StackPanel>
-                                <StackPanel IsVisible="{Binding Boards, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                    <TextBlock Text="Boards" Classes="muted" FontSize="11"/>
-                                    <TextBlock Text="{Binding Boards}" TextWrapping="Wrap"/>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <StackPanel Spacing="6" Margin="0,6,0,0">
-                                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open source on Pinterest"
-                                        HorizontalAlignment="Stretch" Click="OnOpenSource"
-                                        IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open file"
-                                        HorizontalAlignment="Stretch" Click="OnOpenImage" IsVisible="{Binding IsLive}"/>
-                                <!-- File this pin into one of the board's folders (or back up to the parent). Visible
-                                     only when there's somewhere to move it; CanMoveSelected lives on the Board VM. -->
-                                <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Move to folder…"
-                                        HorizontalAlignment="Stretch" Click="OnMoveAsset"
-                                        IsVisible="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).CanMoveSelected}"/>
-                                <Button Theme="{StaticResource HoardButton}" Content="♻ Restore from source"
-                                        HorizontalAlignment="Stretch" Click="OnRestoreAsset" Margin="0,8,0,0"
-                                        IsVisible="{Binding IsDeleted}" IsEnabled="{Binding CanRestore}"/>
-                                <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete from archive"
-                                        HorizontalAlignment="Stretch" Click="OnDeleteAsset" Margin="0,8,0,0"
-                                        IsVisible="{Binding IsLive}"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </ScrollViewer>
-                </DockPanel>
-            </Border>
         </Panel>
     </DockPanel>
 

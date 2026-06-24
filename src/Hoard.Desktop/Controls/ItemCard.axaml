@@ -34,7 +34,7 @@
     <Border x:Name="CardRoot" CornerRadius="{DynamicResource RadiusMd}"
             Background="{DynamicResource MutedBrush}" BorderBrush="{DynamicResource LineBrush}"
             BorderThickness="1" Cursor="Hand" RenderTransformOrigin="50%,50%"
-            Tapped="OnCardTapped" PointerPressed="OnCardPressed" PointerReleased="OnCardReleased"
+            PointerPressed="OnCardPressed" PointerReleased="OnCardReleased" PointerMoved="OnCardMoved"
             PointerExited="OnCardExited" PointerCaptureLost="OnCardCaptureLost">
         <Border.Transitions>
             <Transitions>

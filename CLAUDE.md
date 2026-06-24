@@ -81,7 +81,8 @@ Concepts that span multiple files:
   is **swallowed while any `SheetHost` is open** so it can't pop the page out from under a modal. The old
   single-screen `LibraryView` was **split**: `LibraryViewModel` = the board grid, `BoardViewModel` = a board's
   asset grid (the GIF/detail/delete logic moved there). `MainWindowViewModel` holds the per-project
-  `ThumbnailCache` shared by both. Image-detail is still a Board-screen overlay (becomes its own pushed screen later).
+  `ThumbnailCache` shared by both. Image-detail is now an **inline full-width masonry band** (see the Masonry
+  bullet below), not an overlay or a pushed screen — uncommitted/in flight.
   **Opening/creating a project runs off the UI thread** (`ProjectLauncherViewModel.OpenOffUiThreadAsync` wraps
   `ProjectManager.Open/Create` + `EnsureCreatedAsync` in `Task.Run`, behind an `IsOpening` busy overlay): the
   first `DbContext` use **compiles the EF model synchronously** before its first `await` yields — a one-off,
@@ -191,10 +192,41 @@ Concepts that span multiple files:
   earlier design whose scattered release logic caused a series of leaks.)
 - **Masonry layout** splits the pure packing/visibility math (`MasonryPacker`, Avalonia-free, unit-tested,
   per-column binary search) from the `VirtualizingLayout` shell (`MasonryLayout`). Keep new layout math in the
-  packer so it stays testable.
+  packer so it stays testable. **Image-detail is an INLINE full-width band, not a separate screen/overlay**
+  (uncommitted, in flight): tapping a tile expands it (`AssetTileViewModel.IsExpanded`, toggled via
+  `BoardViewModel.SelectedAsset`); the packer lays that one item as a **full-width band** (drops below all columns,
+  spans the width, then columns resume beneath it — grid packs strictly above/below it, never beside), driven by
+  `MasonryLayout.ExpandedIndex` (bound to `BoardViewModel.ExpandedIndex` in `BoardView` code-behind) + a band-height
+  model. The item template is **dual-mode** (the `ItemCard` tile when collapsed, the band — big media + the reused
+  `AssetDetailViewModel` rail/actions — when `IsExpanded`). **The reflow is animated**, because the visible stutter
+  was the *tiles* snapping to make room, not the band: `MasonryLayout` keeps both the band-free (`_basePacker`) and
+  banded (`_bandPacker`) packings and **tweens every visible tile's rect** between them over a short eased reflow
+  (open 280ms / close 180ms) via a shared `Infrastructure/Tween.cs` lerp (a `DispatcherTimer`+`Stopwatch` value
+  tween — used by the reflow *and* the scroll-to-top; Avalonia can't animate a plain field/`ScrollViewer.Offset`).
+  Keep band-sizing/packing math in `MasonryPacker` (incl. `MasonryPacker.BandHeight`, unit-tested) — the *pure*
+  packer stays untouched so its tests stand. The band fade is **sequenced around** the reflow, not
+  concurrent: a `ReflowSettled` event + a per-tile `BandContentOpacity` (a `DoubleTransition` on the band Border).
+  **Open** = tiles reflow (band present but opacity 0) → on `ReflowSettled(i)` fade the band in; scroll-to-top runs
+  at the start (`ExpandedBandTop`+`TranslatePoint` — also fixes the edge-tile "won't open" case without needing the
+  element realized). **Close** (reverse, quicker) is a 3-step handshake so the band fades *before* the tiles move
+  and the item never flashes as a stretched tile: `RequestCollapse` → `CollapseStarting` (view fades out) →
+  `CommitCollapse` (drops the band from the layout, keeps the tile selected-but-hidden so `IsExpanded` stays true) →
+  reflow back → `ReflowSettled(-1)` → `FinishCollapse` (clears selection); `_collapsing` holds `SyncExpandedIndex`
+  at -1 through the close, with a fallback timer if the settle signal is missed. **GIF in-tile LRU is unchanged** —
+  expansion is additive (played GIFs keep animating in their tiles regardless). **The band's media is dual-mode
+  template content in *every* realized tile, and `AnimatedImageControl` loads on its `Source` regardless of
+  visibility** — so the band GIF binds the per-tile `AssetTileViewModel.BandPlaySource` (non-null only for the one
+  expanded tile), NOT the shared `Details.FilePath`, or the selected GIF decodes/plays in every collapsed tile.
+  **Gotcha already hit (cost a crash):**
+  animating `RenderTransform` with `TransformOperations` via a *code-built* `Animation` throws at runtime (no
+  animator resolved) **and the throw is deferred onto the animation timer, so a try/catch can't catch it** — use the
+  declarative XAML transition path (e.g. `DoubleTransition`) for any movement, or opacity-only in code; never a
+  code-built transform animation.
 - **Logging.** Serilog → the launching terminal (the WinExe attaches to the parent console) **and**
-  `%APPDATA%/Hoard/logs/hoard.log`. Per-import transcripts are written into the project's `logs/`. Read the log
-  file directly to diagnose failures rather than asking the user to copy from the UI.
+  `%APPDATA%/Hoard/logs/hoard.log` (rolled daily: `hoardYYYYMMDD.log`). `App` hooks `AppDomain.UnhandledException`
+  + `TaskScheduler.UnobservedTaskException` and `Log.CloseAndFlush()`es so an otherwise-silent UI-thread crash
+  still lands in the log with a stack trace. Per-import transcripts are written into the project's `logs/`. Read
+  the log file directly to diagnose failures rather than asking the user to copy from the UI.
 
 ## Conventions
 
@@ -249,7 +281,15 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   `Tapped` (the `*Card` controls) must gate it on a primary press — track `IsLeftButtonPressed` from
   `PointerPressed` and bail in the `Tapped` handler when it wasn't the left button — otherwise right/middle/mouse4-5
   clicks all activate it. The scrim's click-away dismiss filters the same way. `Button`/`ListBox` already
-  primary-filter, so this only bites hand-rolled `Tapped` controls.** See `Controls/BoardCard.cs`. **A `BoxShadow` draws
+  primary-filter, so this only bites hand-rolled `Tapped` controls.** See `Controls/BoardCard.cs`. **`Tapped` also
+  needs the press AND release to hit the *same* visual, so a control with a press/hover `RenderTransform` (`scale`,
+  origin centre) whose centre can be **off-screen** (e.g. a tall masonry tile only partly in the viewport) will
+  shift out from under the pointer on press, the release lands on a different element, and `Tapped` never fires —
+  the tile "refuses to open", position-dependently. Don't rely on `Tapped` there: capture the pointer on
+  `PointerPressed` and activate on `PointerReleased` (capture forces the release back to the control). Gate on the
+  primary button (`IsLeftButtonPressed` at press + `InitialPressMouseButton == Left` at release) and treat a >~12px
+  move as a drag. See `Controls/ItemCard.cs` — this was the long-running "edge tiles won't expand" bug, found by
+  logging the click chain (press fired, `Tapped` didn't), not by guessing.** **A `BoxShadow` draws
   OUTSIDE the element's layout box, so any surface with one (cards, the `.card` style, badges) must reserve
   room for its shadow and not be self-clipped — else it crops at the element's edge.** Bake a `Margin` ≥ the
   shadow's blur+offset extent onto the shadowed element itself (size it for the *largest* theme — light

@@ -38,7 +38,7 @@ scopes the rollup to the parent subtree, the section-folder cache is keyed by pa
 falls through to the flat probe, `ImportStatus` resets the collection id symmetrically, a v7 column-definition
 parity test was added, and shared `SpreadSelect`/`BoardCardCovers` helpers removed cover/spread duplication.
 **Committed as `56d8689`** (schema **v7**). Tests: **95 (Core) + 29 (Desktop)**, green; build clean. Section
-auto-foldering is **confirmed working** against real boards (Phase 0 done). **Next:** the Image-detail screen; retiring FluentTheme; deeper review
+auto-foldering is **confirmed working** against real boards (Phase 0 done). **Next:** image-detail Increment 2 (zoom/pan, in-app delete sheet, narrow stacking); retiring FluentTheme; deeper review
 refactors. Material-shader background was dropped earlier (don't resurrect).
 
 **Review follow-ups:** (1) **Done** — the folder-edit block is extracted into a shared `BoardCardEditor`
@@ -49,6 +49,97 @@ the folder edit passes none. (2) The
 folder pins — this is **intended** ("remove the board's last source = empty the board, no orphaned churn"); a
 *multi-source* removal now spares user-moved pins (their attribution is detached on move). (3) `ReattachOrphans`
 re-files a restored sectioned orphan onto the **root**, not its section (the sidecar carries no section id).
+
+## Uncommitted (working tree) — inline image-detail, Increment 1 (on top of `95712cb`)
+
+The image-detail is **not** a separate pushed screen — tapping a tile **expands it inline** into a full-width band
+in the masonry (Pinterest-closeup style), with the grid packing strictly **above and below** it. **Done + tested:**
+`MasonryPacker` lays one item as a full-width band (drops below all columns, spans full width, resumes columns
+below) — 6 new unit tests cover geometry, visibility, brute-force-with-band, and the no-op guards; `MasonryLayout`
+drives it via an `ExpandedIndex` property + a band-height model (wide: image left of a 340px rail; height from the
+real aspect, capped). **VM:** `AssetTileViewModel.IsExpanded`; `BoardViewModel` toggles expansion on tap
+(`SelectedAsset`), keeps `ExpandedIndex` synced as tiles stream in/out, and the **in-tile GIF LRU is unchanged**
+(played GIFs keep animating whether expanded or not). **View:** the item template is dual-mode (tile when
+collapsed, the band — big media + the reused detail rail/actions — when expanded); the old right-side overlay is
+removed; the layout's `ExpandedIndex` is bound to the VM in code-behind. **Tests: 95 (Core) / 35 (Desktop) green.**
+
+**Crash — FIXED (user-confirmed):** the band-appear animation was a fade **+ scale**, but animating
+`RenderTransform` with `TransformOperations` via a *code-built* `Animation` doesn't resolve an animator at runtime
+and **threw on every expand → crashed the app**. Worse, the throw is **deferred onto the animation timer**, so a
+try/catch around `RunAsync` can't catch it — it has to be opacity-only in code, or use the declarative XAML
+transition path. Fixed to opacity-only; `App` now also hooks `AppDomain.UnhandledException` +
+`TaskScheduler.UnobservedTaskException` and `Log.CloseAndFlush()`es (the crash hadn't been logged — an unhandled
+UI-thread exception terminated the process before Serilog flushed), so any future crash lands in `hoard.log`.
+
+**Edge-tile "band won't open" — FIXED (root cause found via logging, after two wrong guesses).** Symptom:
+clicking a tile whose top/bottom protruded past the viewport showed the press state but the band never opened;
+repeated clicks didn't help. **Instrumented the whole click→open→expand chain** with temporary Serilog lines —
+the log was decisive: failing tiles fired `PointerPressed` every time but **`Tapped` never fired**, so
+`ActivateTile` was never called (the open/layout/scroll path was always fine). Root cause: Avalonia's `Tapped`
+needs the press **and** release to hit the **same visual**, but `ItemCard`'s press/hover `RenderTransform`
+(`scale(0.97)`/`scale(1.03)`, origin centre) shifts a tile whose **centre is off-screen** out from under the
+pointer, so the release lands on a different element and `Tapped` is never raised — exactly why it was
+position-dependent. **Fix:** `ItemCard` no longer uses `Tapped`; it **captures the pointer on press and activates
+on release** (capture forces the release back to the card regardless of the shift — immune to the cause, not a
+theory about it). Primary-button-only + inner-button (Unload) exclusion preserved; a >12px move is a drag, not a
+tap. (The earlier `FillVisible` always-realize-the-expanded-index is kept as a correct safety measure — the band
+must be realized even when packed beyond the buffer — but it was **not** what fixed the open bug.)
+
+**Animated masonry reflow (the real polish — the band fade alone wasn't the issue).** The "instant stutter" was
+the **tiles snapping** to their new positions to make room — a `VirtualizingLayout` has no built-in reorder
+animation. Now `MasonryLayout` **tweens** the tiles between the band-free packing (`_basePacker`) and the banded
+packing (`_bandPacker`) over a short eased reflow (open 280ms / close 180ms), driven by a `DispatcherTimer` +
+`Stopwatch` (frame-rate-independent), lerping every visible tile's rect by a `0→1` factor (both packers kept; the
+*pure* `MasonryPacker` is unchanged so its tests stand). The band fade is **sequenced around** the reflow via a new
+`ReflowSettled` event + a per-tile `BandContentOpacity` (a `DoubleTransition` on the band Border):
+- **Open:** tap → tiles reflow to open the gap (band present but `BandContentOpacity 0`, invisible) → on
+  `ReflowSettled(i)` the view **smoothly scrolls** the band's top to the viewport top **and** fades the band in,
+  together. The scroll is its own eased manual tween (`DispatcherTimer`+`Stopwatch` lerp of `GridScroll.Offset.Y`,
+  `CubicEaseInOut`, 280ms) — **never a snap**, and it runs **after** the tiles finish moving, not before (an earlier
+  snap-at-start felt jerky and defeated the animation). Target = `ExpandedBandTop` (built **eagerly** on expand from
+  the cached aspects+width) → `TranslatePoint` into the scroll viewport; running it at settle means the extent has
+  grown to full band height, so even a near-bottom band reaches the top (no clamp). Do **not** put a transition on
+  `ScrollViewer.Offset` itself — that would lag every normal wheel/drag scroll.
+- **Close (reverse, quicker):** a 3-step handshake so the band fades out *before* the tiles move and the item never
+  flashes as a stretched tile mid-reflow. `BoardViewModel.RequestCollapse` (✕/Esc/tap-again) → `CollapseStarting`
+  → view fades `BandContentOpacity→0` → `CommitCollapse` (drops the band from the layout, keeps the tile
+  selected-but-hidden so `IsExpanded` stays true) → tiles reflow back → `ReflowSettled(-1)` → `FinishCollapse`
+  clears the selection. `_collapsing` makes `SyncExpandedIndex` report -1 through the close; a fallback timer
+  finalizes if the settle signal is ever missed.
+
+Kept the fade **opacity-only via a declarative `DoubleTransition`** (not a code-built transform animation — see the
+crash note). The old `RevealBand`/`BandAppear` code-behind is gone.
+
+**Grid padding — FIXED.** Tiles had a left inset but cropped on the right. The masonry fills its width edge-to-edge,
+and `ScrollViewer.Padding`'s horizontal component cropped the right (scrollbar/padding placement — the *measured*
+width was already correct, confirmed via logging, so it wasn't an overflow). Moved the horizontal inset onto a
+content `Margin="10,0"` (reliable, symmetric) and made the SV padding vertical-only (`0,10`, keeping the
+scroll-to-top math that reads `Padding.Top`).
+
+**Status: user-confirmed working** (open from any tile incl. edge tiles, symmetric padding, right/middle-click
+don't open). Diagnostics removed.
+
+**Code-review pass (xhigh, 10 angles) — all findings addressed.** (1) **GIF multiplication, real regression:** the
+band's `AnimatedImageControl` is in every realized tile's template and loads on `Source` regardless of visibility,
+so binding it to the shared `Details.FilePath` decoded/played the selected GIF in *every* collapsed tile. Fixed
+with a per-tile `AssetTileViewModel.BandPlaySource` (`IsExpanded && IsGif && !IsDeleted ? path : null`) bound via
+`#ItemRoot` — only the one expanded tile loads it. (2) **scroll tween not cancelled** → `_scroll.Stop()` on
+close/switch. (3) **timers not torn down on Pop** → `BoardView.OnDetachedFromVisualTree` stops the scroll tween +
+`MasonryLayout.StopAnimation()`. (4) **`_collapsing` could stick true** (reload mid-close) → reset on every
+selection change. (5) **stale `Details` on a direct A→B switch** → clear `Details` at the start of
+`LoadDetailsAsync`. (6) **opacity set by layout index** → set on `SelectedAsset` directly. (8) **empty band on a
+slow detail load** → `IsDetailLoading` spinner. (9/10) **two hand-rolled tween loops** → one shared
+`Infrastructure/Tween.cs`; dead `onArrived` plumbing gone. (12) **band-height math** moved into the unit-tested
+`MasonryPacker.BandHeight` (+3 tests). (13) **`RailWidth 340` duplicated** → single `MasonryLayout.RailWidth` /
+`RailColumnWidth` (XAML uses `{x:Static}`). (14) **capture blocked touch drag-scroll** → `ItemCard` releases
+capture on a >12px drag. **(7)** programmatic `SelectedAsset=null` (move/reload) collapses instantly with no fade —
+**intentional** (the tile is being removed/rebuilt; #4 prevents the stuck state). **(11)** the eager `BuildBand` in
+`OnExpandedChanged` was flagged redundant but is **load-bearing** — a direct A→B switch settles *synchronously*
+(factor already 1) before any measure builds the band packer, so `ExpandedBandTop` would be null and the switch
+wouldn't scroll; kept. **Tests: 95 (Core) / 38 (Desktop) green.** Still uncommitted, pending the explicit ask.
+
+**Increment 2 (TODO):** click-to-zoom/pan on the band image, move delete off the `DeleteDialog` window into an
+in-app note sheet, and the narrow-width stacked band layout (the band currently always uses the wide side-rail).
 
 ## Done
 

@@ -79,30 +79,60 @@ public partial class ItemCard : UserControl
         InitializeComponent();
     }
 
-    // True while the in-progress press is the primary (left) button — so only a primary click opens the tile,
-    // not a right / middle / thumb-button tap (the Tapped gesture fires for every button).
+    // True while the in-progress press is the primary (left) button; the press origin tells a tap from a drag.
     private bool _primaryPressed;
+    private Point _pressOrigin;
 
-    private void OnCardTapped(object? sender, TappedEventArgs e)
-    {
-        if (!_primaryPressed) return;
-        // Ignore taps that came from a button inside the tile (e.g. the Unload button): the Tapped gesture
-        // bubbles up past the button's Click, and re-firing OpenCommand would re-activate/replay the tile.
-        if (e.Source is Visual source && source.FindAncestorOfType<Button>(includeSelf: true) is not null)
-            return;
-        if (OpenCommand is { } cmd && cmd.CanExecute(null)) cmd.Execute(null);
-    }
-
-    // Press feedback toggles a "pressed" class on the card (:pointerover is automatic). The Unload button
-    // handles its own pointer events, so pressing it never triggers the card's press/scale or its tap.
+    // Activate on RELEASE with pointer CAPTURE — NOT on the Tapped gesture. Logging proved the old bug: Avalonia's
+    // Tapped needs the press AND release to hit the SAME visual, but a tile whose centre is off-screen (top/bottom
+    // protruding past the viewport) scales toward that centre on press (the hover/press RenderTransform), shifting
+    // it out from under the pointer — so the release hits a different visual, Tapped never fires, and the tile
+    // "refuses to open". Capturing the pointer on press guarantees the release comes back to this card. The Unload
+    // button handles its own pointer events (marks them handled), so this never fires for a press on it.
     private void OnCardPressed(object? sender, PointerPressedEventArgs e)
     {
         _primaryPressed = e.GetCurrentPoint(this).Properties.IsLeftButtonPressed;
-        if (_primaryPressed) SetPressed(true);
+        if (!_primaryPressed) return;
+        _pressOrigin = e.GetPosition(this);
+        SetPressed(true);
+        e.Pointer.Capture(CardRoot);
     }
-    private void OnCardReleased(object? sender, PointerReleasedEventArgs e) => SetPressed(false);
+
+    private void OnCardReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        var wasPrimary = _primaryPressed;
+        _primaryPressed = false;
+        SetPressed(false);
+        if (ReferenceEquals(e.Pointer.Captured, CardRoot)) e.Pointer.Capture(null);
+
+        if (!wasPrimary || e.InitialPressMouseButton != MouseButton.Left) return;
+        // Ignore a release over an inner button (e.g. Unload), and a drag (released far from where it was pressed).
+        if (e.Source is Visual src && src.FindAncestorOfType<Button>(includeSelf: true) is not null) return;
+        var moved = e.GetPosition(this) - _pressOrigin;
+        if (moved.X * moved.X + moved.Y * moved.Y > 12 * 12) return;
+
+        if (OpenCommand is { } cmd && cmd.CanExecute(null)) cmd.Execute(null);
+    }
+
+    // A drag past the tap threshold (e.g. a touch/pen scroll started on the tile) isn't a tap: release the capture
+    // so the ScrollViewer can take the gesture over, and cancel the pending activation. e.GetPosition(this) is in
+    // the card's own (untransformed) space, so the press-scale never trips this and a click-in-place stays a tap.
+    private void OnCardMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_primaryPressed) return;
+        var moved = e.GetPosition(this) - _pressOrigin;
+        if (moved.X * moved.X + moved.Y * moved.Y <= 12 * 12) return;
+        _primaryPressed = false;
+        SetPressed(false);
+        if (ReferenceEquals(e.Pointer.Captured, CardRoot)) e.Pointer.Capture(null);
+    }
+
     private void OnCardExited(object? sender, PointerEventArgs e) => SetPressed(false);
-    private void OnCardCaptureLost(object? sender, PointerCaptureLostEventArgs e) => SetPressed(false);
+    private void OnCardCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        _primaryPressed = false;
+        SetPressed(false);
+    }
 
     private void SetPressed(bool value)
     {
