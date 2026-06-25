@@ -50,7 +50,7 @@ folder pins — this is **intended** ("remove the board's last source = empty th
 *multi-source* removal now spares user-moved pins (their attribution is detached on move). (3) `ReattachOrphans`
 re-files a restored sectioned orphan onto the **root**, not its section (the sidecar carries no section id).
 
-## Uncommitted (working tree) — inline image-detail, Increment 1 (on top of `95712cb`)
+## Inline image-detail, Increment 1 — COMMITTED `5dbf29c` (on `95712cb`), user-verified
 
 The image-detail is **not** a separate pushed screen — tapping a tile **expands it inline** into a full-width band
 in the masonry (Pinterest-closeup style), with the grid packing strictly **above and below** it. **Done + tested:**
@@ -136,7 +136,7 @@ capture on a >12px drag. **(7)** programmatic `SelectedAsset=null` (move/reload)
 **intentional** (the tile is being removed/rebuilt; #4 prevents the stuck state). **(11)** the eager `BuildBand` in
 `OnExpandedChanged` was flagged redundant but is **load-bearing** — a direct A→B switch settles *synchronously*
 (factor already 1) before any measure builds the band packer, so `ExpandedBandTop` would be null and the switch
-wouldn't scroll; kept. **Tests: 95 (Core) / 38 (Desktop) green.** Still uncommitted, pending the explicit ask.
+wouldn't scroll; kept. **Tests: 95 (Core) / 38 (Desktop) green. Committed `5dbf29c`.**
 
 **Increment 2 (TODO):** click-to-zoom/pan on the band image, move delete off the `DeleteDialog` window into an
 in-app note sheet, and the narrow-width stacked band layout (the band currently always uses the wide side-rail).
