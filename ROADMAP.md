@@ -513,6 +513,18 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 - No paging: `BoardViewModel` materialises a tile VM per asset (cheap via virtualisation, but the VM list
   is full) — page when boards get very large.
 - Optional: add an `.editorconfig` to enforce the C# formatting conventions documented in `CLAUDE.md`.
+- **Deferred cleanups from the shell-chrome xhigh review** (all report-only; the confirmed bugs were fixed
+  pre-commit): a shared card-filter helper (the trim→`IsFilteredOut`→crumb-count dance is triplicated across
+  launcher/Library/Board, with "reapply after rebuild" needed at every grid-rebuild site); a shared
+  `Infrastructure/Debouncer` (the `_gifScan` timer joins two CTS/Task.Delay debouncers in `BoardViewModel`);
+  a `Plural(n, noun)` formatter (~8 hand-rolled `n == 1 ?` ternaries); a shared `JsonFile.TryLoad/Save`
+  (UiSettingsStore repeats ProjectManager's + HoardProject's pattern; none write atomically); making
+  `UiSettings` observable per-property instead of the store-wide `Changed` (each live consumer hand-diffs);
+  a `FloatingBarClearance` token for the ~96px bottom insets hardcoded in three views; a single
+  dismissable-transient arbiter (the ＋ menu is special-cased in `MainWindow.Back/Forward` ahead of the sheet
+  sweep); `MasonryLayout` exposing its visible index range so GIF autoplay needn't re-derive visibility with
+  a visual-tree walk. **Known limitation (documented in CLAUDE.md):** popup-rooted UI (ComboBox dropdowns,
+  ToolTips) doesn't inherit the Settings interface-scale layout transform.
 
 ## Product decisions & their current state
 
