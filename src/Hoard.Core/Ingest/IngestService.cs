@@ -105,15 +105,25 @@ public sealed class IngestService
         // imported asset is reported so the UI can show it immediately (not after the whole batch).
         await connector.DownloadAsync(url, effectiveOptions, downloadLog, async (item, itemCt) =>
         {
+            // Each item is ATOMIC once its blob lands: cancellation (backing out of a board mid-sync, closing the
+            // Library mid-import) is honoured between items — up to and including PutAsync — but never inside the
+            // blob→row window. A cancel between PutAsync and SaveChangesAsync would strand an orphaned blob with no
+            // Asset row; worse, one between PutAsync and the tombstone-compensating DeleteAsync below would silently
+            // RESURRECT a deliberately-freed tombstone blob, and nothing ever revisits those (re-syncs pre-skip
+            // tombstoned pins). The remaining per-item work is a handful of local DB calls — cancellation latency
+            // stays milliseconds.
+            itemCt.ThrowIfCancellationRequested();
+            var committed = CancellationToken.None;
+
             if (item.SourceId is not null) importedPins.Add(item.SourceId);
             var blob = await _store.PutAsync(item.FilePath, itemCt).ConfigureAwait(false);
-            var existing = await FindExistingAssetAsync(db, assetsBySha, blob.Sha256, itemCt).ConfigureAwait(false);
+            var existing = await FindExistingAssetAsync(db, assetsBySha, blob.Sha256, committed).ConfigureAwait(false);
 
             // Honour a tombstone: this content was deliberately deleted, so don't resurrect it (and drop
             // the blob we just re-stored). The DB is the authority even if the skip-archive missed it.
             if (existing is { DeletedAt: not null })
             {
-                await _store.DeleteAsync(blob.RelativePath, itemCt).ConfigureAwait(false);
+                await _store.DeleteAsync(blob.RelativePath, committed).ConfigureAwait(false);
                 processed++;
                 skippedDeleted++;
                 progress?.Report(new IngestProgress(IngestPhase.Storing, processed, 0,
@@ -127,7 +137,7 @@ public sealed class IngestService
             // Import into the one board the user chose/created (a merge can add several source boards), or
             // auto-folder by the pin's own source board.
             var collection = targetCollection
-                ?? await GetOrCreateCollectionAsync(db, collections, item, connector.Name, itemCt).ConfigureAwait(false);
+                ?? await GetOrCreateCollectionAsync(db, collections, item, connector.Name, committed).ConfigureAwait(false);
 
             // Resolve (and record) which source board this pin came from, so the link can be attributed to it
             // and a source can later be un-merged together with its own images.
@@ -137,7 +147,7 @@ public sealed class IngestService
                 var key = (connector.Name, item.BoardId);
                 if (!sourceByBoard.TryGetValue(key, out source))
                 {
-                    source = await GetOrAddSourceAsync(db, collection, connector.Name, item, item.BoardUrl ?? url, itemCt).ConfigureAwait(false);
+                    source = await GetOrAddSourceAsync(db, collection, connector.Name, item, item.BoardUrl ?? url, committed).ConfigureAwait(false);
                     sourceByBoard[key] = source;
                 }
                 // Keep the denormalised primary pointer seeded from the first source seen.
@@ -157,15 +167,15 @@ public sealed class IngestService
             if (collection is not null)
             {
                 linkTarget = item.SectionId is { Length: > 0 } sectionId
-                    ? await GetOrCreateSectionFolderAsync(db, sectionFolders, collection, sectionId, item, itemCt).ConfigureAwait(false)
+                    ? await GetOrCreateSectionFolderAsync(db, sectionFolders, collection, sectionId, item, committed).ConfigureAwait(false)
                     : collection;
-                await LinkToCollectionAsync(db, linkTarget, asset, item, source, itemCt).ConfigureAwait(false);
+                await LinkToCollectionAsync(db, linkTarget, asset, item, source, committed).ConfigureAwait(false);
             }
 
-            await AttachTagsAsync(db, tags, asset, item, itemCt).ConfigureAwait(false);
+            await AttachTagsAsync(db, tags, asset, item, committed).ConfigureAwait(false);
 
             // Persist per item so the asset gets an Id and is immediately queryable/displayable.
-            await db.SaveChangesAsync(itemCt).ConfigureAwait(false);
+            await db.SaveChangesAsync(committed).ConfigureAwait(false);
 
             processed++;
             if (isNew) newAssets++; else duplicates++;

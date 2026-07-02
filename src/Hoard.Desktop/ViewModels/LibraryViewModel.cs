@@ -32,7 +32,7 @@ public sealed class NewBoardTile : ViewModelBase
 /// collage cover from its newest images. <see cref="CollectionId"/> null = the virtual "All images" board.
 /// Tapping the card opens it (the Board screen); the pencil edits it (wired once the board model lands).
 /// </summary>
-public partial class BoardCardRef : ViewModelBase
+public partial class BoardCardRef : ViewModelBase, IDisposable
 {
     public int? CollectionId { get; }
 
@@ -41,6 +41,26 @@ public partial class BoardCardRef : ViewModelBase
     [ObservableProperty] private Bitmap? _thumb0;
     [ObservableProperty] private Bitmap? _thumb1;
     [ObservableProperty] private Bitmap? _thumb2;
+
+    // The covers are native (Skia) bitmaps — free the outgoing surface on every swap and on Dispose (the eager-free
+    // rule from AssetTileViewModel.Thumbnail); dropping the reference alone waits on lagging finalization.
+    partial void OnThumb0Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
+    partial void OnThumb1Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
+    partial void OnThumb2Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
+
+    /// <summary>Set once the card leaves its grid. The (fire-and-forget) cover load checks it after every await so a
+    /// decode finishing for a card a rebuild already disposed frees its bitmap instead of stranding it on the dead
+    /// card — nothing would ever swap or dispose it again.</summary>
+    public bool IsDisposed { get; private set; }
+
+    /// <summary>Free the collage covers' native bitmaps (grid rebuild, screen dispose).</summary>
+    public void Dispose()
+    {
+        IsDisposed = true;
+        Thumb0 = null;
+        Thumb1 = null;
+        Thumb2 = null;
+    }
 
     // While this board is being imported into, the card shows a pinned progress strip + live count.
     [ObservableProperty] private bool _isImporting;
@@ -105,7 +125,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         _requestBack = requestBack;
         BoardEditor = new BoardCardEditor(
             library, curation, thumbnails, toasts, "board",
-            removeCard: r => Tiles.Remove(r), loadExtraDetail: LoadBoardSourcesAsync);
+            removeCard: r => { Tiles.Remove(r); r.Dispose(); }, loadExtraDetail: LoadBoardSourcesAsync);
         // Watch the shared import state so a board card lights up whoever started the import — this grid's own
         // import sheet OR a board's Sync button (which drives only ImportStatus, not this grid directly).
         _importStatus.PropertyChanged += OnImportStatusChanged;
@@ -146,6 +166,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         _importStatus.PropertyChanged -= OnImportStatusChanged;
         _disposeCts.Cancel(); // abort any in-flight import before it touches this disposed VM
         _disposeCts.Dispose();
+        Tiles.DisposeAndClear(); // free every card's native cover bitmaps with the screen
     }
 
     // Design-time constructor for the XAML previewer.
@@ -178,7 +199,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     {
         if (_library is null || _projects?.Current is null) return;
 
-        Tiles.Clear();
+        Tiles.DisposeAndClear();
         Tiles.Add(NewBoardTile.Instance);
         Tiles.Add(new BoardCardRef(null, "All images", OpenBoardRef, edit: null)); // virtual board: no edit
         foreach (var c in await _library.GetCollectionsAsync())
@@ -404,6 +425,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
             {
                 try { await _curation.DeleteBoardAsync(targetId); } catch { /* best-effort cleanup */ }
                 Tiles.Remove(card);
+                card.Dispose(); // free its cover bitmaps with it
                 discarded = true;
             }
 

@@ -12,9 +12,8 @@
         <vm:BoardViewModel/>
     </Design.DataContext>
 
-    <UserControl.KeyBindings>
-        <KeyBinding Gesture="Escape" Command="{Binding CloseDetailsCommand}"/>
-    </UserControl.KeyBindings>
+    <!-- Esc is handled at the window (MainWindow) as a unified "back", not here — so it works regardless of focus
+         and on every page; the band/zoom are navigation steps that Back/Esc step through. -->
 
     <!-- Panel so the Sync sheet overlays the whole screen. -->
     <Panel>
@@ -49,7 +48,9 @@
                 BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
             <StackPanel Spacing="6">
                 <TextBlock Classes="accent" FontSize="{DynamicResource FontSizeSm}" Text="{Binding ImportStatusText}"/>
-                <ProgressBar IsIndeterminate="True" Height="4" Foreground="{DynamicResource PrimaryBrush}"/>
+                <!-- Own IsVisible carries the gate (not just the strip Border's) — the BusyBar contract. -->
+                <ctrl:BusyBar Height="4" IsVisible="{Binding IsBoardImporting}"
+                              Foreground="{DynamicResource PrimaryBrush}"/>
             </StackPanel>
         </Border>
 
@@ -115,13 +116,18 @@
                                                    OpenCommand="{Binding OpenCommand}" UnloadCommand="{Binding UnloadCommand}"
                                                    RefetchCommand="{Binding RefetchCommand}"/>
 
-                                    <!-- Inline detail band: big media (left) + info/actions rail (right), reusing
-                                         the board's loaded Details. IsVisible binds the TILE's IsExpanded; Opacity is
-                                         the BandContentOpacity the view drives (0 while the masonry reflows to make
-                                         room, 1 once it settles) — the transition fades it in after the tiles move
-                                         (and out before they reflow back). The inner content switches DataContext to
-                                         the AssetDetailViewModel. -->
-                                    <Border IsVisible="{Binding IsExpanded}" Opacity="{Binding BandContentOpacity}"
+                                    <!-- Lazy inline detail band: built ONLY for the expanded tile. The ContentControl
+                                         instantiates its ContentTemplate only when Content (BandContent) is non-null —
+                                         true solely for the expanded tile — so collapsed and recycled/retained tiles
+                                         never carry the heavy band markup (rail, actions, media). That per-tile band
+                                         was the bulk of a leaked view's memory. Opacity is the BandContentOpacity the
+                                         view drives (0 while the masonry reflows, 1 once it settles); the transition
+                                         fades it in after the tiles move. The inner panel's DataContext is the
+                                         AssetDetailViewModel; the band root (#BandRoot) keeps the tile DataContext. -->
+                                    <ContentControl Content="{Binding BandContent}">
+                                      <ContentControl.ContentTemplate>
+                                        <DataTemplate x:DataType="vm:AssetTileViewModel">
+                                    <Border x:Name="BandRoot" Opacity="{Binding BandContentOpacity}"
                                             CornerRadius="{DynamicResource RadiusMd}"
                                             Background="{DynamicResource PopoverBrush}" ClipToBounds="True"
                                             BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
@@ -131,48 +137,30 @@
                                                 <DoubleTransition Property="Opacity" Duration="0:0:0.2"/>
                                             </Transitions>
                                         </Border.Transitions>
-                                        <Grid DataContext="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).Details}"
-                                              x:DataType="vm:AssetDetailViewModel">
-                                            <!-- Rail width is shared with the layout's band-height math (single source). -->
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="{x:Static ctrl:MasonryLayout.RailColumnWidth}"/>
-                                            </Grid.ColumnDefinitions>
-                                            <!-- Big media -->
-                                            <Panel Grid.Column="0" Background="{DynamicResource MutedBrush}">
-                                                <Image Source="{Binding Preview}" Stretch="Uniform" Margin="6"
-                                                       IsVisible="{Binding IsStaticImage}"/>
-                                                <!-- Source is gated on the TILE's IsExpanded (via BandPlaySource), so the
-                                                     GIF only decodes/plays in the one expanded tile, not in every realized
-                                                     band (AnimatedImageControl loads on Source regardless of visibility). -->
-                                                <ctrl:AnimatedImageControl Name="BandGif" Margin="6" IsVisible="{Binding IsGif}"
-                                                                           Source="{Binding #ItemRoot.((vm:AssetTileViewModel)DataContext).BandPlaySource}"/>
-                                                <TextBlock Text="🎬  Video — use “Open file” to play" IsVisible="{Binding IsVideo}"
-                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                           Foreground="{DynamicResource MutedForegroundBrush}"/>
-                                                <StackPanel IsVisible="{Binding IsDeleted}" Spacing="6"
-                                                            HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap" MaxWidth="360"
-                                                               Foreground="{DynamicResource MutedForegroundBrush}"
-                                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                                </StackPanel>
-                                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                             IsVisible="{Binding IsPreviewLoading}"/>
-                                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                             IsVisible="{Binding #BandGif.IsLoading}"/>
-                                                <!-- Shown while Details itself is loading (DataContext here is null then,
-                                                     so this binds the board VM directly, not Details). Only renders for
-                                                     the expanded tile, since the whole band is IsVisible=IsExpanded. -->
-                                                <ProgressBar IsIndeterminate="True" Width="120" Height="4"
-                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                             IsVisible="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).IsDetailLoading}"/>
-                                            </Panel>
+                                        <!-- Responsive band: the info rail sits BESIDE the image when wide, and BELOW it
+                                             (capped, scrolling) when the band is narrower than the stack breakpoint. Both
+                                             states come from styles (a local Dock/Width would beat the style — the
+                                             CLAUDE.md "local value vs style" trap), keyed off the bandstacked class the
+                                             view toggles. The rail width + the stacked info height are the packer's own
+                                             constants, so the visual layout matches the band-height math. -->
+                                        <DockPanel x:Name="BandPanel"
+                                                   DataContext="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).Details}"
+                                                   x:DataType="vm:AssetDetailViewModel"
+                                                   Classes.bandstacked="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).IsBandStacked}">
+                                            <DockPanel.Styles>
+                                                <Style Selector="DockPanel#BandPanel &gt; DockPanel#Rail">
+                                                    <Setter Property="DockPanel.Dock" Value="Right"/>
+                                                    <Setter Property="Width" Value="{x:Static ctrl:MasonryLayout.RailWidth}"/>
+                                                </Style>
+                                                <Style Selector="DockPanel#BandPanel.bandstacked &gt; DockPanel#Rail">
+                                                    <Setter Property="DockPanel.Dock" Value="Bottom"/>
+                                                    <Setter Property="Width" Value="NaN"/>
+                                                    <Setter Property="MaxHeight" Value="{x:Static ctrl:MasonryPacker.StackInfoHeight}"/>
+                                                </Style>
+                                            </DockPanel.Styles>
 
-                                            <!-- Info + actions rail -->
-                                            <DockPanel Grid.Column="1" Background="{DynamicResource PopoverBrush}">
+                                            <!-- Info + actions rail (docked right/bottom per the styles above) -->
+                                            <DockPanel x:Name="Rail" Background="{DynamicResource PopoverBrush}">
                                                 <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="16,12,10,6">
                                                     <TextBlock Text="Details" Classes="h2" VerticalAlignment="Center"/>
                                                     <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="ghost"
@@ -224,8 +212,48 @@
                                                     </StackPanel>
                                                 </ScrollViewer>
                                             </DockPanel>
-                                        </Grid>
+
+                                            <!-- Big media — the DockPanel's fill (LastChildFill), so it takes the
+                                                 space the rail doesn't (left of it when wide, above it when stacked).
+                                                 Tapping it opens the fullscreen zoom/pan lightbox (a no-op for
+                                                 video/tombstones — OpenLightbox gates on a live image). -->
+                                            <Panel Background="{DynamicResource MutedBrush}" Cursor="Hand"
+                                                   PointerPressed="OnBandMediaPressed" Tapped="OnBandMediaTapped">
+                                                <Image Source="{Binding Preview}" Stretch="Uniform" Margin="6"
+                                                       IsVisible="{Binding IsStaticImage}"/>
+                                                <!-- Source is gated on the TILE's IsExpanded (via BandPlaySource), so the
+                                                     GIF only decodes/plays in the one expanded tile, not in every realized
+                                                     band (AnimatedImageControl loads on Source regardless of visibility). -->
+                                                <ctrl:AnimatedImageControl Name="BandGif" Margin="6" IsVisible="{Binding IsGif}"
+                                                                           Source="{Binding #BandRoot.((vm:AssetTileViewModel)DataContext).BandPlaySource}"/>
+                                                <TextBlock Text="🎬  Video — use “Open file” to play" IsVisible="{Binding IsVideo}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource MutedForegroundBrush}"/>
+                                                <StackPanel IsVisible="{Binding IsDeleted}" Spacing="6"
+                                                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <TextBlock Text="🗑  Deleted" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding DeletionNote}" TextWrapping="Wrap" MaxWidth="360"
+                                                               Foreground="{DynamicResource MutedForegroundBrush}"
+                                                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                                                </StackPanel>
+                                                <ctrl:BusyBar Width="120" Height="4"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                              IsVisible="{Binding IsPreviewLoading}"/>
+                                                <ctrl:BusyBar Width="120" Height="4"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                              IsVisible="{Binding #BandGif.IsLoading}"/>
+                                                <!-- Shown while Details itself is loading (DataContext here is null then,
+                                                     so this binds the board VM directly, not Details). Only renders for
+                                                     the expanded tile, since the whole band is IsVisible=IsExpanded. -->
+                                                <ctrl:BusyBar Width="120" Height="4"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                              IsVisible="{Binding $parent[UserControl].((vm:BoardViewModel)DataContext).IsDetailLoading}"/>
+                                            </Panel>
+                                        </DockPanel>
                                     </Border>
+                                        </DataTemplate>
+                                      </ContentControl.ContentTemplate>
+                                    </ContentControl>
                                 </Panel>
                             </DataTemplate>
                         </ItemsRepeater.ItemTemplate>
@@ -314,5 +342,33 @@
         <ctrl:SheetHost x:Name="FolderConfirmHost">
             <ctrl:ConfirmSheet x:Name="FolderConfirmContent"/>
         </ctrl:SheetHost>
+
+        <!-- Delete sheet: collect the required tombstone reason, then delete (the in-app replacement for the old
+             DeleteDialog window). The image file is recycled but the row is kept as a restorable tombstone. -->
+        <ctrl:SheetHost IsOpen="{Binding IsDeleteSheetOpen}" DismissCommand="{Binding CloseDeleteSheetCommand}">
+            <StackPanel Margin="24" Spacing="16">
+                <TextBlock Classes="h2" Text="Delete image"/>
+                <TextBlock Text="{Binding DeleteTargetTitle}" FontWeight="SemiBold" TextWrapping="Wrap"
+                           MaxLines="2" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Classes="muted" TextWrapping="Wrap"
+                           Text="The image file is removed from disk, but it's kept as a tombstone (showing your reason) and can be restored from its source later."/>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Reason for deleting (required)"/>
+                    <TextBox Theme="{StaticResource HoardInput}" Text="{Binding DeleteNote}"
+                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" MaxLength="500"
+                             PlaceholderText="e.g. duplicate, low quality, no longer wanted…"/>
+                </StackPanel>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseDeleteSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Delete"
+                            Command="{Binding ConfirmDeleteCommand}" IsEnabled="{Binding CanConfirmDelete}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- Fullscreen zoom/pan viewer for the expanded image, layered above everything (last child = topmost). -->
+        <ctrl:Lightbox IsOpen="{Binding IsLightboxOpen}" Source="{Binding LightboxSource}"
+                       IsGif="{Binding LightboxIsGif}" CloseCommand="{Binding CloseLightboxCommand}"/>
     </Panel>
 </UserControl>

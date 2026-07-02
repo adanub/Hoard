@@ -63,7 +63,7 @@ public partial class MainWindowViewModel : ViewModelBase
             _thumbnails = _projects.Current is { } p ? new ThumbnailCache(p.ThumbnailsRoot) : null;
             return new LibraryViewModel(
                 _ingest, _library, _curation, _projects, _thumbnails, ToastService, ImportStatus,
-                openBoard: ShowBoard, requestBack: Navigation.Pop);
+                openBoard: ShowBoard, requestBack: Navigation.Back);
         }
         // The forward-rebuild thunk returns null if the project was closed/deleted while backed out, so GoForward
         // drops the dead entry instead of rebuilding a blank Library for a project that no longer exists.
@@ -75,22 +75,22 @@ public partial class MainWindowViewModel : ViewModelBase
     // forward button can return to a board that was backed out of (rebuilt fresh — the popped one was disposed).
     private void ShowBoard(BoardTarget target)
     {
+        // The Board takes the NavigationService directly: its image-detail band + zoom are history steps (opening
+        // pushes a state, switching the band's image replaces it, Back/Esc revert them), so they live in the same
+        // back/forward stack as pages.
         BoardViewModel Create() => new(
             _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus, _projects,
-            target, requestBack: Navigation.Pop, openBoard: ShowBoard);
+            target, Navigation, openBoard: ShowBoard);
         // Null thunk when the project is gone, so forward drops the dead entry instead of rebuilding a board
         // against a closed/deleted project.
         Navigation.Push(Create(), () => _projects.Current is null ? null : Create());
     }
 
-    /// <summary>Mouse back button (XButton1): do exactly what the current page's own ← button does — a Board pops,
-    /// the Library switches project — so the gesture matches the on-screen control. No-op on a page with no back
-    /// (the launcher).</summary>
-    public void NavigateBack()
-    {
-        if (Navigation.Current is IHasBack page) page.BackCommand.Execute(null);
-    }
+    /// <summary>Mouse back button (XButton1) / Esc: go back one history step — revert the topmost in-page state
+    /// (zoom → band) or pop the page (Board → Library). The single "back" shared with the on-screen ← chevron.</summary>
+    public void NavigateBack() => Navigation.Back();
 
-    /// <summary>Mouse forward button (XButton2): return to a board that was backed out of.</summary>
-    public void NavigateForward() => Navigation.GoForward();
+    /// <summary>Mouse forward button (XButton2): re-apply the next step — reopen a band/zoom, or return to a board
+    /// that was backed out of.</summary>
+    public void NavigateForward() => Navigation.Forward();
 }

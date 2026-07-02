@@ -41,7 +41,7 @@ public sealed record MoveTarget(string Display, int? CollectionId);
 /// tracks what's visible), the detail panel, and per-asset delete/restore. Pushed above the Library screen;
 /// the back chevron pops back.
 /// </summary>
-public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IHasBack
+public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IHasBack, IAbsorbsBack
 {
     private readonly LibraryService _library;
     private readonly CurationService _curation;
@@ -53,8 +53,22 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     private readonly int? _collectionId;
     private readonly int? _parentId;
     private readonly string? _parentTitle;
-    private readonly Action _requestBack;
+    private readonly NavigationService _nav;
     private readonly Action<BoardTarget> _openBoard;
+    // Cross-page forward can apply a band/zoom history step before this (rebuilt) board's async asset load finishes;
+    // these hold the requested state until LoadAssetsAsync resolves it.
+    private bool _assetsLoaded;
+    private int? _pendingBandAssetId;
+    private bool _pendingZoom;
+    // Set first thing in Dispose. Async completions (grid/folder loads) landing after the board was navigated away
+    // from MUST check this and bail: an unguarded resume used to refill the disposed VM's Assets (re-rooting the
+    // graph Dispose just emptied) and mutate the LIVE nav history from a dead page.
+    private bool _disposed;
+    // Monotonic load ids: only the LATEST in-flight grid/folder load may apply its results (the Lightbox _loadId
+    // idiom). Kills the overlap race where a ctor load and an import-end load both snapshot firstLoad=true and the
+    // straggler stomps the winner's applied band state.
+    private int _loadSeq;
+    private int _folderLoadSeq;
     private CancellationTokenSource? _searchDebounce;
     // Cancelled when the board is navigated away from (disposed), so an in-flight re-download doesn't keep running
     // and mutate this dead VM / toast for a screen you've left.
@@ -68,7 +82,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     public BoardViewModel(
         LibraryService library, CurationService curation, IngestService ingest,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus, ProjectManager? projects,
-        BoardTarget target, Action requestBack, Action<BoardTarget> openBoard)
+        BoardTarget target, NavigationService nav, Action<BoardTarget> openBoard)
     {
         _library = library;
         _curation = curation;
@@ -81,24 +95,26 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         _parentId = target.ParentId;
         _parentTitle = target.ParentTitle;
         _title = target.Title;
-        _requestBack = requestBack;
+        _nav = nav;
         _openBoard = openBoard;
         _searchQuery = target.Search ?? "";
         FolderEditor = new BoardCardEditor(
             library, curation, thumbnails, toasts, "folder",
-            removeCard: r => FolderTiles.Remove(r),
+            removeCard: r => { FolderTiles.Remove(r); r.Dispose(); },
             afterChange: () => OnPropertyChanged(nameof(CanMoveSelected)));
 
         _importStatus.PropertyChanged += OnImportStatusChanged;
         Assets.CollectionChanged += (_, _) => SyncExpandedIndex(); // keep the band on the selected tile as items shift
+        Infrastructure.LeakCanary.Track(this);
         UpdateImportState();
         _ = LoadAssetsAsync();
         _ = LoadSourcesAsync(); // for the Sync button (a real board with at least one URL'd source)
         _ = LoadFoldersAsync(); // child folders (Pinterest sections / sub-folders) shown above the grid
     }
 
-    // Design-time constructor for the XAML previewer.
-    public BoardViewModel() : this(null!, null!, null!, null, new ToastService(), new ImportStatus(), null, new BoardTarget(null, "All images"), () => { }, _ => { }) { }
+    // Design-time constructor for the XAML previewer. A throwaway NavigationService keeps _nav non-null so the band/
+    // zoom code paths don't need a null-fallback (its steps just apply against a null Current = no-op at design time).
+    public BoardViewModel() : this(null!, null!, null!, null, new ToastService(), new ImportStatus(), null, new BoardTarget(null, "All images"), new NavigationService(), _ => { }) { }
 
     [ObservableProperty] private string _title;
     public ObservableCollection<AssetTileViewModel> Assets { get; } = new();
@@ -111,6 +127,17 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     /// <summary>True while the selected asset's detail is loading, so the band shows a spinner instead of a blank
     /// rail (the band opens on <c>IsExpanded</c>, which flips before the async detail load completes).</summary>
     [ObservableProperty] private bool _isDetailLoading;
+
+    // The detail VM owns a native preview bitmap — free the outgoing one on EVERY swap (switch image, close band,
+    // board dispose), same eager-release rule as tile thumbnails; dropping the reference would leave the surface
+    // to lagging finalization, one per band open.
+    partial void OnDetailsChanged(AssetDetailViewModel? oldValue, AssetDetailViewModel? newValue) => oldValue?.Dispose();
+
+    /// <summary>True when the grid is narrower than the band's stack breakpoint, so the inline detail band stacks
+    /// the image over the info area instead of placing the info rail beside it. The view sets this from the grid
+    /// width (using the packer's own breakpoint, which also drives the band's stacked <i>height</i>), so the
+    /// layout and the height stay in agreement.</summary>
+    [ObservableProperty] private bool _isBandStacked;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private bool _isBusy;
 
@@ -182,7 +209,10 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
 
     public void Dispose()
     {
+        _disposed = true; // in-flight grid/folder loads check this on resume and apply nothing to the dead VM
+        Infrastructure.LeakCanary.MarkDead(this);
         _importStatus.PropertyChanged -= OnImportStatusChanged;
+        CollapseStarting = null; // drop the view's handler so a disposed board doesn't keep its (detached) view alive
         // Cancel (not just Dispose) so a debounced search/folder-reload mid-Task.Delay bails instead of waking up
         // to query + rebuild on this disposed VM — Dispose() alone does NOT cancel a pending Task.Delay.
         _searchDebounce?.Cancel();
@@ -191,6 +221,26 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         _folderReloadDebounce?.Dispose();
         _disposeCts.Cancel(); // abort any in-flight re-download before it touches this disposed VM
         _disposeCts.Dispose();
+        // Free every tile's thumbnail (native Skia memory) eagerly and drop the tile→board callbacks, rather than
+        // waiting on GC finalization once the board is collected — so leaving a board unloads its images, and a tile
+        // that Avalonia's ItemsRepeater still retains (its cached element event-args pin the last container) can't
+        // keep the board alive. (Played GIFs' frames are already released when their AnimatedImageControl is torn
+        // down with the view.)
+        foreach (var tile in Assets) tile.Dispose();
+        _playing.Clear();
+        // Ask the (still-attached) view to force its ItemsRepeater through one synchronous layout pass so it recycles
+        // and DETACHES its realized tiles now — see ViewTeardown. This is the load-bearing step: a tile's #Root
+        // self-binding, kept active while the tile stays attached and held by a compositor-retained child, otherwise
+        // roots the entire BoardView (GC-root analysis: compositor → Button → NamedElementNode #Root → ItemCard →
+        // BoardView). Detaching the tiles deactivates those bindings. Done BEFORE Assets.Clear so the repeater still
+        // has its source bound when the view nulls it.
+        ViewTeardown?.Invoke();
+        Assets.Clear();
+        // Clearing the selection also frees the detail preview synchronously: OnSelectedAssetChanged →
+        // LoadDetailsAsync(null) sets Details = null before its first await, and OnDetailsChanged disposes the
+        // outgoing detail VM (its native preview bitmap with it).
+        SelectedAsset = null;
+        FolderTiles.DisposeAndClear(); // frees the folder cards' native cover bitmaps
     }
 
     /// <summary>Revealed again after a drilled-into folder was popped: reload only the folder row (a folder may
@@ -215,6 +265,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     private async Task LoadFoldersAsync()
     {
         if (_library is null || _collectionId is not int id) return;
+        var seq = ++_folderLoadSeq;
 
         // Build the new tiles first, then swap in one go — so a failed query (or the board being popped
         // mid-flight) never leaves FolderTiles cleared-but-not-repopulated. Fire-and-forget callers can't observe
@@ -239,8 +290,11 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
             _toasts.Show($"Couldn't load folders: {ex.Message}", isError: true);
             return; // leave the existing folder row intact
         }
+        // Disposed (navigated away) or superseded (the debounced import reload fired again) while querying: apply
+        // nothing — a stale resume used to repopulate the dead VM's folder row and decode covers nothing would free.
+        if (_disposed || seq != _folderLoadSeq) return;
 
-        FolderTiles.Clear();
+        FolderTiles.DisposeAndClear();
         foreach (var t in tiles) FolderTiles.Add(t);
         OnPropertyChanged(nameof(CanMoveSelected));
         _ = LoadFolderCoversAsync();
@@ -336,6 +390,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
             if (node is not null) _playing.Remove(node);
             Assets.Remove(tile);
             SelectedAsset = null;
+            _nav.DropCurrentStates(); // the moved image's band step is now stale
             await LoadFoldersAsync();
             _toasts.Show($"Moved “{title}”.");
         }
@@ -419,17 +474,29 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         });
 
         var newCount = 0;
+        // Observe the dispose token (like ImportAsync/RefetchTile do) so backing out of the board mid-sync stops the
+        // crawl instead of the still-running state machine keeping this whole disposed board graph (Assets + every
+        // tile VM) rooted for the duration — the sync belongs to the screen, not the app.
+        var ct = _disposeCts.Token;
         try
         {
             foreach (var url in _sourceUrls)
             {
-                var result = await _ingest.ImportAsync(url, options, progress, boardId);
+                ct.ThrowIfCancellationRequested();
+                var result = await _ingest.ImportAsync(url, options, progress, boardId, ct);
                 newCount += result.NewAssets;
                 processed += result.TotalItems;
             }
             _toasts.Show(newCount == 0
                 ? "Sync complete — already up to date."
                 : $"Synced — {newCount} new image(s).");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Board was navigated away from mid-sync. Say so — the card's progress strip just vanishing reads as
+            // "sync complete", and a partial sync is invisible until the next one. (The shell owns the toast host,
+            // so this shows over whatever screen the user is on now.) A re-sync picks up exactly where this stopped.
+            _toasts.Show($"Sync stopped — {processed} item(s) checked before you left the board. Sync again to finish.");
         }
         catch (Exception ex)
         {
@@ -441,11 +508,114 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         }
     }
 
+    // ── Fullscreen zoom/pan lightbox for the selected image ───────────────────────
+
+    [ObservableProperty] private bool _isLightboxOpen;
+    [ObservableProperty] private string? _lightboxSource;
+    [ObservableProperty] private bool _lightboxIsGif;
+
+    /// <summary>Open the fullscreen zoom on the selected live image/GIF as a <b>history step</b> (Back/Esc closes it
+    /// back to the band; forward re-opens it). A video, a tombstone, or a live-but-missing blob has nothing to view,
+    /// so it's a no-op — and so is a click while the band is animating CLOSED (the fading band stays hit-testable and
+    /// the selection isn't cleared until the collapse finishes, so without the gate a mid-fade click would push a
+    /// zoom step that the collapse immediately force-shuts, stranding a ghost step). Triggered by tapping the
+    /// expanded band's media.</summary>
+    public void OpenLightbox()
+    {
+        if (_closing) return;
+        if (SelectedAsset is not { IsDeleted: false, IsFileMissing: false } tile || !tile.IsImage) return;
+        _nav.PushState(NavShowZoom, NavHideZoom);
+    }
+
+    // Closing the zoom is a back step (so it leaves the right forward entry); the ✕ / scrim raise this.
     [RelayCommand]
-    private void Back() => _requestBack();
+    private void CloseLightbox() => _nav.Back();
+
+    // Apply/Revert for the zoom history step, taken against Current so a cross-page forward re-opens it on the
+    // freshly-rebuilt board. Apply reports whether the zoom actually opened (or was validly deferred).
+    private static bool NavShowZoom(ViewModelBase? cur) => (cur as BoardViewModel)?.ShowZoom() ?? false;
+    private static void NavHideZoom(ViewModelBase? cur) => (cur as BoardViewModel)?.HideZoom();
+
+    private bool ShowZoom()
+    {
+        if (SelectedAsset is not { IsDeleted: false, IsFileMissing: false } tile || !tile.IsImage)
+        {
+            // Only stash a pending zoom before the (rebuilt) board has loaded — a cross-page forward applies the zoom
+            // step before its band resolves (a valid deferral). After the load, an invalid selection (video /
+            // tombstone / missing) just can't be zoomed — report failure so no ghost step is recorded.
+            if (!_assetsLoaded) { _pendingZoom = true; return true; }
+            return false;
+        }
+        LightboxSource = tile.Model.AbsolutePath;
+        LightboxIsGif = tile.IsGif;
+        IsLightboxOpen = true;
+        return true;
+    }
+
+    private void HideZoom()
+    {
+        _pendingZoom = false; // the step is leaving history — a latched zoom must not fire after the load (see HideBand)
+        IsLightboxOpen = false;
+    }
+
+    // ── Delete the selected pin (in-app note sheet → restorable tombstone) ─────────
+    // Replaces the old DeleteDialog OS window: a SheetHost collecting the required reason, matching the other
+    // in-app sheets (Move / New folder / Sync). The note is mandatory — Confirm stays disabled until one's typed.
+
+    [ObservableProperty] private bool _isDeleteSheetOpen;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConfirmDelete))]
+    private string _deleteNote = "";
+
+    [ObservableProperty] private string _deleteTargetTitle = "";
+
+    // The sheet's target, CAPTURED at open — Confirm must not re-read SelectedAsset, because a grid reload (a sync
+    // finishing) can clear the selection while the sheet sits open: the delete would then silently no-op while the
+    // user believes the image was tombstoned. The captured tile stays valid (delete goes by its asset id).
+    private AssetTileViewModel? _deleteTarget;
+
+    /// <summary>The delete sheet's Confirm is enabled only once a (non-blank) reason has been entered.</summary>
+    public bool CanConfirmDelete => !string.IsNullOrWhiteSpace(DeleteNote);
+
+    /// <summary>Open the in-app delete sheet for the selected live pin (collects the required tombstone reason).</summary>
+    public void OpenDeleteSheet()
+    {
+        if (SelectedAsset is not { IsDeleted: false } tile) return;
+        _deleteTarget = tile;
+        DeleteTargetTitle = tile.Model.Title is { Length: > 0 } t ? t : "this image";
+        DeleteNote = "";
+        IsDeleteSheetOpen = true;
+    }
 
     [RelayCommand]
-    private void CloseDetails() => RequestCollapse();
+    private void CloseDeleteSheet() { IsDeleteSheetOpen = false; _deleteTarget = null; }
+
+    [RelayCommand]
+    private async Task ConfirmDeleteAsync()
+    {
+        var note = DeleteNote.Trim();
+        if (note.Length == 0) return; // guard: Confirm shouldn't be enabled, but never tombstone with a blank note
+        var target = _deleteTarget;
+        _deleteTarget = null;
+        IsDeleteSheetOpen = false;
+        if (target is not null) await DeleteAsync(target, note);
+    }
+
+    // The ← chevron: one "back" that steps zoom → band → out of the page, same as Esc / mouse-5 (all funnel into
+    // NavigationService.Back). Esc itself is handled at the window (MainWindow), not here, so it works regardless of
+    // where keyboard focus sits and on every page.
+    [RelayCommand]
+    private void Back() => _nav.Back();
+
+    // The band's ✕: closing the band is a back step (pops the band history step → animated collapse via Revert).
+    [RelayCommand]
+    private void CloseDetails() => _nav.Back();
+
+    /// <summary>While the detail band is animating closed, absorb a Back/Esc so a rapid second gesture doesn't pop the
+    /// whole board out from under the collapse (the band's history step is already reverted, but <see cref="SelectedAsset"/>
+    /// stays set until <see cref="FinishCollapse"/>, so the next Back would otherwise hit the page step).</summary>
+    public bool AbsorbBack() => _closing;
 
     // ── Closing the inline band is a sequence (fade the band out, THEN reflow the tiles back), so it's split
     //    across the view: RequestCollapse → (view fades) → CommitCollapse → (layout reflows) → FinishCollapse.
@@ -454,15 +624,26 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     /// <see cref="CommitCollapse"/>. With no view attached the collapse is immediate.</summary>
     public event Action? CollapseStarting;
 
+    /// <summary>Raised at the start of <see cref="Dispose"/>, while the view is (still) attached — the shell swaps the
+    /// page only on the NEXT layout pass — so the view can force its <c>ItemsRepeater</c> to recycle + detach its
+    /// realized tiles NOW. A <i>detached</i> repeater never runs layout again, so it would otherwise keep every
+    /// realized tile alive; and a tile's <c>#Root</c> self-binding (held by a compositor-retained child) pins the
+    /// whole board through it. Detaching the tiles deactivates those bindings and breaks the chain.</summary>
+    public event Action? ViewTeardown;
+
     // True between CommitCollapse and FinishCollapse: the selection/expanded tile is kept alive (invisible) while
     // the tiles reflow back, so SyncExpandedIndex must report -1 (the band is already leaving the layout).
     private bool _collapsing;
+    // True for the whole close — from RequestCollapse until the selection is cleared — covering the fade BEFORE
+    // _collapsing is set. AbsorbBack() reads it so a second Back/Esc during the animation is absorbed.
+    private bool _closing;
 
     /// <summary>Begin closing the band: ask the view to fade it out first (it then calls <see cref="CommitCollapse"/>).
     /// Falls back to an immediate collapse when nothing is listening (design-time / no view).</summary>
     public void RequestCollapse()
     {
         if (SelectedAsset is null) return;
+        _closing = true;
         if (CollapseStarting is null) { CommitCollapse(); FinishCollapse(); return; }
         CollapseStarting.Invoke();
     }
@@ -486,6 +667,21 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         SelectedAsset = null;
     }
 
+    /// <summary>The board's view is detaching while the band is still open/closing because we navigated AWAY from it
+    /// (drilling into a child folder: <see cref="NavigationService.Push"/> reverts the band step, but its animated
+    /// collapse can't finish on a view that's leaving). Drop the band state synchronously so this board — kept on the
+    /// stack beneath the new page — isn't revealed half-open when the user comes back to it.</summary>
+    public void AbandonBand()
+    {
+        // A latched-but-unresolved band/zoom (forward into a still-loading board, then navigated away) dies with
+        // the abandonment — its history steps were reverted by the Push.
+        _pendingBandAssetId = null;
+        _pendingZoom = false;
+        // The flags can't be set while the selection is null (RequestCollapse/CommitCollapse guard on it), and
+        // OnSelectedAssetChanged clears them on any real change — so clearing the selection is the whole job.
+        SelectedAsset = null;
+    }
+
     [RelayCommand]
     private void ClearSearch() => SearchQuery = "";
 
@@ -497,9 +693,13 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         // it fades fresh from 0.
         if (oldValue is not null) { oldValue.IsExpanded = false; oldValue.BandContentOpacity = 0; }
         if (newValue is not null) newValue.IsExpanded = true;
+        // The lightbox is tied to the selection; if the selection is cleared (a move, or a grid reload after
+        // import/sync), close it so it can't linger over a stale image whose tile is gone.
+        else IsLightboxOpen = false;
         // Any genuine selection change ends a close-in-progress — covers a reload/move that clears SelectedAsset
-        // mid-collapse, which would otherwise leave _collapsing stuck true and SyncExpandedIndex pinned at -1.
+        // mid-collapse, which would otherwise leave _collapsing/_closing stuck true and SyncExpandedIndex pinned at -1.
         _collapsing = false;
+        _closing = false;
         SyncExpandedIndex();
         OnPropertyChanged(nameof(CanMoveSelected)); // the Move action depends on there being a live selection
         _ = LoadDetailsAsync(newValue);
@@ -533,13 +733,14 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
 
     private Task ReloadDetailsAsync() => LoadDetailsAsync(SelectedAsset);
 
-    /// <summary>Tapping a tile expands it inline into the detail band (tapping the expanded tile again collapses
-    /// it). Independently, a tapped GIF starts autoplaying in its tile and keeps playing — whether or not it's
-    /// expanded, and after it collapses — until pushed out of the bounded LRU by newer plays.</summary>
+    /// <summary>Tapping a tile expands it inline into the detail band. The band is a navigation step: opening from
+    /// the grid pushes it, switching to another image while open replaces it, and tapping the open tile again goes
+    /// back (closes it) — so it sits in the same back/forward stack as pages. Independently, a tapped GIF starts
+    /// autoplaying in its tile and keeps playing (bounded LRU) whether or not it's expanded.</summary>
     public void ActivateTile(AssetTileViewModel tile)
     {
-        if (ReferenceEquals(SelectedAsset, tile)) RequestCollapse(); // tap the open tile again → animated close
-        else SelectedAsset = tile;                                   // open (or switch directly to) this tile
+        if (ReferenceEquals(SelectedAsset, tile)) _nav.Back();                         // tap the open tile again → close the band
+        else BandState(tile.Model.Id, replace: SelectedAsset is not null);            // grid → band, or switch (replace, no stacking)
         if (!tile.IsGif) return;
 
         var existing = _playing.Find(tile);
@@ -555,6 +756,45 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         }
     }
 
+    // ── Band history step (open/switch/close routed through NavigationService) ──────
+
+    // Open the band as a history step, or — when one's already open — REPLACE the top step so switching images
+    // doesn't stack band-A under band-B (Back from the band leaves straight to the grid).
+    private void BandState(int assetId, bool replace)
+    {
+        bool Apply(ViewModelBase? cur) => NavShowBand(cur, assetId);
+        if (replace) _nav.ReplaceTopState(Apply, NavHideBand);
+        else _nav.PushState(Apply, NavHideBand);
+    }
+
+    // Apply/Revert for the band step, taken against Current so a cross-page forward re-expands the right image on
+    // the freshly-rebuilt board. Apply reports whether the band actually opened (or was validly deferred) so a
+    // forward onto a since-deleted asset drops the step instead of recording a ghost.
+    private static bool NavShowBand(ViewModelBase? cur, int assetId) => (cur as BoardViewModel)?.ShowBandFor(assetId) ?? false;
+    private static void NavHideBand(ViewModelBase? cur) => (cur as BoardViewModel)?.HideBand();
+
+    private bool ShowBandFor(int assetId)
+    {
+        var tile = Assets.FirstOrDefault(t => t.Model.Id == assetId);
+        if (tile is null)
+        {
+            // Not loaded yet → a cross-page forward into a fresh board; remember it and apply after LoadAssetsAsync
+            // (a valid deferral). On a LOADED grid the asset is simply gone — report failure so no step is recorded.
+            if (!_assetsLoaded) { _pendingBandAssetId = assetId; return true; }
+            return false;
+        }
+        SelectedAsset = tile;
+        return true;
+    }
+
+    private void HideBand()
+    {
+        // The step is leaving history — a latched-but-unresolved band (backed out of before the rebuilt board
+        // finished loading) must not fire later, or the grid would open a band whose step is gone.
+        _pendingBandAssetId = null;
+        RequestCollapse();
+    }
+
     /// <summary>Manually unload a playing GIF: stop it and (if it's the selected one) close the detail panel,
     /// so both drop their cache leases and the refcounted cache frees the frames.</summary>
     public void UnloadGif(AssetTileViewModel tile)
@@ -565,11 +805,12 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         if (ReferenceEquals(SelectedAsset, tile)) SelectedAsset = null;
     }
 
-    /// <summary>Tombstone the selected asset with a note: its blob is freed and a Remove op logged, but the
-    /// tile stays in place (now showing the note) and can be restored. Updated in place so scroll survives.</summary>
-    public async Task DeleteSelectedAsync(string note)
+    /// <summary>Tombstone an asset with a note: its blob is freed and a Remove op logged, but the tile stays in
+    /// place (now showing the note) and can be restored. Updated in place so scroll survives. Takes the sheet's
+    /// CAPTURED target (not the live selection — a reload may have cleared/replaced it while the sheet was open).</summary>
+    public async Task DeleteAsync(AssetTileViewModel tile, string note)
     {
-        if (_curation is null || SelectedAsset is not { } tile || tile.IsDeleted) return;
+        if (_curation is null || tile.IsDeleted) return;
 
         var sha = tile.Model.Sha256;
         try
@@ -581,23 +822,31 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
             _toasts.Show($"Delete failed: {ex.Message}", isError: true);
             return;
         }
+        if (_disposed) return; // navigated away while deleting — the DB change stands; don't touch the dead VM
 
-        var node = _playing.Find(tile);
+        // A reload while the sheet was open replaced the tiles: update the LIVE tile for this asset (the captured
+        // one may no longer be in the grid), so the tombstone shows immediately either way.
+        var live = Assets.FirstOrDefault(t => t.Model.Id == tile.Model.Id) ?? tile;
+        var node = _playing.Find(live);
         if (node is not null) _playing.Remove(node);
         _thumbnails?.Evict(sha);
 
-        var title = tile.Model.Title ?? "image";
-        tile.ApplyUpdate(tile.Model with { IsDeleted = true, DeletionNote = note });
+        var title = live.Model.Title ?? "image";
+        live.ApplyUpdate(live.Model with { IsDeleted = true, DeletionNote = note });
         await ReloadDetailsAsync();
         _toasts.Show($"Deleted “{title}” — kept as a restorable tombstone.");
     }
 
-    /// <summary>Restore the selected tombstone by re-downloading its original media, then show it live again.</summary>
+    /// <summary>Restore the selected tombstone by re-downloading its original media, then show it live again.
+    /// Observes the dispose token (like <see cref="RefetchTile"/>): a restore completing after the board was
+    /// navigated away from must not re-arm the disposed tile's thumbnail decode — that would pin a fresh native
+    /// bitmap nothing will ever free — nor toast over whatever screen the user is on now.</summary>
     public async Task RestoreSelectedAsync()
     {
         if (_ingest is null || SelectedAsset is not { IsDeleted: true } tile) return;
 
         IsBusy = true;
+        var token = _disposeCts.Token; // captured before the await — safe to read even after the CTS is disposed
         AssetView? restored;
         try
         {
@@ -612,6 +861,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         {
             IsBusy = false;
         }
+        if (token.IsCancellationRequested) return; // navigated away mid-restore — the DB change stands; drop the UI work
 
         if (restored is null) { _toasts.Show("Couldn't restore — the item may no longer exist at the source.", isError: true); return; }
 
@@ -633,14 +883,39 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     private async Task LoadAssetsAsync()
     {
         if (_library is null) return;
+        var seq = ++_loadSeq;
+        var firstLoad = !_assetsLoaded;
         var views = await _library.GetAssetsAsync(_collectionId, SearchQuery);
+        // Disposed while querying (navigated away), or superseded by a newer load (import-end overlapping the ctor
+        // load, rapid search keystrokes): apply NOTHING — a stale resume used to refill the dead VM's tiles and
+        // corrupt the nav history from off-screen.
+        if (_disposed || seq != _loadSeq) return;
         // Tiles are being recreated: close the detail panel and forget what was playing so their GIF cache
         // leases drop and the frames free (memory tracks what's actually on screen).
         SelectedAsset = null;
+        // A *reload* (import/sync/search) recreated the tiles, so any band/zoom history step is now stale — drop it
+        // so back/forward stay coherent. The FIRST load is a (re)build: keep a forward-applied step and resolve it.
+        // ONLY when this board is the page on screen: a board buried beneath a drilled-into folder also reloads when
+        // its import ends, and it must not pop the CURRENT page's open band/zoom steps off the shared history.
+        if (!firstLoad && ReferenceEquals(_nav.Current, this)) _nav.DropCurrentStates();
         _playing.Clear();
         Assets.Clear();
         foreach (var v in views)
             Assets.Add(NewTile(v));
+        _assetsLoaded = true; // AFTER Assets is populated — ShowBandFor/ShowZoom read this to know the grid is ready
+        if (firstLoad)
+        {
+            // Cross-page forward applied a band/zoom step before this rebuilt board finished loading — apply it now.
+            // If the pending band's asset no longer exists (deleted while backed out), the applied steps are ghosts —
+            // drop them (no revert; nothing ever opened) so they don't eat the user's next Back as a dead press.
+            // The zoom only ever rides on the band, so it stands or falls with it.
+            if (_pendingBandAssetId is int pid)
+            {
+                _pendingBandAssetId = null;
+                if (!ShowBandFor(pid)) { _pendingZoom = false; _nav.DropCurrentStates(); }
+            }
+            if (_pendingZoom) { _pendingZoom = false; if (!ShowZoom()) _nav.DropCurrentStates(); }
+        }
     }
 
     private AssetTileViewModel NewTile(AssetView v) => new(v, _thumbnails, ActivateTile, UnloadGif, RefetchTile);

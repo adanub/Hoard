@@ -45,12 +45,9 @@ public sealed class MasonryLayout : VirtualizingLayout
     private const double MaxAspect = 2.6;
 
     /// <summary>Width of the detail band's info rail. The band-height math reserves this much for the rail, and the
-    /// band's XAML rail column binds <see cref="RailColumnWidth"/>, so the two can't drift apart.</summary>
+    /// band's XAML docks its rail at this width (<c>{x:Static MasonryLayout.RailWidth}</c>) when wide, so the
+    /// layout and the height math can't drift apart.</summary>
     public const double RailWidth = 340;
-
-    /// <summary>The rail width as a <see cref="GridLength"/>, for the band's XAML rail column
-    /// (<c>{x:Static MasonryLayout.RailColumnWidth}</c>) — single source of truth shared with the height math.</summary>
-    public static readonly GridLength RailColumnWidth = new(RailWidth);
 
     // Reflow tween: open decelerates into place; close is quicker (the user reverses it briskly).
     private const double ExpandReflowMs = 280;

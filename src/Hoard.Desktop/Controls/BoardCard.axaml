@@ -72,9 +72,9 @@
                             BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
                     <!-- Pinned import strip: an animated (indeterminate) accent bar along the collage bottom while
                          this board is importing. The running count sits in the meta row below. -->
-                    <ProgressBar IsVisible="{Binding #Root.IsImporting}" IsIndeterminate="True"
-                                 VerticalAlignment="Bottom" Height="4" IsHitTestVisible="False"
-                                 Foreground="{DynamicResource PrimaryBrush}"/>
+                    <ctrl:BusyBar IsVisible="{Binding #Root.IsImporting}"
+                                  VerticalAlignment="Bottom" Height="4" IsHitTestVisible="False"
+                                  Foreground="{DynamicResource PrimaryBrush}"/>
                 </Panel>
             </Border>
         </Border>

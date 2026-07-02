@@ -160,6 +160,14 @@
                     </StackPanel>
                 </StackPanel>
 
+                <!-- Busy indicator: ALWAYS a BusyBar, never a raw indeterminate ProgressBar — a raw one animates
+                     forever even hidden/detached, compositor-rooting whole detached pages (see Controls/BusyBar.cs). -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Busy bar"/>
+                    <ctrl:BusyBar Height="4" Width="240" HorizontalAlignment="Left"
+                                  Foreground="{DynamicResource PrimaryBrush}"/>
+                </StackPanel>
+
                 <!-- Input -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Input"/>

@@ -15,7 +15,7 @@ namespace Hoard.Desktop.ViewModels;
 /// triggered when the container is realized) from the per-project cache, so a library of thousands of
 /// assets stays light and repeat views are fast.
 /// </summary>
-public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
+public partial class AssetTileViewModel : ViewModelBase, IMasonryItem, IDisposable
 {
     private const int ThumbnailWidth = 256;
     private readonly ThumbnailCache? _cache;
@@ -36,7 +36,14 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     /// animating in its tile whether or not it's expanded).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BandPlaySource))]
+    [NotifyPropertyChangedFor(nameof(BandContent))]
     private bool _isExpanded;
+
+    /// <summary>This tile while it is the expanded one, otherwise null. The inline detail band's <c>ContentControl</c>
+    /// binds its <c>Content</c> here so Avalonia instantiates the (heavy) band markup — rail, actions, big media —
+    /// ONLY for the expanded tile, never building it into every realized/recycled tile. Building the band into every
+    /// tile was the bulk of a detached view's retained memory (a leaked view kept ~150 fully-built bands).</summary>
+    public AssetTileViewModel? BandContent => IsExpanded ? this : null;
 
     /// <summary>The GIF path for the inline detail band to animate — non-null ONLY when this tile is the expanded
     /// one (and is a GIF). The band's <see cref="AnimatedImageControl"/> loads on its <c>Source</c> regardless of
@@ -61,6 +68,16 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     /// <summary>The "file missing" state's Re-download button.</summary>
     public IRelayCommand RefetchCommand { get; }
 
+    // The board-method callbacks are held as FIELDS (read by the command closures at invoke time) rather than
+    // captured directly in the closures, so Dispose can null them. Avalonia's ItemsRepeater caches its last
+    // ElementClearing/Prepared event-args, which pins the last-cleared ItemCard container — and through it this
+    // tile. If the tile still referenced the board here (onOpen/onUnload/onRefetch are BoardViewModel methods, so
+    // their delegates' Target IS the board), that single framework-retained tile would keep the whole board (and
+    // its thousands of sibling tiles + AssetViews) alive. This was the board memory leak.
+    private Action<AssetTileViewModel>? _onOpen;
+    private Action<AssetTileViewModel>? _onUnload;
+    private Action<AssetTileViewModel>? _onRefetch;
+
     public AssetTileViewModel(
         AssetView model, ThumbnailCache? cache = null,
         Action<AssetTileViewModel>? onOpen = null, Action<AssetTileViewModel>? onUnload = null,
@@ -68,9 +85,12 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     {
         Model = model;
         _cache = cache;
-        OpenCommand = new RelayCommand(() => onOpen?.Invoke(this));
-        UnloadCommand = new RelayCommand(() => onUnload?.Invoke(this));
-        RefetchCommand = new RelayCommand(() => onRefetch?.Invoke(this));
+        _onOpen = onOpen;
+        _onUnload = onUnload;
+        _onRefetch = onRefetch;
+        OpenCommand = new RelayCommand(() => _onOpen?.Invoke(this));
+        UnloadCommand = new RelayCommand(() => _onUnload?.Invoke(this));
+        RefetchCommand = new RelayCommand(() => _onRefetch?.Invoke(this));
     }
 
     /// <summary>
@@ -82,7 +102,7 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
     {
         Model = updated;
         IsPlaying = false;
-        Thumbnail = null;            // release the bitmap and clear the Image
+        Thumbnail = null;            // dispose the old bitmap (via OnThumbnailChanged) and clear the Image
         IsFileMissing = false;       // a re-fetch/restore may have put the blob back
         _thumbnailRequested = false; // allow a fresh decode if it becomes live again (restore)
         OnPropertyChanged(string.Empty); // re-evaluate every derived binding (IsDeleted, IsGifBadgeVisible, …)
@@ -124,9 +144,14 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
         IsThumbnailLoading = true;
         try
         {
-            Thumbnail = _cache is not null
+            var decoded = _cache is not null
                 ? await _cache.GetAsync(Model.Sha256, Model.AbsolutePath, ThumbnailWidth)
                 : await DecodeDirectAsync();
+            // The container may have been recycled (ReleaseThumbnail cleared _thumbnailRequested) while we decoded.
+            // Retaining the bitmap now would orphan it — no ElementClearing fires for an already-recycled tile — so
+            // drop it; a later realize re-decodes from the on-disk cache. This is the fast-scroll leak.
+            if (!_thumbnailRequested) { decoded?.Dispose(); return; }
+            Thumbnail = decoded;
         }
         catch
         {
@@ -148,5 +173,46 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem
             using var stream = System.IO.File.OpenRead(path);
             return Bitmap.DecodeToWidth(stream, ThumbnailWidth);
         });
+    }
+
+    // ── Native bitmap lifetime ────────────────────────────────────────────────────
+    // The thumbnail is an Avalonia Bitmap = an unmanaged (Skia) surface; the managed wrapper is tiny, so the GC
+    // feels no pressure and dropping the reference alone leaves the real memory to lag in finalization. Free the
+    // PREVIOUS bitmap eagerly whenever Thumbnail is swapped — recycle, ApplyUpdate, Dispose — so memory tracks
+    // what's near the viewport instead of climbing with every image ever shown.
+    partial void OnThumbnailChanged(Bitmap? oldValue, Bitmap? newValue)
+    {
+        if (oldValue is null) return;
+        // Dispose synchronously. Deferring to a Background dispatcher tick STARVED disposal during a fast scroll:
+        // released bitmaps piled up un-freed (1000+ live, working set ballooning) until the scroll stopped, and the
+        // native heap kept that high-water mark. Avalonia's deferred renderer ref-counts the bitmap impl per composed
+        // frame, so freeing the managed wrapper here (the Image rebinds to the new value on the PropertyChanged that
+        // immediately follows) can't free a surface mid-draw.
+        oldValue.Dispose();
+    }
+
+    /// <summary>Drop the decoded thumbnail (freeing its native memory) when the tile's container is recycled
+    /// off-screen, so a long scroll doesn't retain a bitmap per image. Re-realizing the container re-decodes from
+    /// the fast on-disk cache. No-op for a tile holding nothing decoded (tombstone / missing / not yet loaded).</summary>
+    public void ReleaseThumbnail()
+    {
+        if (Thumbnail is null) return;
+        Thumbnail = null;            // → OnThumbnailChanged frees the native bitmap
+        _thumbnailRequested = false; // allow a fresh decode when the container is realized again
+    }
+
+    /// <summary>Free the thumbnail's native memory and drop the board-method callbacks when the board is left (the VM
+    /// disposed). Nulling the callbacks is what actually breaks the leak: a tile that Avalonia's ItemsRepeater still
+    /// holds (via its cached element event-args) then references nothing heavy, so it can't keep the board alive.</summary>
+    public void Dispose()
+    {
+        Thumbnail = null; // → OnThumbnailChanged frees the native bitmap
+        // Mark unrequested so an EnsureThumbnailAsync decode still in flight when the board is left (its guard reads
+        // this) drops its result instead of assigning a fresh bitmap onto this dead tile — which would re-pin the
+        // native surface with no later swap to free it.
+        _thumbnailRequested = false;
+        _onOpen = null;
+        _onUnload = null;
+        _onRefetch = null;
     }
 }

@@ -28,8 +28,11 @@ public sealed class MasonryPacker
     // Wide: image on the left + a fixed-width info rail on the right. Narrow: a full-width image (capped) stacked
     // over a fixed info area that scrolls. The height is derived from the item's real (unclamped) aspect, capped,
     // so the packer stays deterministic.
-    private const double StackBreakpoint = 640; // below this the band stacks image-over-info
-    private const double MinBandHeight = 280, MaxBandHeight = 760, StackInfoHeight = 260;
+    internal const double StackBreakpoint = 640; // below this the band stacks image-over-info (shared with the view code)
+    private const double MinBandHeight = 280, MaxBandHeight = 760;
+    /// <summary>The stacked info-area height (== the rail's capped height when the band stacks); referenced from
+    /// the band XAML via <c>x:Static</c>, so it must stay public.</summary>
+    public const double StackInfoHeight = 260;
 
     /// <summary>The full-width detail band's height for an item of the given (real, unclamped) <paramref name="aspect"/>
     /// at the given content <paramref name="width"/>, leaving room for a <paramref name="railWidth"/>-wide info rail

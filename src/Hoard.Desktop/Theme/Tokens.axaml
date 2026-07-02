@@ -30,6 +30,8 @@
             <SolidColorBrush x:Key="SelectionBrush" Color="#B35B5BEF"/>  <!-- text selection (accent ~70%) -->
             <SolidColorBrush x:Key="ScrimBrush" Color="#59000000"/>      <!-- modal sheet backdrop (~35% black) -->
             <SolidColorBrush x:Key="MediaScrimBrush" Color="#22000000"/> <!-- subtle darken over media for overlaid text legibility -->
+            <SolidColorBrush x:Key="LightboxScrimBrush" Color="#E6000000"/> <!-- fullscreen image viewer backdrop (~90% black, theme-independent) -->
+            <SolidColorBrush x:Key="LightboxForegroundBrush" Color="#F4F4F8"/> <!-- chrome (close/hint) over the dark lightbox, theme-independent -->
 
             <!-- Glossy fills (light source top-left): a bright sheen in the top-left, then the body, then a
                  darker base toward the bottom-right (diagonal gradient). -->
@@ -81,6 +83,8 @@
             <SolidColorBrush x:Key="SelectionBrush" Color="#B36D6DF5"/>  <!-- text selection (accent ~70%) -->
             <SolidColorBrush x:Key="ScrimBrush" Color="#99000000"/>      <!-- modal sheet backdrop (~60% black on dark) -->
             <SolidColorBrush x:Key="MediaScrimBrush" Color="#22000000"/> <!-- subtle darken over media for overlaid text legibility -->
+            <SolidColorBrush x:Key="LightboxScrimBrush" Color="#E6000000"/> <!-- fullscreen image viewer backdrop (~90% black, theme-independent) -->
+            <SolidColorBrush x:Key="LightboxForegroundBrush" Color="#F4F4F8"/> <!-- chrome (close/hint) over the dark lightbox, theme-independent -->
 
             <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
                 <GradientStop Offset="0" Color="#9090FB"/><GradientStop Offset="0.10" Color="#7E7EF8"/><GradientStop Offset="1" Color="#5F5FF2"/>

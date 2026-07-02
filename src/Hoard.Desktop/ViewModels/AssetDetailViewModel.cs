@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -6,8 +7,11 @@ using Hoard.Core.Library;
 
 namespace Hoard.Desktop.ViewModels;
 
-/// <summary>Formats an <see cref="AssetDetail"/> for the detail panel and lazily loads a preview image.</summary>
-public partial class AssetDetailViewModel : ViewModelBase
+/// <summary>Formats an <see cref="AssetDetail"/> for the detail panel and lazily loads a preview image.
+/// Disposable: <see cref="Preview"/> is a native (Skia) bitmap, so the owner (the board) must <see cref="Dispose"/>
+/// a replaced/abandoned instance — same eager-free rule as <see cref="AssetTileViewModel.Thumbnail"/>; dropping the
+/// reference alone leaves the native surface to lagging finalization (one ~520px surface per band open).</summary>
+public partial class AssetDetailViewModel : ViewModelBase, IDisposable
 {
     private const int PreviewWidth = 520;
 
@@ -15,12 +19,24 @@ public partial class AssetDetailViewModel : ViewModelBase
 
     [ObservableProperty] private Bitmap? _preview;
     [ObservableProperty] private bool _isPreviewLoading;
+    private bool _disposed;
 
     public AssetDetailViewModel(AssetDetail model)
     {
         Model = model;
         _ = LoadPreviewAsync();
     }
+
+    /// <summary>Free the preview's native bitmap. Also supersedes an in-flight decode (it checks the flag on
+    /// completion and drops its result) so a fast open→close can't strand a surface.</summary>
+    public void Dispose()
+    {
+        _disposed = true;
+        Preview = null; // → OnPreviewChanged frees the native bitmap
+    }
+
+    // Free the PREVIOUS surface synchronously on every swap (replace/dispose) — the tile-thumbnail rule.
+    partial void OnPreviewChanged(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
 
     public string Title => string.IsNullOrWhiteSpace(Model.Title) ? "(untitled)" : Model.Title!;
     public string? Description => Model.Description;
@@ -55,11 +71,14 @@ public partial class AssetDetailViewModel : ViewModelBase
         try
         {
             var path = Model.AbsolutePath;
-            Preview = await Task.Run(() =>
+            var decoded = await Task.Run(() =>
             {
                 using var stream = System.IO.File.OpenRead(path);
                 return Bitmap.DecodeToWidth(stream, PreviewWidth);
             });
+            // Disposed while decoding (band closed / image switched): drop the surface, don't strand it.
+            if (_disposed) { decoded.Dispose(); return; }
+            Preview = decoded;
         }
         catch
         {

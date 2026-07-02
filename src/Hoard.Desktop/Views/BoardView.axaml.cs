@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Animation.Easings;
 using Avalonia.Controls;
 using Avalonia.Data;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
@@ -22,21 +23,30 @@ namespace Hoard.Desktop.Views;
 public partial class BoardView : UserControl
 {
     private readonly MasonryLayout? _masonry;
+    private IDisposable? _expandedBinding; // the masonry ExpandedIndex binding (Source = this); disposed on detach
     private const double FadeMs = 200;   // matches the band Border's Opacity transition (close fade-out duration)
     private const double ScrollMs = 280; // the smooth scroll that brings the opened band's top to the viewport top
 
     public BoardView()
     {
         InitializeComponent();
-        // Decode thumbnails only as the ItemsRepeater realizes containers (virtualized on-demand).
+        LeakCanary.Track(this);
+        // Decode thumbnails only as the ItemsRepeater realizes containers (virtualized on-demand); free them again
+        // as containers are recycled off-screen, so memory tracks what's near the viewport.
         AssetGrid.ElementPrepared += OnAssetElementPrepared;
+        AssetGrid.ElementClearing += OnAssetElementClearing;
+        // The inline detail band stacks (image over info) below the packer's stack breakpoint; keep the VM flag
+        // in sync with the grid width so the band layout matches the band-height math.
+        AssetGrid.SizeChanged += OnGridSizeChanged;
         // Drive the masonry's expanded full-width band from the view model (the Layout has no DataContext of its
         // own, so bind it here against this view's DataContext), and listen for its reflow tween settling so we can
         // time the band's fade to the tile movement.
         if (AssetGrid.Layout is MasonryLayout masonry)
         {
             _masonry = masonry;
-            masonry.Bind(MasonryLayout.ExpandedIndexProperty, new Binding("DataContext.ExpandedIndex") { Source = this });
+            // Capture the IDisposable so we can dispose it on detach — an explicit-Source binding (Source = this)
+            // that's never disposed keeps the (detached) view rooted, which leaked a board+view per navigation.
+            _expandedBinding = masonry.Bind(MasonryLayout.ExpandedIndexProperty, new Binding("DataContext.ExpandedIndex") { Source = this });
             masonry.ReflowSettled += OnReflowSettled;
         }
         DataContextChanged += OnDataContextChanged;
@@ -50,19 +60,58 @@ public partial class BoardView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_subscribedVm is not null) _subscribedVm.CollapseStarting -= OnCollapseStarting;
+        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; }
         _subscribedVm = Vm;
-        if (_subscribedVm is not null) _subscribedVm.CollapseStarting += OnCollapseStarting;
+        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting += OnCollapseStarting; _subscribedVm.ViewTeardown += OnViewTeardown; }
+        UpdateBandStacked(AssetGrid.Bounds.Width); // seed the new VM (SizeChanged keeps it current thereafter)
     }
 
-    // Stop the reflow + scroll tweens when this screen leaves the visual tree (Pop/dispose), so neither timer keeps
-    // ticking against a detached view/VM — otherwise a tile expanded right before navigating Back would leave them
-    // firing on a dead page, against the "Pop disposes the page" contract.
+    // The board VM is disposing while this view is (still) attached (NavigationService.Back disposes the page before
+    // the shell swaps it, which happens on the next layout pass). The ItemsRepeater is therefore still live and WILL
+    // process a clear right now — but once detached it never runs layout again, so it would keep every realized tile,
+    // and each tile's #Root self-binding (held by a compositor-retained child) roots the whole board through it. So
+    // null the source and force a synchronous layout pass: the repeater recycles + DETACHES its tiles, which
+    // deactivates their bindings and lets the board (tiles, AssetViews, thumbnails) be collected on back-out.
+    private void OnViewTeardown()
+    {
+        AssetGrid.ItemsSource = null;
+        AssetGrid.UpdateLayout();
+    }
+
+    private void OnGridSizeChanged(object? sender, SizeChangedEventArgs e) => UpdateBandStacked(e.NewSize.Width);
+
+    private void UpdateBandStacked(double width)
+    {
+        if (width > 0 && Vm is { } vm) vm.IsBandStacked = width < MasonryPacker.StackBreakpoint;
+    }
+
+    // This screen leaves the visual tree only when it's navigated away from (discarded — forward rebuilds a fresh
+    // view), so tear everything down: stop the tweens (so neither timer keeps ticking against a dead page), dispose
+    // the explicit-Source masonry binding and unsubscribe the cross-object events (which would otherwise keep the
+    // detached view — and via its DataContext, the board — rooted), drop the ItemsRepeater's items, and clear the
+    // DataContext so a lingering view shell can't drag the board. (A detached repeater never runs layout, so it
+    // never recycles its realized tiles on its own — but the band markup is now lazy, so a retained tile is light.)
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
+        // This view never reattaches (forward rebuilds a fresh one) — from here on, it surviving GC is a leak.
+        LeakCanary.MarkDead(this);
+        // Navigated away with the band still open/closing (e.g. drilled into a folder): the view can't finish the
+        // collapse animation, so clear the band state on the VM now — otherwise this board, kept beneath on the
+        // stack, reappears half-open when revealed. (Done before DataContext is nulled, while Vm is still reachable.)
+        Vm?.AbandonBand();
         _scroll.Stop();
         _masonry?.StopAnimation();
+        _expandedBinding?.Dispose();
+        _expandedBinding = null;
+        if (_masonry is not null) _masonry.ReflowSettled -= OnReflowSettled;
+        AssetGrid.ElementPrepared -= OnAssetElementPrepared;
+        AssetGrid.ElementClearing -= OnAssetElementClearing;
+        AssetGrid.SizeChanged -= OnGridSizeChanged;
+        DataContextChanged -= OnDataContextChanged;
+        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; _subscribedVm = null; }
+        AssetGrid.ItemsSource = null; // release the ItemsRepeater's realized elements + its subscription to Assets
+        DataContext = null;           // sever the last view→board edge so a lingering view shell can't drag the board
     }
 
     // The masonry finished a reflow tween. On open (idx ≥ 0): now that the tiles have settled, SMOOTHLY scroll the
@@ -166,14 +215,28 @@ public partial class BoardView : UserControl
             _ = tile.EnsureThumbnailAsync();
     }
 
-    private async void OnDeleteAsset(object? sender, RoutedEventArgs e)
+    // Symmetric with ElementPrepared: a tile recycled well past the viewport drops its decoded thumbnail (freeing
+    // the native bitmap) so a long scroll doesn't retain one per image ever shown. The expanded band tile is always
+    // realized so it's never cleared here — guard it anyway. Re-realizing re-decodes from the on-disk cache.
+    private void OnAssetElementClearing(object? sender, ItemsRepeaterElementClearingEventArgs e)
     {
-        if (Vm is not { SelectedAsset: { } tile } vm) return;
-        if (TopLevel.GetTopLevel(this) is not Window owner) return;
+        if (e.Element.DataContext is AssetTileViewModel { IsExpanded: false } tile)
+            tile.ReleaseThumbnail();
+    }
 
-        var dialog = new DeleteDialog(tile.Model.Title ?? "this image");
-        if (await dialog.ShowDialog<string?>(owner) is { Length: > 0 } note)
-            await vm.DeleteSelectedAsync(note);
+    // Delete now opens an in-app note sheet (collects the required tombstone reason), replacing the old
+    // DeleteDialog OS window — consistent with the other sheets and mobile-ready.
+    private void OnDeleteAsset(object? sender, RoutedEventArgs e) => Vm?.OpenDeleteSheet();
+
+    // Tapping the expanded band's media opens the fullscreen lightbox. Tapped fires for every pointer button, so
+    // gate it to a primary (left) press — the same rule as the *Card controls (the band has no press transform,
+    // so plain Tapped is fine here; only the button-gating matters).
+    private bool _bandMediaPrimary;
+    private void OnBandMediaPressed(object? sender, PointerPressedEventArgs e) =>
+        _bandMediaPrimary = e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed;
+    private void OnBandMediaTapped(object? sender, TappedEventArgs e)
+    {
+        if (_bandMediaPrimary) Vm?.OpenLightbox();
     }
 
     private async void OnRestoreAsset(object? sender, RoutedEventArgs e)

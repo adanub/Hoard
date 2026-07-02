@@ -1,0 +1,47 @@
+<!--
+  Lightbox — a fullscreen, zoom/pan image viewer overlaid on the page (see Controls/Lightbox.cs). A near-black
+  scrim (LightboxScrimBrush) backs a centred viewport that clips a transformed media host: scroll-wheel zooms
+  anchored at the cursor, drag pans, double-click resets to fit. Clicking the scrim (the margin around the
+  image) or the ✕ closes it (raises CloseCommand); Esc is a window-level unified "back" (MainWindow), not handled
+  here (see Lightbox.cs). Hidden while closed (IsVisible follows IsOpen, set in code). Drives a still Image OR an
+  AnimatedImageControl by the bound Source/IsGif.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.Lightbox"
+             IsVisible="False">
+
+    <Panel>
+        <!-- Scrim: the click-away surface (margin around the image). Near-black so the media pops. -->
+        <Border x:Name="Scrim" Background="{DynamicResource LightboxScrimBrush}"/>
+
+        <!-- Centred viewport: clips the zoomed/panned media; transparent so its whole area is hit-testable for
+             panning (a press on the letterbox shouldn't fall through to the scrim and close). -->
+        <Border x:Name="Viewport" Margin="48" ClipToBounds="True" Background="Transparent" Cursor="Hand">
+            <Panel x:Name="ZoomHost" RenderTransformOrigin="0%,0%">
+                <Image x:Name="StillImage" Stretch="Uniform"/>
+                <ctrl:AnimatedImageControl x:Name="Gif" IsVisible="False"/>
+            </Panel>
+        </Border>
+
+        <!-- Busy spinner while a still decodes / GIF frames load (BusyBar: animates only while shown). -->
+        <ctrl:BusyBar x:Name="Spinner" IsVisible="False"
+                      Width="120" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+        <!-- Close (✕), top-right, over the scrim. Light chrome on the dark backdrop. -->
+        <Button x:Name="CloseButton" Theme="{StaticResource HoardButton}" Classes="ghost"
+                Width="40" Height="40" Padding="0" Margin="16"
+                HorizontalAlignment="Right" VerticalAlignment="Top"
+                Foreground="{DynamicResource LightboxForegroundBrush}" ToolTip.Tip="Close (Esc)">
+            <ctrl:Icon Data="{StaticResource Icon.x}" Width="18" Height="18"
+                       Foreground="{DynamicResource LightboxForegroundBrush}"/>
+        </Button>
+
+        <!-- Gesture hint, bottom-centre, faint. -->
+        <TextBlock Text="Scroll to zoom · drag to pan · double-click to fit · Esc to close"
+                   FontSize="{DynamicResource FontSizeXs}" Opacity="0.55" Margin="0,0,0,18"
+                   Foreground="{DynamicResource LightboxForegroundBrush}"
+                   HorizontalAlignment="Center" VerticalAlignment="Bottom" IsHitTestVisible="False"/>
+    </Panel>
+</UserControl>

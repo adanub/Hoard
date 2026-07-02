@@ -127,7 +127,9 @@
                     BorderThickness="1" CornerRadius="{DynamicResource RadiusLg}"
                     BoxShadow="{DynamicResource ShadowMd}">
                 <StackPanel Spacing="14" MinWidth="240">
-                    <ProgressBar IsIndeterminate="True" Height="6"/>
+                    <!-- Own IsVisible carries the gate (not just the ancestor overlay's) so the BusyBar's
+                         animation actually stops when the overlay hides — the BusyBar contract. -->
+                    <ctrl:BusyBar Height="6" IsVisible="{Binding IsOpening}"/>
                     <TextBlock Text="{Binding OpeningText}" Classes="muted" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>

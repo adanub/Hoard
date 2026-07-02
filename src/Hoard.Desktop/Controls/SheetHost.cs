@@ -1,16 +1,23 @@
+using System.Linq;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace Hoard.Desktop.Controls;
 
 /// <summary>
 /// A reusable in-app modal sheet: dims the page with a scrim and centres its <see cref="ContentControl.Content"/>
 /// in a floating card (DESIGN.md — "Sheet / Dialog = card + ShadowMd + scrim"; mobile-ready, unlike an OS
-/// dialog window). The whole host is hidden while closed. Clicking the scrim or pressing Esc raises
-/// <see cref="DismissCommand"/>. Page-local for now; lift to the shell when more screens need sheets.
+/// dialog window). The whole host is hidden while closed. Clicking the scrim raises <see cref="DismissCommand"/>;
+/// Esc is handled ONCE at the window (MainWindow dismisses the topmost open sheet) — deliberately NOT here: a
+/// per-sheet Esc handler fires on whichever sheet FOCUS bubbles through, so with a confirm floating over an edit
+/// sheet (focus still on the edit sheet's button that opened it) it dismissed the underlying edit sheet out from
+/// under the confirm. Opening moves focus to the sheet's first TextBox (or the sheet itself) so typing lands in
+/// the sheet, not the scrim-covered page. Page-local for now; lift to the shell when more screens need sheets.
 /// </summary>
 public class SheetHost : ContentControl
 {
@@ -32,6 +39,8 @@ public class SheetHost : ContentControl
         set => SetValue(DismissCommandProperty, value);
     }
 
+    public SheetHost() => Focusable = true; // the focus fallback target when a sheet has no TextBox (confirm sheets)
+
     protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
     {
         base.OnApplyTemplate(e);
@@ -44,17 +53,25 @@ public class SheetHost : ContentControl
             };
     }
 
-    protected override void OnKeyDown(KeyEventArgs e)
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
-        if (IsOpen && e.Key == Key.Escape)
-        {
-            Dismiss();
-            e.Handled = true;
-        }
-        base.OnKeyDown(e);
+        base.OnPropertyChanged(change);
+        // Opening: move focus INTO the sheet (its first TextBox, else the sheet itself) — the scrim blocks pointers
+        // but not keys, so without this the first keystrokes went to whatever scrim-covered control opened the sheet
+        // (e.g. Space re-invoking the opener). Posted so the sheet has become visible/measured first.
+        if (change.Property == IsOpenProperty && IsOpen)
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsOpen) return; // closed again before the post ran
+                var target = (IInputElement?)this.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(t => t.IsEffectivelyVisible)
+                             ?? this;
+                target.Focus();
+            }, DispatcherPriority.Loaded);
     }
 
-    private void Dismiss()
+    /// <summary>Close the sheet (raises <see cref="DismissCommand"/>). Public so the shell's unified Back
+    /// (<c>MainWindow</c>) can dismiss the topmost open sheet on Esc / the mouse back button, same as the scrim.</summary>
+    public void Dismiss()
     {
         if (DismissCommand is { } cmd && cmd.CanExecute(null))
             cmd.Execute(null);

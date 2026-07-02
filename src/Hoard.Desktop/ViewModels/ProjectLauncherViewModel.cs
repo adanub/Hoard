@@ -27,7 +27,7 @@ public sealed class NewProjectTile : ViewModelBase
 /// buttons surface as per-item commands that call back into the launcher. The Edit-popup info fields
 /// (counts/boards/dates/on-disk) are filled lazily when the popup opens.
 /// </summary>
-public partial class RecentProjectRef : ViewModelBase
+public partial class RecentProjectRef : ViewModelBase, IDisposable
 {
     /// <summary>The project folder. Mutable: a rename moves the folder on disk and re-points this.</summary>
     public string Path { get; set; }
@@ -37,6 +37,28 @@ public partial class RecentProjectRef : ViewModelBase
     [ObservableProperty] private Bitmap? _thumb0;
     [ObservableProperty] private Bitmap? _thumb1;
     [ObservableProperty] private Bitmap? _thumb2;
+
+    // The covers are native (Skia) bitmaps — free the outgoing surface on every swap (rebuild, clear-cache, card
+    // drop) rather than leaving it to lagging finalization; the eager-free rule from AssetTileViewModel.Thumbnail.
+    partial void OnThumb0Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
+    partial void OnThumb1Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
+    partial void OnThumb2Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
+
+    /// <summary>Set once the card leaves the grid (reload/forget/delete). The cover load checks it after its await
+    /// so a decode finishing for a removed card frees its bitmaps instead of stranding them (same contract as
+    /// <see cref="BoardCardRef.IsDisposed"/>).</summary>
+    public bool IsDisposed { get; private set; }
+
+    /// <summary>Free the covers' native bitmaps but keep the card usable (clear-cache: the collage source is gone
+    /// but the project card stays on the grid and reloads covers next reveal).</summary>
+    public void ClearThumbs() => Thumb0 = Thumb1 = Thumb2 = null;
+
+    /// <summary>The card left the grid — free its covers and refuse any late cover-load assignment.</summary>
+    public void Dispose()
+    {
+        IsDisposed = true;
+        ClearThumbs();
+    }
 
     // Edit-popup info (lazy): live counts + boards come from the DB; dates + on-disk size from the folder.
     [ObservableProperty] private string _countsText = "";
@@ -95,7 +117,11 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
     private void ReloadRecents()
     {
         for (var i = Tiles.Count - 1; i >= 0; i--)
-            if (Tiles[i] is RecentProjectRef) Tiles.RemoveAt(i);
+            if (Tiles[i] is RecentProjectRef dropped)
+            {
+                Tiles.RemoveAt(i);
+                dropped.Dispose(); // free covers + mark so a still-in-flight cover load can't re-pin bitmaps on it
+            }
         foreach (var path in _projects.RecentProjects)
             Tiles.Add(NewRef(path, new DirectoryInfo(path).Name));
         _ = LoadRecentsAsync();
@@ -339,7 +365,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
             return size;
         });
         r.CacheSizeText = ByteFormat.Format(0) + " cache";
-        r.Thumb0 = r.Thumb1 = r.Thumb2 = null; // the collage came from those thumbnails
+        r.ClearThumbs(); // the collage came from those thumbnails (the card itself stays on the grid)
         _toasts.Show($"Cleared {ByteFormat.Format(freed)} of thumbnails for “{r.Name}” (they rebuild as you browse).");
     }
 
@@ -348,6 +374,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
     {
         _projects.RemoveFromRecents(r.Path);
         Tiles.Remove(r);
+        r.Dispose(); // free covers + block any in-flight cover load from re-pinning bitmaps on the removed card
         _toasts.Show($"Removed “{r.Name}” from the list (files left untouched).");
     }
 
@@ -358,6 +385,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
         {
             _projects.DeleteProject(r.Path);
             Tiles.Remove(r);
+            r.Dispose(); // free covers + block any in-flight cover load from re-pinning bitmaps on the removed card
             _toasts.Show($"Deleted “{r.Name}” and all its data.");
         }
         catch (Exception ex)
@@ -380,7 +408,10 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
                 return (sz, files.Select(LoadThumbnail).ToList());
             });
 
-            // Back on the UI thread (the await resumed here): publish to the card.
+            // Back on the UI thread (the await resumed here): publish to the card — unless a newer ReloadRecents
+            // (every launcher reveal) or a Forget/Delete removed it while we were decoding, in which case assigning
+            // would strand the fresh bitmaps on a card that's out of the grid with no disposal path left.
+            if (r.IsDisposed) { foreach (var t in thumbs) t?.Dispose(); continue; }
             r.CacheSizeText = ByteFormat.Format(size) + " cache";
             if (thumbs.Count > 0) r.Thumb0 = thumbs[0];
             if (thumbs.Count > 1) r.Thumb1 = thumbs[1];

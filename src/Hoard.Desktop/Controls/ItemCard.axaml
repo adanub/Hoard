@@ -72,11 +72,13 @@
                 <Border CornerRadius="{DynamicResource RadiusMd}" IsHitTestVisible="False"
                         BoxShadow="{DynamicResource ShadowRaisedBevel}"/>
 
-                <!-- Loading spinners (thumbnail decode, or hover-GIF frame decode) — above the bevel. -->
-                <ProgressBar IsIndeterminate="True" IsVisible="{Binding #Root.IsThumbnailLoading}"
-                             Width="64" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                <ProgressBar IsIndeterminate="True" IsVisible="{Binding #TileGif.IsLoading}"
-                             Width="64" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <!-- Loading spinners (thumbnail decode, or hover-GIF frame decode) — above the bevel.
+                     BusyBar, NOT a raw indeterminate ProgressBar: a raw one animates forever even hidden/detached,
+                     which (×3 per tile ×~100 tiles) kept every backed-out board compositor-rooted. See BusyBar.cs. -->
+                <ctrl:BusyBar IsVisible="{Binding #Root.IsThumbnailLoading}"
+                              Width="64" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <ctrl:BusyBar IsVisible="{Binding #TileGif.IsLoading}"
+                              Width="64" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
                 <!-- Floating GIF/VIDEO tag + GIF memory footprint, top-left (beveled badges, drop shadow). -->
                 <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Spacing="4">
@@ -135,8 +137,8 @@
                                 <TextBlock Text="Re-download" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <ProgressBar IsIndeterminate="True" Width="64" Height="4"
-                                     IsVisible="{Binding #Root.IsRefetching}"/>
+                        <ctrl:BusyBar Width="64" Height="4"
+                                      IsVisible="{Binding #Root.IsRefetching}"/>
                     </StackPanel>
                 </Border>
             </Panel>
