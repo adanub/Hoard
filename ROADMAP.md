@@ -138,8 +138,119 @@ capture on a >12px drag. **(7)** programmatic `SelectedAsset=null` (move/reload)
 (factor already 1) before any measure builds the band packer, so `ExpandedBandTop` would be null and the switch
 wouldn't scroll; kept. **Tests: 95 (Core) / 38 (Desktop) green. Committed `5dbf29c`.**
 
-**Increment 2 (TODO):** click-to-zoom/pan on the band image, move delete off the `DeleteDialog` window into an
-in-app note sheet, and the narrow-width stacked band layout (the band currently always uses the wide side-rail).
+**Increment 2 — UNCOMMITTED (working tree), pending runtime verification.** Three pieces:
+- **Fullscreen zoom/pan lightbox** (`Controls/Lightbox.{axaml,cs}`): tapping the band's media opens a near-black
+  overlay (new `LightboxScrimBrush` / `LightboxForegroundBrush` tokens) that views the **full-resolution** image
+  (or the GIF via `AnimatedImageControl`). Scroll-wheel zooms anchored at the cursor, drag pans, double-click
+  resets to fit; scrim-click / ✕ / Esc close. Zoom/pan is one accumulating affine `Matrix` set **directly** as
+  the media host's RenderTransform (never a code-built RenderTransform `Animation` — the deferred-throw gotcha):
+  anchored zoom `M·T(-c)·S·T(c)`, pan `M·T(d)`, scale clamped `[fit, 8×]`. Media is decoded on open and freed on
+  close (the still bitmap disposed; the GIF lease released by nulling `Source`). Wired off `BoardViewModel`
+  `IsLightboxOpen`/`LightboxSource`/`LightboxIsGif` + `OpenLightbox()`/`CloseLightboxCommand`; the band media's
+  `Tapped` (primary-gated) triggers it.
+- **In-app delete note sheet** replaces the `DeleteDialog` **OS window** (files removed): a `SheetHost` (like
+  Move / New folder) collecting the required tombstone reason — `IsDeleteSheetOpen`/`DeleteNote`/`DeleteTargetTitle`
+  + `CanConfirmDelete` (Delete disabled until a reason is typed) → `ConfirmDeleteAsync` → the unchanged
+  `DeleteSelectedAsync(note)`.
+- **Responsive stacked band:** the band's inner two-column `Grid` became a `DockPanel` whose info rail docks
+  **Right** (fixed `MasonryLayout.RailWidth`) when wide and **Bottom** (capped at `MasonryPacker.StackInfoHeight`,
+  scrolls) below the packer's `StackBreakpoint` — both states from **styles** (a local Dock/Width would beat the
+  style), toggled by a `bandstacked` class bound to `BoardViewModel.IsBandStacked`, which the view sets from the
+  grid width using the packer's own breakpoint (so the layout matches the band-height math). The verified
+  open/close/fade machinery (the outer Border) is untouched; the old `RailColumnWidth` `GridLength` is gone.
+
+**Code-review pass (xhigh, 10 angles) + Esc-bug fix.** The Esc-saga root cause (found by instrumentation, not
+guesswork): the board's `Escape` KeyBinding is the *only* reliable Escape receiver and fires **only while focus
+is inside `BoardView`**; the lightbox grabbed focus on open but never returned it, orphaning focus on close so a
+second Esc died. Fixed by making `BoardViewModel.EscapeCommand` a **single overlay-stack arbiter** (dismiss
+topmost: lightbox → sheets → band), restoring focus to the (now focusable) `GridScroll` when the lightbox closes
+(`BoardView.OnVmPropertyChanged`), and adding an **`IModalOverlay`** marker (lightbox + every `SheetHost`) so the
+mouse-back guard treats any open overlay as modal. Also fixed from the review: file-missing guard on
+`OpenLightbox`; close the lightbox when the selection clears (stale-after-reload); `_loadId++` on
+detach/clear so an in-flight decode can't strand a bitmap on a popped control; ignore non-vertical wheel deltas;
+dropped the delete sheet's forbidden fixed `Width`; dead `x:Name`/comment removed.
+**Second code-review pass (xhigh) → generic overlay refactor.** The first arbiter was still a hand-list and had
+already drifted (the folder edit/confirm sheets weren't in it), and focus-restore was lightbox-only. Reworked to a
+**generic** model: `IModalOverlay` gains `Dismiss()`; the board's `Escape` arbiter delegates to the view, which
+dismisses the *topmost open* `IModalOverlay` (any sheet/lightbox, z-order) else collapses the band; focus is parked
+on the grid via `FocusManagement.ParkFocus` whenever **any** overlay's `IsOpen` flips false (every close path), so a
+new overlay is covered with no extra wiring. Also fixed: the phantom-pan (clear `_panning` on `PointerCaptureLost`
++ on open). Verified-and-dropped: double-click-to-fit is **not** broken (Avalonia `Gestures` runs on `RouteFinished`
+with no `e.Handled` check — confirmed in source); pan-at-fit being free is intentional (double-click recentres).
+**Deferred review follow-ups (still tracked):** cap the lightbox decode width (needs the asset's natural width
+plumbed so it never upscales); pause the band GIF while the lightbox occludes it; show a busy spinner on the
+lightbox's GIF path; let `MasonryPacker` own the stacked-vs-wide *predicate* (not just the breakpoint constant); add
+the `Lightbox` to the dev component gallery; consider deferring the still-bitmap `Dispose` off the close path
+(possible compositor race); minor mirror-state cleanups (`LightboxSource`/`DeleteTargetTitle`).
+
+**Band + zoom folded into back/forward navigation; Esc = Back (supersedes the overlay refactor above).** Rather than
+keep patching the Esc/focus machinery, the band and zoom are now **history steps** in `NavigationService`: a step is
+a `PageStep` or a `StateStep` (`Apply`/`Revert` against `Current`). Opening the band `PushState`s it, switching its
+image `ReplaceTopState`s, opening the zoom `PushState`s it; `Back`/`Forward` revert/re-apply — **forward re-opens
+them even across page boundaries** (state applies to the rebuilt board by asset id, deferred until its async load
+finishes). **Esc / mouse-5 / ← chevron are one unified "back"** handled at `MainWindow` (a window-level **bubble**
+`KeyDown` — a focused popup/IME that wants Esc gets it first; only an unclaimed Esc reaches the window): dismiss
+the topmost open `SheetHost` first (sheets are transient, not history), else `NavigationService.Back`. This **deleted** the now-moot machinery — the Board `Escape`
+KeyBinding/arbiter, `IModalOverlay`, `FocusManagement.ParkFocus`, the lightbox `Focus()`-on-open, the mouse-back
+swallow-guard — dissolving the focus/Esc problem instead of patching it. `NavigationService` `Pop`→`Back`,
+`GoForward`→`Forward`; +`PushState`/`ReplaceTopState`/`DropCurrentStates`, +6 unit tests (incl. cross-page forward).
+**User-confirmed the navigation works** (within-board + cross-page back/forward, Esc=Back, sheets dismiss first).
+
+**Memory growth — diagnosed + fixed + user-confirmed.** Symptom: decoded images "never released; memory climbs as
+more load; expected to free when leaving a board." Found and fixed in layers, each pinned down by instrumentation
+(not guessed) — the last layer needed **ClrMD GC-root analysis** to crack. The fixes, in order of impact:
+1. **Thumbnail `Bitmap`s never disposed** (`AssetTileViewModel.Thumbnail` = unmanaged Skia). Now the VM owns the
+   lifetime: `OnThumbnailChanged` disposes the previous bitmap **synchronously** (a `Background`-tick defer *starved*
+   under fast scroll and ballooned to ~940 MB); a `BoardView` `ElementClearing` handler `ReleaseThumbnail()`s
+   off-screen tiles (re-decode from the on-disk cache); `BoardViewModel.Dispose()` disposes every tile. Also fixed a
+   late-decode orphan (a decode finishing after its container recycled). → in-memory footprint tracks the viewport.
+2. **Disposed boards stayed rooted → never collected** (each dragging its thousands of tiles/`AssetView`s). The GC-root
+   chain showed the tile's `RelayCommand` closure captured the board's methods (`ActivateTile`/`UnloadGif`/`RefetchTile`),
+   so a tile Avalonia's `ItemsRepeater` still held (it caches its last `ElementClearing`/`Prepared` event-args, pinning
+   the last container) kept the whole board alive. Fix: the tile holds those callbacks as **fields** and `Dispose()`
+   nulls them. Plus `BoardView.OnDetachedFromVisualTree` teardown (dispose the explicit-`Source` masonry binding,
+   unsubscribe events, null `ItemsSource` + `DataContext`) and `BoardViewModel.Dispose` clears `CollapseStarting`.
+3. **The detached `BoardView` itself isn't promptly collected** (Avalonia compositor/`ItemsRepeater` keep the render
+   tree), and the heavy thing it dragged was the **detail-band markup built into every realized tile** (~33 `Border`s
+   ×150 tiles ≈ 190 MB/nav). Fix: the band is now **lazy** — a `ContentControl` bound to `AssetTileViewModel.BandContent`
+   (non-null only while expanded), so the band markup exists only for the expanded tile.
+4. **The ACTUAL root of the whole-view leak (found by a ClrMD GC-root dump, corroborated by Avalonia #15793/#17192/
+   #15389): infinite `IsIndeterminate` ProgressBar animations.** Every tile had 3 hardcoded-indeterminate spinners;
+   Fluent animates them forever, Avalonia keeps them ticking even hidden/detached, and a still-ticking animation
+   re-registers its composition visuals with the `Compositor` every frame — permanently rooting the whole detached
+   page (each board back-out leaked ~20–35 MB). Fix: **`Controls/BusyBar`** (a ProgressBar whose `IsIndeterminate`
+   follows its own `IsVisible` + attach state) replaced every raw indeterminate bar app-wide — the bug class is now
+   unrepresentable. Supporting fixes: `NavigationService.Back` disposes the outgoing page **before** swapping
+   `Current` (view still attached → `ViewTeardown` forces the `ItemsRepeater` to recycle+detach its tiles; ordering
+   pinned by a unit test); eager native-bitmap disposal extended to `AssetDetailViewModel.Preview` and the
+   board/folder/project card covers (previously never disposed); `SyncAsync` observes the dispose token. A permanent
+   DEBUG-only **`LeakCanary`** (warns only when disposed/detached screens survive a forced GC) replaces the ad-hoc
+   scaffolding, so the next leak announces itself.
+
+User-confirmed: tiles load smoothly, band/zoom intact, memory tracks the visible set under heavy scrolling, working
+set drops on board-exit and stays flat across boards. All diagnostic scaffolding (the `[MEM]`/`[LEAK]`/`[REALIZE]`/
+`[TEARDOWN]` logging, forced GC, `WeakReference` trackers, `Microsoft.Diagnostics.Runtime`) stripped back out.
+Documented in CLAUDE.md.
+
+**Code-review pass #3 (xhigh, 10 finder angles → 10 verifiers → gap sweep) on the full batch — 15 verified findings
+fixed, user-verified.** The clusters: (a) **async completions guarded against dead/buried VMs** — `LoadAssetsAsync`/
+`LoadFoldersAsync` get a `_disposed` + load-sequence supersede guard (a stale resume used to refill a disposed
+board's tiles and mutate nav history from off-screen; the history purge now also requires `_nav.Current == this`);
+cover loads (`BoardCardCovers`, launcher recents) check a sticky `IsDisposed` per card and free late-decoded bitmaps
+instead of stranding them; `RestoreSelectedAsync` observes the dispose token. (b) **nav state-steps got a protocol**
+— `StateStep.Apply` returns whether it took effect (ghost steps for vanished assets are structurally impossible;
++tests), `Forward` absorbs via `IAbsorbsBack` during the band collapse (mirror of Back), `DropCurrentStates` drops
+only the TOP run of forward states so backed-out **pages** survive an in-page reload (the forward button used to die
+on any reload), the pending band/zoom latches clear in the Reverts/`AbandonBand`, `OpenLightbox` is gated on
+`_closing`. (c) **singles** — the delete sheet captures its target at open (a reload under the open sheet made the
+delete a silent no-op); ingest items are atomic once the blob lands (a cancel mid-item could orphan a blob or
+permanently resurrect a tombstoned one); `SheetHost`'s own Esc handler deleted (it dismissed the *underlying* edit
+sheet beneath a floating confirm — the window's topmost-sheet sweep is the single path) and sheets autofocus their
+first `TextBox` on open; `Lightbox.DoubleTapped` is primary-gated; sync-cancel now toasts instead of passing off a
+partial sync as complete. Cleanup: `CardTiles.DisposeAndClear` dedup, `BusyBar` slimmed to the `OnPropertyChanged`
+idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md's Esc wording corrected to bubble.
+
+**Build + tests green (95 Core / 54 Desktop).**
 
 ## Done
 

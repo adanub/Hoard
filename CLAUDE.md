@@ -60,7 +60,7 @@ Concepts that span multiple files:
   row id, so they replay on another device that holds the same content under a different id. This is the
   Phase 3 (cloud sync) foundation; nothing reads it yet — keep it append-only (never mutate/delete ops).
 - **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a browser-style page
-  back/forward stack (`Reset`/`Push`/`Pop`/`GoForward`/`CanGoBack`/`CanGoForward`) — and is the page factory:
+  back/forward stack of *steps* (`Reset`/`Push`/`PushState`/`Back`/`Forward`/`CanGoBack`/`CanGoForward`) — and is the page factory:
   `ShowLauncher` (`Reset` root) → `ShowLibrary` (`Push`, board grid) → `ShowBoard` (`Push`, one board's masonry).
   The shell binds `Navigation.Current`; the template `ViewLocator` maps each page VM to its `…View` by name.
   **`Pop`/`Reset` dispose any `IDisposable` page** so a popped `BoardViewModel` releases its subscriptions (don't
@@ -74,15 +74,35 @@ Concepts that span multiple files:
   ctor reloads, so no `OnResumed`). A new `Push` clears the forward history, like a browser. A forward thunk
   always rebuilds for the **currently-open project** because the only way to change `ProjectManager.Current`
   (opening a project) goes through `Push`, which clears forward; a thunk **returns null when its project was
-  deleted** while backed out (`_projects.Current is null`) so `GoForward` drops the dead entry instead of building
-  a blank page. **Mouse back/forward (XButton1/XButton2)** is handled on `MainWindow` and routed to
-  `MainWindowViewModel.NavigateBack/Forward`: back runs the current page's own `IHasBack.BackCommand` (so it
-  matches the on-screen ← — a Board pops, the Library pops to Projects), forward is `GoForward` — but the gesture
-  is **swallowed while any `SheetHost` is open** so it can't pop the page out from under a modal. The old
+  deleted** while backed out (`_projects.Current is null`) so `Forward` drops the dead entry instead of building
+  a blank page. **The history holds two kinds of step:** a `PageStep` (a page VM + rebuild thunk — Projects →
+  Library → Board → …) and a `StateStep` (an in-page overlay on the *current* page — the Board's image-detail
+  **band**, and the fullscreen **zoom**), applied/reverted against `Current` so forward re-opens it on a *rebuilt*
+  page. `Back` reverts the topmost step (state → its `Revert`; page → **dispose then reveal** — dispose runs while
+  the page is still `Current`/attached, a memory-load-bearing ordering pinned by a test), `Forward` re-applies it;
+  `PushState`/`ReplaceTopState`/`DropCurrentStates` manage the in-page ones (the Board pushes them when the band/zoom
+  open). **A state's `Apply` returns bool** — whether it took effect (or validly deferred until the page loads);
+  `PushState`/`Forward` record nothing on failure, so a step whose target vanished (asset deleted while backed out)
+  is dropped instead of becoming a ghost that eats a Back press. **Both `Back` AND `Forward` consult `IAbsorbsBack`**
+  (swallowed while the board animates its band closed — a Forward mid-collapse would be a setter-equality no-op that
+  desyncs history). **`DropCurrentStates` drops only the TOP run of forward `StateStep`s** — those provably belong to
+  the current page (states beneath a page thunk belong to that rebuildable page) — so an in-page reload never kills
+  the forward button. Board async loads are seq/dispose-guarded and only purge history when `_nav.Current == this`
+  (a buried board's import-end reload must not pop the current page's open band). **Mouse back/forward (XButton1/XButton2) AND Esc** are handled on `MainWindow` as one
+  unified "back": dismiss the topmost open `SheetHost` (a transient modal, never a history step — `OfType<SheetHost>()`)
+  if there is one, else `NavigateBack` → `NavigationService.Back` (step zoom → band → page). Esc is a window-level
+  **bubble `KeyDown`** (deliberately NOT tunnel, and without `handledEventsToo`): a focused control that wants Esc —
+  an open ComboBox dropdown, a flyout, IME composition — gets it first and closes its own popup; only an unclaimed
+  Esc reaches the window. The trade: this works because **no page control handles Esc while "closed"** (Avalonia's
+  ComboBox/TextBox don't) — keep that invariant when adding controls, or Esc-as-back silently dies wherever such a
+  control has focus. `SheetHost` itself must NOT handle Esc (it once did: with a confirm floating over an edit sheet,
+  focus bubbling from the edit sheet's own button dismissed the *underlying* sheet); the window's topmost-open-sheet
+  sweep is the single dismiss path. The ← chevron (`IHasBack.BackCommand`) funnels
+  into the same `Back`. (Sheets dismiss first; band/zoom go through nav — a new sheet needs no special-casing.) The old
   single-screen `LibraryView` was **split**: `LibraryViewModel` = the board grid, `BoardViewModel` = a board's
   asset grid (the GIF/detail/delete logic moved there). `MainWindowViewModel` holds the per-project
   `ThumbnailCache` shared by both. Image-detail is now an **inline full-width masonry band** (see the Masonry
-  bullet below), not an overlay or a pushed screen — uncommitted/in flight.
+  bullet below), not an overlay or a pushed screen.
   **Opening/creating a project runs off the UI thread** (`ProjectLauncherViewModel.OpenOffUiThreadAsync` wraps
   `ProjectManager.Open/Create` + `EnsureCreatedAsync` in `Task.Run`, behind an `IsOpening` busy overlay): the
   first `DbContext` use **compiles the EF model synchronously** before its first `await` yields — a one-off,
@@ -190,10 +210,53 @@ Concepts that span multiple files:
   are freed when the **last** lease is disposed. `AnimatedImageControl` holds exactly one lease and disposes it
   in one place. Memory tracks what's on screen — do not reintroduce a sticky/LRU GIF cache. (This replaced an
   earlier design whose scattered release logic caused a series of leaks.)
+- **Thumbnail bitmaps are disposed, not left to finalization.** `AssetTileViewModel.Thumbnail` is an Avalonia
+  `Bitmap` = an unmanaged Skia surface whose managed wrapper is tiny, so the GC feels no pressure and merely
+  dropping the reference leaks the real memory until lagging finalization. So the VM **owns** its bitmap's
+  lifetime: the `OnThumbnailChanged` hook frees the *previous* bitmap **synchronously** on **every** swap
+  (replace/recycle/dispose). (It must be synchronous — an earlier version deferred the `Dispose` to a `Background`
+  dispatcher tick, which **starved disposal during a fast scroll**: released bitmaps piled up un-freed, 1000+ live
+  at once, the working set ballooned to ~940 MB, and the native heap kept that high-water mark — looking exactly
+  like "memory never frees". Avalonia's deferred renderer ref-counts the bitmap impl per composed frame, so freeing
+  the managed wrapper here — the `Image` rebinds on the `PropertyChanged` that immediately follows — can't free a
+  surface mid-draw, so the deferral bought nothing and cost the balloon.) The grid frees off-screen tiles via a
+  `BoardView` **`ElementClearing`** handler
+  (symmetric with `ElementPrepared`) → `ReleaseThumbnail()` (also resets `_thumbnailRequested` so re-realizing
+  re-decodes from the on-disk cache); leaving a board frees them all via `BoardViewModel.Dispose()` (`tile.Dispose()`
+  per tile). So in-memory image footprint **tracks what's near the viewport** instead of climbing with every image
+  ever scrolled past — same philosophy as the GIF refcount above. The on-disk `ThumbnailCache` is unaffected (it's
+  the *decode* cache; this is the *in-memory* one). Don't go back to holding a decoded `Bitmap` per asset for the
+  life of the board.
+- **Leaving a board must release its memory — the load-bearing pieces (found via ClrMD GC-root analysis).** A
+  detached `BoardView` is NOT promptly collected (Avalonia's compositor/`ItemsRepeater` keep references to the
+  detached render tree), so anything it transitively holds leaks one board's worth per navigation. **(1) NO raw
+  `<ProgressBar IsIndeterminate="True">` anywhere — use `Controls/BusyBar`.** This was the ROOT of the whole-view
+  leak (heap-dump-verified; Avalonia #15793/#17192/#15389): Fluent's indeterminate animation is infinite, Avalonia
+  keeps it ticking even hidden/detached, and a ticking animation re-registers its composition visuals with the
+  `Compositor` every frame — permanently rooting the entire detached page via child→ancestor value-store chains
+  (~20–35 MB per back-out, ×3 spinners per tile). `BusyBar` ties `IsIndeterminate` to its own `IsVisible` + attach
+  state; bind the busy condition to the **BusyBar's own IsVisible**, never only an ancestor's. **(2) the detail band
+  is built lazily** — a `ContentControl` whose `Content` binds `AssetTileViewModel.BandContent` (== `this` only while
+  `IsExpanded`, else null), so the band markup exists **only for the expanded tile** (a per-tile band was ~190 MB per
+  leaked view). Keep it lazy. **(3) tiles don't pin the board** — `AssetTileViewModel` holds its board-method
+  callbacks as *fields* and `Dispose()` nulls them, so a tile the `ItemsRepeater` still retains (it caches its last
+  `ElementClearing`/`Prepared` event-args) can't drag the whole `BoardViewModel`. **(4) dispose-before-swap**:
+  `NavigationService.Back` disposes the outgoing page **BEFORE** setting `Current` (which detaches the view
+  synchronously) — `BoardViewModel.Dispose` fires `ViewTeardown` so the still-attached `ItemsRepeater` runs one last
+  layout pass and recycles+detaches its tiles; a *detached* repeater never runs layout again. The ordering is pinned
+  by a unit test — don't "simplify" it. **(5) `BoardView.OnDetachedFromVisualTree` tears down** — disposes the
+  explicit-`Source` masonry binding, unsubscribes events, nulls `ItemsSource` + `DataContext`. **Every native
+  `Bitmap` on a VM has an owner that disposes it eagerly** (tile thumbnails, `AssetDetailViewModel.Preview`,
+  board/folder/project card covers — the cards are `IDisposable` with a sticky `IsDisposed` their async cover loads
+  check, so a late decode frees its bitmap instead of stranding it). **Async loads guard against dead VMs**:
+  `LoadAssetsAsync`/`LoadFoldersAsync` use a `_disposed` flag + monotonic load-sequence (only the latest in-flight
+  load applies; a stale/post-dispose resume applies nothing). A DEBUG-only **`Infrastructure/LeakCanary`**
+  (Track-at-ctor / MarkDead-at-dispose-or-detach; warns only when dead screens survive a forced GC) makes the next
+  leak announce itself — keep new heavy per-screen objects registered with it.
 - **Masonry layout** splits the pure packing/visibility math (`MasonryPacker`, Avalonia-free, unit-tested,
   per-column binary search) from the `VirtualizingLayout` shell (`MasonryLayout`). Keep new layout math in the
   packer so it stays testable. **Image-detail is an INLINE full-width band, not a separate screen/overlay**
-  (uncommitted, in flight): tapping a tile expands it (`AssetTileViewModel.IsExpanded`, toggled via
+  tapping a tile expands it (`AssetTileViewModel.IsExpanded`, toggled via
   `BoardViewModel.SelectedAsset`); the packer lays that one item as a **full-width band** (drops below all columns,
   spans the width, then columns resume beneath it — grid packs strictly above/below it, never beside), driven by
   `MasonryLayout.ExpandedIndex` (bound to `BoardViewModel.ExpandedIndex` in `BoardView` code-behind) + a band-height
@@ -212,16 +275,53 @@ Concepts that span multiple files:
   and the item never flashes as a stretched tile: `RequestCollapse` → `CollapseStarting` (view fades out) →
   `CommitCollapse` (drops the band from the layout, keeps the tile selected-but-hidden so `IsExpanded` stays true) →
   reflow back → `ReflowSettled(-1)` → `FinishCollapse` (clears selection); `_collapsing` holds `SyncExpandedIndex`
-  at -1 through the close, with a fallback timer if the settle signal is missed. **GIF in-tile LRU is unchanged** —
-  expansion is additive (played GIFs keep animating in their tiles regardless). **The band's media is dual-mode
-  template content in *every* realized tile, and `AnimatedImageControl` loads on its `Source` regardless of
-  visibility** — so the band GIF binds the per-tile `AssetTileViewModel.BandPlaySource` (non-null only for the one
-  expanded tile), NOT the shared `Details.FilePath`, or the selected GIF decodes/plays in every collapsed tile.
+  at -1 through the close, with a fallback timer if the settle signal is missed. Because the band step is reverted
+  synchronously by `Back` but its `SelectedAsset` clears only when the animation finishes, two close-window edges are
+  guarded: a **second** Back/Esc during the collapse is *absorbed* (`BoardViewModel` implements `IAbsorbsBack`,
+  true while `_closing`; `NavigationService.Back` consults it before popping the page) so a rapid double-press
+  doesn't pop the whole board out from under the animation; and navigating **away** with the band still open (e.g.
+  drilling into a folder via `Push`, whose synchronous revert can't finish the animation on a leaving view) calls
+  `BoardViewModel.AbandonBand()` from `BoardView.OnDetachedFromVisualTree` to drop the band state synchronously, so a
+  board kept beneath on the stack isn't revealed half-open. **GIF in-tile LRU is unchanged** —
+  expansion is additive (played GIFs keep animating in their tiles regardless). **The band is now built lazily** (a
+  `ContentControl` bound to `AssetTileViewModel.BandContent`, non-null only while expanded — see the memory bullet
+  above), so its markup exists only for the expanded tile; the band GIF binds the per-tile `BandPlaySource`
+  (referenced via the band root's tile `DataContext`, `#BandRoot`), non-null only for that one tile, NOT the shared
+  `Details.FilePath`. (Pre-laziness the band lived in every realized tile, which is why the GIF `Source` had to be
+  gated on `BandPlaySource` — still true, and now also free since the band only exists once.)
   **Gotcha already hit (cost a crash):**
   animating `RenderTransform` with `TransformOperations` via a *code-built* `Animation` throws at runtime (no
   animator resolved) **and the throw is deferred onto the animation timer, so a try/catch can't catch it** — use the
   declarative XAML transition path (e.g. `DoubleTransition`) for any movement, or opacity-only in code; never a
-  code-built transform animation.
+  code-built transform animation. **Increment 2:** (a) tapping the band's media opens
+  a **fullscreen zoom/pan `Controls/Lightbox`** — a near-black overlay (`LightboxScrimBrush`/`LightboxForegroundBrush`
+  tokens) viewing the **full-res** still (decoded on open, disposed on close) or the GIF; scroll-wheel zooms anchored
+  at the cursor, drag pans, double-click fits, scrim/✕/Esc close. **The band AND the zoom are now back/forward
+  history steps** (see the Shell-navigation bullet): opening the band `PushState`s it, switching the band's image
+  `ReplaceTopState`s, opening the zoom `PushState`s it; **Back / Esc / mouse-5 / the ← chevron all step zoom → band
+  → out of the page**, and Forward re-opens them (cross-page too — a `StateStep.Apply` runs against the *rebuilt*
+  board by asset id, deferred via `_pendingBandAssetId`/`_pendingZoom` until its async load finishes). So the
+  lightbox's ✕/scrim (`CloseLightbox`) and the band's ✕ (`CloseDetails`) and tap-the-open-tile-again all just call
+  `NavigationService.Back`. **Esc is handled once, at the window** (`MainWindow` bubble `KeyDown` — see the
+  Shell-navigation bullet for why bubble, and the invariant it relies on) as a unified
+  "back": dismiss the topmost open `SheetHost` (a transient modal — NOT a history step; `OfType<SheetHost>()`), else
+  `NavigateBack`. Because it's window-level it works regardless of focus and on every page — which is why the old
+  per-screen Esc machinery (a Board `Escape` KeyBinding + a generic `IModalOverlay` arbiter + `FocusManagement`
+  focus-parking + the lightbox `Focus()`ing itself) was **all deleted**; it was treating a focus symptom the
+  window-level handler removes. The lightbox closes only via the ✕/scrim (which raise `CloseCommand`). **Lesson: an
+  overlay that's conceptually a navigation state belongs IN the back/forward stack, not bolted on with its own key
+  handling — that dissolves the focus/Esc problems instead of patching them.**
+  Zoom/pan is one accumulating affine `Matrix` set
+  **directly** as the media host's RenderTransform (anchored zoom `M·T(-c)·S·T(c)`, pan `M·T(d)`, scale `[fit,8×]`) —
+  *not* a code-built animation, per the gotcha above. Driven by `BoardViewModel` `IsLightboxOpen`/`LightboxSource`/
+  `LightboxIsGif` + `OpenLightbox()`. (b) **Per-image delete now uses an in-app `SheetHost` note sheet**
+  (`IsDeleteSheetOpen`/`DeleteNote`/`CanConfirmDelete` → `ConfirmDeleteAsync`), **replacing the old `DeleteDialog` OS
+  window** (deleted) — like the Move / New-folder sheets. (c) **The inline band is responsive**: its inner two-column
+  `Grid` is now a `DockPanel` whose info rail docks **Right** (`MasonryLayout.RailWidth`) when wide and **Bottom**
+  (capped at `MasonryPacker.StackInfoHeight`, scrolls) below `MasonryPacker.StackBreakpoint` — both states from
+  **styles** (a local Dock/Width would beat the style), via a `bandstacked` class bound to `BoardViewModel.IsBandStacked`
+  (the view sets it from the grid width using the packer's own breakpoint, so the layout matches the band-height math).
+  The outer fade Border is untouched; the old `RailColumnWidth` `GridLength` is gone.
 - **Logging.** Serilog → the launching terminal (the WinExe attaches to the parent console) **and**
   `%APPDATA%/Hoard/logs/hoard.log` (rolled daily: `hoardYYYYMMDD.log`). `App` hooks `AppDomain.UnhandledException`
   + `TaskScheduler.UnobservedTaskException` and `Log.CloseAndFlush()`es so an otherwise-silent UI-thread crash
