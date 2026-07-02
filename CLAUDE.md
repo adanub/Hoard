@@ -301,6 +301,14 @@ Concepts that span multiple files:
   ever scrolled past — same philosophy as the GIF refcount above. The on-disk `ThumbnailCache` is unaffected (it's
   the *decode* cache; this is the *in-memory* one). Don't go back to holding a decoded `Bitmap` per asset for the
   life of the board.
+- **The on-disk thumbnail cache has exactly ONE decode width.** Files are keyed `{sha256}_{width}.png`, and the
+  width is `ThumbnailCache.Width` (256), owned by the cache — `GetAsync` deliberately takes **no width parameter**,
+  so a per-context size can't creep back in. (One did once: card covers requested 240 while tiles requested 256,
+  which silently gave ~1,000 images a second, near-identical PNG — a sixth of a real project's thumbnail folder.)
+  A context that renders smaller downscales the cached bitmap at draw time (the launcher collage decodes cached
+  PNGs to its 240px card width). The ctor sweeps stale-width files in the background on project open
+  (`PruneStaleWidths`, strict filename match, unit-tested), so old projects self-heal and a future `Width` bump
+  cleans up after itself.
 - **Leaving a board must release its memory — the load-bearing pieces (found via ClrMD GC-root analysis).** A
   detached `BoardView` is NOT promptly collected (Avalonia's compositor/`ItemsRepeater` keep references to the
   detached render tree), so anything it transitively holds leaks one board's worth per navigation. **(1) NO raw

@@ -17,7 +17,6 @@ namespace Hoard.Desktop.ViewModels;
 /// </summary>
 public partial class AssetTileViewModel : ViewModelBase, IMasonryItem, IDisposable
 {
-    private const int ThumbnailWidth = 256;
     private readonly ThumbnailCache? _cache;
     private bool _thumbnailRequested;
 
@@ -145,7 +144,7 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem, IDisposab
         try
         {
             var decoded = _cache is not null
-                ? await _cache.GetAsync(Model.Sha256, Model.AbsolutePath, ThumbnailWidth)
+                ? await _cache.GetAsync(Model.Sha256, Model.AbsolutePath)
                 : await DecodeDirectAsync();
             // The container may have been recycled (ReleaseThumbnail cleared _thumbnailRequested) while we decoded.
             // Retaining the bitmap now would orphan it — no ElementClearing fires for an already-recycled tile — so
@@ -171,7 +170,7 @@ public partial class AssetTileViewModel : ViewModelBase, IMasonryItem, IDisposab
         return await Task.Run(() =>
         {
             using var stream = System.IO.File.OpenRead(path);
-            return Bitmap.DecodeToWidth(stream, ThumbnailWidth);
+            return Bitmap.DecodeToWidth(stream, ThumbnailCache.Width);
         });
     }
 

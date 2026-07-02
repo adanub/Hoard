@@ -43,7 +43,7 @@ internal static class BoardCardCovers
                 for (var i = 0; i < covers.Count; i++)
                 {
                     var bmp = thumbnails is not null
-                        ? await thumbnails.GetAsync(covers[i].Sha256, covers[i].AbsolutePath, 240)
+                        ? await thumbnails.GetAsync(covers[i].Sha256, covers[i].AbsolutePath)
                         : null;
                     if (r.IsDisposed) { bmp?.Dispose(); break; }
                     if (i == 0) r.Thumb0 = bmp;
