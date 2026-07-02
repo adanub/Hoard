@@ -93,6 +93,11 @@
                                 ToolTip.Tip="Settings">
                             <ctrl:Icon Data="{StaticResource Icon.settings}" Width="19" Height="19"/>
                         </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon"
+                                Command="{Binding ForwardCommand}" IsEnabled="{Binding CanGoForward}"
+                                ToolTip.Tip="Forward">
+                            <ctrl:Icon Data="{StaticResource Icon.chevron-right}" Width="20" Height="20"/>
+                        </Button>
                     </StackPanel>
 
                     <!-- Search state: the pill morphs into an input (Esc collapses, Enter submits — wired in

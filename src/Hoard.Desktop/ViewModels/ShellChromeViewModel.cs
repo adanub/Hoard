@@ -92,6 +92,19 @@ public partial class ShellChromeViewModel : ViewModelBase
         _nav.Back();
     }
 
+    // ── Forward ─────────────────────────────────────────────────────────────────
+
+    public bool CanGoForward => _nav.CanGoForward;
+
+    /// <summary>The bar's → button: re-enter a backed-out step (page → band → zoom). Closes the ＋ menu first so
+    /// the action card isn't left floating over a page that's about to change.</summary>
+    [RelayCommand]
+    private void Forward()
+    {
+        IsPlusMenuOpen = false;
+        _nav.Forward();
+    }
+
     // ── Search (the pill morphs into an input) ────────────────────────────────
 
     [ObservableProperty] private bool _isSearchOpen;
@@ -177,6 +190,7 @@ public partial class ShellChromeViewModel : ViewModelBase
             case nameof(NavigationService.Current): SyncToPage(); break;
             case nameof(NavigationService.PageChain): RebuildCrumbs(); break;
             case nameof(NavigationService.CanGoBack): OnPropertyChanged(nameof(CanGoBack)); break;
+            case nameof(NavigationService.CanGoForward): OnPropertyChanged(nameof(CanGoForward)); break;
         }
     }
 
