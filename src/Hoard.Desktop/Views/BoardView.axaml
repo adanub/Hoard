@@ -18,29 +18,8 @@
     <!-- Panel so the Sync sheet overlays the whole screen. -->
     <Panel>
     <DockPanel>
-        <!-- Top bar: back (← to Library) · board title · Sync (re-fetch the board's sources). -->
-        <Border DockPanel.Dock="Top" Padding="16,12"
-                BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                <Button Grid.Column="0" Theme="{StaticResource HoardButton}" Classes="ghost"
-                        Width="38" Height="38" Padding="0" Command="{Binding BackCommand}"
-                        ToolTip.Tip="Back">
-                    <ctrl:Icon Data="{StaticResource Icon.chevron-left}" Width="20" Height="20"/>
-                </Button>
-                <TextBlock Grid.Column="1" Text="{Binding Title}" Classes="h2" VerticalAlignment="Center"
-                           TextTrimming="CharacterEllipsis"/>
-                <!-- Only a real board with at least one URL'd source can be synced; disabled while importing. -->
-                <Button Grid.Column="2" Theme="{StaticResource HoardButton}" Classes="secondary"
-                        Command="{Binding OpenSyncSheetCommand}"
-                        IsVisible="{Binding IsSyncable}" IsEnabled="{Binding !IsBoardImporting}"
-                        ToolTip.Tip="Re-fetch this board from its source(s)">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <ctrl:Icon Data="{StaticResource Icon.rotate-ccw}" Width="16" Height="16"/>
-                        <TextBlock Text="Sync" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
-            </Grid>
-        </Border>
+        <!-- No top bar: the board title lives in the shell's breadcrumb strip; back/search live in the
+             floating bar, and Sync/New-folder in its ＋ menu. -->
 
         <!-- Import strip: shown while an import is landing in this board, with the same live count as the card. -->
         <Border DockPanel.Dock="Top" IsVisible="{Binding IsBoardImporting}" Padding="16,8"
@@ -63,7 +42,8 @@
                  it — the measured width was already correct, so it wasn't an overflow). A content Margin gives a
                  reliable, symmetric left/right inset. Vertical padding stays on the SV (its scroll-direction padding
                  behaves, and the scroll-to-top math reads GridScroll.Padding.Top). -->
-            <ScrollViewer Name="GridScroll" Padding="0,10"
+            <!-- The 96px bottom padding keeps the last masonry row scrollable clear of the floating bar. -->
+            <ScrollViewer Name="GridScroll" Padding="0,10,0,96"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Spacing="6" Margin="10,0" ClipToBounds="False">
                     <!-- Folder grid: "+ New folder" + one BoardCard per child folder, rendered exactly like
@@ -83,12 +63,15 @@
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.DataTemplates>
+                            <!-- "+ New folder" hides while a search is active (a result grid isn't a place to
+                                 create); folder cards carry the bar's live NAME filter (hidden, not removed). -->
                             <DataTemplate DataType="vm:NewFolderTile">
                                 <ctrl:NewCard Label="New folder" Margin="0,0,16,16"
+                                              IsVisible="{Binding !$parent[ItemsControl].((vm:BoardViewModel)DataContext).IsSearchActive}"
                                               Command="{Binding $parent[ItemsControl].((vm:BoardViewModel)DataContext).OpenNewFolderSheetCommand}"/>
                             </DataTemplate>
                             <DataTemplate DataType="vm:BoardCardRef">
-                                <ctrl:BoardCard Margin="0,0,16,16"
+                                <ctrl:BoardCard Margin="0,0,16,16" IsVisible="{Binding !IsFilteredOut}"
                                                 Title="{Binding Name}" MetaText="{Binding MetaText}"
                                                 Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
                                                 OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>

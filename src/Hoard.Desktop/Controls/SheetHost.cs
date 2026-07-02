@@ -1,9 +1,11 @@
+using System;
 using System.Linq;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -26,6 +28,17 @@ public class SheetHost : ContentControl
 
     public static readonly StyledProperty<ICommand?> DismissCommandProperty =
         AvaloniaProperty.Register<SheetHost, ICommand?>(nameof(DismissCommand));
+
+    /// <summary>Bubbles to the window whenever a sheet opens or closes, so the shell can track "any sheet
+    /// open" without polling (it hides the floating bar while a modal owns the screen).</summary>
+    public static readonly RoutedEvent<RoutedEventArgs> IsOpenChangedEvent =
+        RoutedEvent.Register<SheetHost, RoutedEventArgs>(nameof(IsOpenChanged), RoutingStrategies.Bubble);
+
+    public event EventHandler<RoutedEventArgs> IsOpenChanged
+    {
+        add => AddHandler(IsOpenChangedEvent, value);
+        remove => RemoveHandler(IsOpenChangedEvent, value);
+    }
 
     public bool IsOpen
     {
@@ -56,10 +69,15 @@ public class SheetHost : ContentControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+        if (change.Property != IsOpenProperty) return;
+
+        // Tell the shell (bubbles to MainWindow) on every open/close so it can recompute "any sheet open".
+        RaiseEvent(new RoutedEventArgs(IsOpenChangedEvent));
+
         // Opening: move focus INTO the sheet (its first TextBox, else the sheet itself) — the scrim blocks pointers
         // but not keys, so without this the first keystrokes went to whatever scrim-covered control opened the sheet
         // (e.g. Space re-invoking the opener). Posted so the sheet has become visible/measured first.
-        if (change.Property == IsOpenProperty && IsOpen)
+        if (IsOpen)
             Dispatcher.UIThread.Post(() =>
             {
                 if (!IsOpen) return; // closed again before the post ran

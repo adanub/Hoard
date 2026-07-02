@@ -1,11 +1,14 @@
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Styling;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.Controls;
+using Hoard.Desktop.Navigation;
 using Hoard.Desktop.Services;
+using Hoard.Desktop.ViewModels;
 
 namespace Hoard.Desktop.Views;
 
@@ -64,6 +67,87 @@ public partial class GalleryWindow : Window
         DemoBoardEditSheet.DeleteCommand = new RelayCommand(() => ShowConfirm(
             "Delete board?", "Delete this board and its images? They're moved to your system's recycle bin.",
             "Delete", 10, () => _toasts.Show("Board deleted (→ recycle bin)", isError: true)));
+
+        WireShellChromeDemo();
+    }
+
+    // Shell chrome: a sample four-deep navigation drives the breadcrumb bars and the floating bar, so the
+    // crumb clicks, back button, search morph, ＋ menu, and ⚙ all work in place.
+    private void WireShellChromeDemo()
+    {
+        var nav = new NavigationService();
+        var chrome = new ShellChromeViewModel(nav, openSettings: OpenSettingsDemo);
+        nav.Reset(new DemoPage("Projects", _toasts, "New project"));
+
+        void PushDemoTrail()
+        {
+            nav.Push(new DemoPage("Pinterest Backup", _toasts, "Import board"));
+            nav.Push(new DemoPage("Terrain Ideas", _toasts, "Sync board", "New folder"));
+            nav.Push(new DemoPage("Buildings", _toasts, "Sync board", "New folder"));
+        }
+        PushDemoTrail();
+
+        void SyncTrails()
+        {
+            DemoBreadcrumbWide.Trail = chrome.Crumbs;
+            DemoBreadcrumbNarrow.Trail = chrome.Crumbs;
+        }
+        SyncTrails();
+        chrome.PropertyChanged += (_, ev) =>
+        {
+            if (ev.PropertyName != nameof(ShellChromeViewModel.Crumbs)) return;
+            SyncTrails();
+            // Backed all the way out (crumb click / ← presses): re-push the trail so the demo stays
+            // exercisable — there's no forward gesture in the gallery to recover it otherwise.
+            if (nav.PageChain.Count == 1) PushDemoTrail();
+        };
+        DemoBreadcrumbWide.NavigateCommand = chrome.NavigateToCrumbCommand;
+        DemoBreadcrumbNarrow.NavigateCommand = chrome.NavigateToCrumbCommand;
+        DemoFloatingBar.DataContext = chrome;
+
+        // The Settings sheet over a design-time VM: nothing persists, but the theme choice really applies.
+        // The host follows the VM's IsOpen so the sheet's own Done button (CloseCommand → IsOpen=false)
+        // actually closes it, like the shell's bound SheetHost.
+        _demoSettings = new SettingsViewModel();
+        DemoSettingsSheet.DataContext = _demoSettings;
+        _demoSettings.PropertyChanged += (_, ev) =>
+        {
+            if (ev.PropertyName == nameof(SettingsViewModel.IsOpen)) SettingsDemoSheet.IsOpen = _demoSettings.IsOpen;
+        };
+        SettingsDemoSheet.DismissCommand = new RelayCommand(() => _demoSettings.IsOpen = false);
+    }
+
+    private SettingsViewModel? _demoSettings;
+
+    private void OpenSettingsDemo()
+    {
+        if (_demoSettings is not null) _demoSettings.IsOpen = true;
+    }
+
+    /// <summary>A sample page for the shell-chrome demos: breadcrumb-titled, searchable, with ＋ actions.</summary>
+    private sealed class DemoPage : ViewModelBase, ICrumbTitled, IProvidesSearch, IProvidesPlusActions
+    {
+        private readonly ToastService _toasts;
+        private string _searchText = "";
+
+        public DemoPage(string title, ToastService toasts, params string[] actions)
+        {
+            CrumbTitle = title;
+            _toasts = toasts;
+            PlusActions = actions.Select(a => new PlusAction(a, new RelayCommand(() => toasts.Show($"{a}…")))).ToArray();
+        }
+
+        public string CrumbTitle { get; }
+        public IReadOnlyList<PlusAction> PlusActions { get; }
+
+        public string SearchText
+        {
+            get => _searchText;
+            set => SetProperty(ref _searchText, value);
+        }
+
+        public string SearchPlaceholder => "Search the demo…";
+        public void SubmitSearch() => _toasts.Show($"Searched for “{SearchText}”");
     }
 
     // Theme switch: checked (knob to the moon) = dark, unchecked (knob to the sun) = light.
@@ -87,6 +171,7 @@ public partial class GalleryWindow : Window
 
     private void OnOpenSheet(object? sender, RoutedEventArgs e) => DemoSheet.IsOpen = true;
     private void OnCloseSheet(object? sender, RoutedEventArgs e) => DemoSheet.IsOpen = false;
+    private void OnOpenSettingsDemo(object? sender, RoutedEventArgs e) => OpenSettingsDemo();
 
     private void OnShowToast(object? sender, RoutedEventArgs e) => _toasts.Show("Saved your changes.");
     private void OnShowErrorToast(object? sender, RoutedEventArgs e) => _toasts.Show("Something went wrong.", isError: true);

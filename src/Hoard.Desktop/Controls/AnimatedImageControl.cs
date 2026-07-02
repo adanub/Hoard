@@ -25,6 +25,9 @@ public sealed class AnimatedImageControl : Control
     public static readonly DirectProperty<AnimatedImageControl, string?> LoadedSizeTextProperty =
         AvaloniaProperty.RegisterDirect<AnimatedImageControl, string?>(nameof(LoadedSizeText), o => o.LoadedSizeText);
 
+    public static readonly DirectProperty<AnimatedImageControl, bool> HasFramesProperty =
+        AvaloniaProperty.RegisterDirect<AnimatedImageControl, bool>(nameof(HasFrames), o => o.HasFrames);
+
     public string? Source
     {
         get => GetValue(SourceProperty);
@@ -49,6 +52,18 @@ public sealed class AnimatedImageControl : Control
         private set => SetAndRaise(LoadedSizeTextProperty, ref _loadedSizeText, value);
     }
 
+    private bool _hasFrames;
+
+    /// <summary>True once decoded frames are actually ready to draw — the moment this control starts rendering.
+    /// The tile binds its still thumbnail's visibility to the inverse, so the still stays up (under the loading
+    /// bar) while frames decode and hides exactly when the animation takes over — no blank flash, and no
+    /// onion-skin ghosting through a transparent GIF.</summary>
+    public bool HasFrames
+    {
+        get => _hasFrames;
+        private set => SetAndRaise(HasFramesProperty, ref _hasFrames, value);
+    }
+
     private ResourceLease<GifAnimation>? _lease; // the one piece of ownership: dispose to release frames
     private GifAnimation? _animation;            // == _lease?.Value, cached for the render hot path
     private int _index;
@@ -66,7 +81,17 @@ public sealed class AnimatedImageControl : Control
     {
         base.OnDetachedFromVisualTree(e);
         _loadId++;       // cancel any in-flight load
+        IsLoading = false; // the superseded load returns without clearing this — don't strand a spinner
         StopAndClear();  // stop the timer and return the lease so frames can be freed
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        // Detach freed the frames, but a RECYCLED element can re-attach with the SAME Source (no property
+        // change → no reload) — a "playing" GIF that renders nothing. Reload when attached source-but-frameless.
+        if (!string.IsNullOrEmpty(Source) && _animation is null && !IsLoading)
+            _ = LoadAsync(Source);
     }
 
     private async Task LoadAsync(string? path)
@@ -105,6 +130,7 @@ public sealed class AnimatedImageControl : Control
         _lease = lease;
         _animation = lease?.Value;
         LoadedSizeText = _animation is null ? null : ByteFormat.Format(_animation.Bytes);
+        HasFrames = _animation is not null;
         InvalidateMeasure();
         InvalidateVisual();
         if (_animation is { Frames.Count: > 1 })
@@ -118,6 +144,7 @@ public sealed class AnimatedImageControl : Control
         _lease = null;
         _animation = null;
         LoadedSizeText = null;
+        HasFrames = false;
         _index = 0;
     }
 

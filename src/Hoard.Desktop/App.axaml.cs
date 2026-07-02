@@ -55,10 +55,14 @@ public partial class App : Application
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddSerilog(dispose: true));
         services.AddSingleton<Hoard.Core.Storage.IFileRecycler, Services.WindowsFileRecycler>(); // delete → recycle bin
+        services.AddSingleton<Services.UiSettingsStore>(); // desktop-head preferences (theme/scale/GIFs/cookies)
         services.AddHoardCore(appPaths);
         services.AddGalleryDlConnectors(ResolveGalleryDlPath()); // desktop-only ingestion
         services.AddTransient<MainWindowViewModel>();
         var provider = services.BuildServiceProvider();
+
+        // The stored theme applies before the window shows (scale is applied by MainWindow when it binds).
+        SettingsViewModel.ApplyTheme(provider.GetRequiredService<Services.UiSettingsStore>().Settings.Theme);
 
         // The shell opens on the project launcher; the DB is created when a project is opened there.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -75,8 +79,9 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    /// <summary>Prefer the bundled gallery-dl next to the app; fall back to one on PATH.</summary>
-    private static string ResolveGalleryDlPath()
+    /// <summary>Prefer the bundled gallery-dl next to the app; fall back to one on PATH. Internal so the
+    /// Settings sheet's About row can report the same exe it would run.</summary>
+    internal static string ResolveGalleryDlPath()
     {
         var exe = OperatingSystem.IsWindows() ? "gallery-dl.exe" : "gallery-dl";
         var bundled = Path.Combine(AppContext.BaseDirectory, "tools", "gallery-dl", exe);

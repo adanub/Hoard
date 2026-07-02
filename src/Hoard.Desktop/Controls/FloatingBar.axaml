@@ -1,0 +1,118 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Hoard.Desktop.ViewModels"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.FloatingBar"
+             x:DataType="vm:ShellChromeViewModel">
+
+    <!-- The Pinterest-style floating bottom bar: a centred pill of icon actions (← back · 🔍 search · ＋ · ⚙)
+         that morphs into a search field, with the ＋ context menu popping up as a card ABOVE the pill (same
+         visual tree — token styles apply, no Popup root). The root Panel stretches over the whole page but
+         has no background, so clicks pass through everywhere except the bar itself (and the transparent
+         click-away backdrop while the menu is open). Hidden as a whole while a sheet or the fullscreen zoom
+         owns the screen (ShellChromeViewModel.IsBarVisible) — via a short opacity FADE (the .hidden class),
+         not IsVisible, so it doesn't pop in/out; IsHitTestVisible drops with it so a faded bar takes no
+         clicks. (Opacity-hidden elements still render — fine here, the bar hosts no perpetual animations;
+         the BusyBar lesson doesn't apply.) -->
+    <UserControl.Styles>
+        <Style Selector="StackPanel#BarStack">
+            <Setter Property="Opacity" Value="1"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15" Easing="CubicEaseOut"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="StackPanel#BarStack.hidden">
+            <Setter Property="Opacity" Value="0"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Panel ClipToBounds="False">
+
+        <!-- Click-away backdrop for the ＋ menu (transparent but hit-testable; left-click dismisses, matching
+             the sheet scrim's primary-button filter — wired in code-behind). -->
+        <Border x:Name="MenuBackdrop" Background="Transparent" IsVisible="{Binding IsPlusMenuOpen}"/>
+
+        <StackPanel x:Name="BarStack" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="24,0,24,18"
+                    Spacing="10" ClipToBounds="False"
+                    Classes.hidden="{Binding !IsBarVisible}" IsHitTestVisible="{Binding IsBarVisible}">
+
+            <!-- ＋ context menu: one ghost row per contextual action (Sync / New folder / Import board / New
+                 project), floating above the pill. Concentric corners: the ghost rows' hover pill is RadiusLg
+                 (14), so with the 4px gap the card is 14 + 4 = 18 = RadiusXl — matching the bar. -->
+            <Border IsVisible="{Binding IsPlusMenuOpen}" HorizontalAlignment="Center"
+                    Background="{DynamicResource PopoverBrush}"
+                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                    CornerRadius="{DynamicResource RadiusXl}" BoxShadow="{DynamicResource ShadowMd}"
+                    Padding="4" MinWidth="180">
+                <ItemsControl ItemsSource="{Binding PlusActions}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:PlusAction">
+                            <Button Theme="{StaticResource HoardButton}" Classes="ghost"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                    Content="{Binding Label}"
+                                    IsVisible="{Binding IsVisible}" IsEnabled="{Binding IsEnabled}"
+                                    Command="{Binding $parent[ItemsControl].((vm:ShellChromeViewModel)DataContext).RunPlusActionCommand}"
+                                    CommandParameter="{Binding}"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+
+            <!-- The bar. RadiusXl = the buttons' RadiusLg scaled to the bar's height, so the corners match the
+                 buttons' proportionally instead of going fully circular. ClipToBounds=False so the drop shadow
+                 isn't cropped (the CLAUDE.md BoxShadow rule — the surrounding margins reserve the room). -->
+            <Border HorizontalAlignment="Center" ClipToBounds="False"
+                    Background="{DynamicResource PopoverBrush}"
+                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                    CornerRadius="{DynamicResource RadiusXl}" BoxShadow="{DynamicResource ShadowRaised}"
+                    Padding="8,6">
+                <Panel>
+
+                    <!-- Rest state: the icon row ("icon" = the theme's square ControlHeight button, so the bar
+                         tracks the token instead of hardcoding 38). -->
+                    <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding !IsSearchOpen}">
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon"
+                                Command="{Binding BackCommand}" IsEnabled="{Binding CanGoBack}"
+                                ToolTip.Tip="Back">
+                            <ctrl:Icon Data="{StaticResource Icon.chevron-left}" Width="20" Height="20"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon"
+                                Click="OnOpenSearchClick" IsVisible="{Binding HasSearch}"
+                                ToolTip.Tip="Search (Ctrl+F)">
+                            <ctrl:Icon Data="{StaticResource Icon.search}" Width="19" Height="19"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon"
+                                Command="{Binding TogglePlusMenuCommand}" IsVisible="{Binding HasPlusActions}"
+                                ToolTip.Tip="Actions">
+                            <ctrl:Icon Data="{StaticResource Icon.plus}" Width="20" Height="20"/>
+                        </Button>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon"
+                                Command="{Binding OpenSettingsCommand}" IsVisible="{Binding HasSettings}"
+                                ToolTip.Tip="Settings">
+                            <ctrl:Icon Data="{StaticResource Icon.settings}" Width="19" Height="19"/>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Search state: the pill morphs into an input (Esc collapses, Enter submits — wired in
+                         code-behind; the ✕ clears the page's filter and collapses). -->
+                    <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding IsSearchOpen}">
+                        <ctrl:Icon Data="{StaticResource Icon.search}" Width="18" Height="18"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"
+                                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+                        <TextBox x:Name="SearchBox" Theme="{StaticResource HoardInput}" Width="260"
+                                 VerticalAlignment="Center"
+                                 Text="{Binding SearchText}"
+                                 PlaceholderText="{Binding SearchPlaceholder}"
+                                 KeyDown="OnSearchBoxKeyDown"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon"
+                                Command="{Binding CloseSearchCommand}" ToolTip.Tip="Close search">
+                            <ctrl:Icon Data="{StaticResource Icon.x}" Width="16" Height="16"/>
+                        </Button>
+                    </StackPanel>
+                </Panel>
+            </Border>
+        </StackPanel>
+    </Panel>
+</UserControl>

@@ -16,9 +16,33 @@
 
     <!-- Fluid reflow (Pinterest-style): pages lay out in real pixels and scroll naturally; the masonry grid
          gains columns as the window widens. The shell shows the navigation back-stack's current page;
-         ViewLocator maps the page VM to its View. The ToastHost overlays transient messages app-wide. -->
-    <Panel>
-        <ContentControl Content="{Binding Navigation.Current}"/>
-        <ctrl:ToastHost DataContext="{Binding ToastService}"/>
-    </Panel>
+         ViewLocator maps the page VM to its View. Shell chrome: a thin breadcrumb strip on top (the page
+         trail — clickable ancestors, leading-ellipsis crop from the base end) and the floating bottom bar
+         (back · search · ＋ menu · ⚙) overlaying the page. The ToastHost overlays transient messages app-wide.
+         RootScale carries the Settings "interface scale": a layout transform over the WHOLE shell, so
+         everything reflows at the chosen size (the masonry gains/loses columns) — user-chosen accessibility
+         zoom, not the scaled-desktop-layout DESIGN.md rules out. Applied from code-behind (a transform can't
+         data-bind — it has no DataContext). -->
+    <LayoutTransformControl x:Name="RootScale">
+        <Panel>
+            <DockPanel>
+                <Border DockPanel.Dock="Top" Height="34" Padding="10,0"
+                        BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
+                        TextElement.FontSize="{DynamicResource FontSizeSm}">
+                    <ctrl:BreadcrumbBar Trail="{Binding Chrome.Crumbs}"
+                                        NavigateCommand="{Binding Chrome.NavigateToCrumbCommand}"/>
+                </Border>
+                <ContentControl Content="{Binding Navigation.Current}"/>
+            </DockPanel>
+            <ctrl:FloatingBar x:Name="Bar" DataContext="{Binding Chrome}"/>
+
+            <!-- Shell-owned Settings sheet (the bar's ⚙). Its SheetHost raises the same IsOpenChanged the
+                 page sheets do, so the bar hides beneath it. -->
+            <ctrl:SheetHost IsOpen="{Binding Settings.IsOpen}" DismissCommand="{Binding Settings.CloseCommand}">
+                <ctrl:SettingsSheet DataContext="{Binding Settings}"/>
+            </ctrl:SheetHost>
+
+            <ctrl:ToastHost DataContext="{Binding ToastService}"/>
+        </Panel>
+    </LayoutTransformControl>
 </Window>

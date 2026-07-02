@@ -249,6 +249,35 @@
                     </WrapPanel>
                 </StackPanel>
 
+                <!-- Shell chrome: the breadcrumb strip and the floating bottom bar (wired to a sample
+                     navigation in code-behind — the search field, ＋ menu, and gear all work in place). -->
+                <StackPanel Spacing="10">
+                    <TextBlock Classes="h2" Text="Shell chrome"/>
+
+                    <TextBlock Classes="muted" Text="Breadcrumb bar (full width, then squeezed — the ellipsis eats from the base end)"/>
+                    <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                            CornerRadius="{DynamicResource RadiusSm}" Height="34" Padding="10,0"
+                            TextElement.FontSize="{DynamicResource FontSizeSm}">
+                        <ctrl:BreadcrumbBar x:Name="DemoBreadcrumbWide"/>
+                    </Border>
+                    <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                            CornerRadius="{DynamicResource RadiusSm}" Height="34" Padding="10,0" Width="320"
+                            HorizontalAlignment="Left" TextElement.FontSize="{DynamicResource FontSizeSm}">
+                        <ctrl:BreadcrumbBar x:Name="DemoBreadcrumbNarrow"/>
+                    </Border>
+
+                    <!-- ClipToBounds=False: the pill/menu carry BoxShadows, which must not crop at the demo
+                         border (the CLAUDE.md BoxShadow rule — the gallery exists to catch that artefact). -->
+                    <TextBlock Classes="muted" Text="Floating bar (try the search morph, the ＋ menu, and ⚙)"/>
+                    <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                            CornerRadius="{DynamicResource RadiusSm}" Height="230" ClipToBounds="False">
+                        <ctrl:FloatingBar x:Name="DemoFloatingBar"/>
+                    </Border>
+
+                    <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open the Settings sheet"
+                            Click="OnOpenSettingsDemo"/>
+                </StackPanel>
+
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
@@ -280,6 +309,12 @@
                                  CountsText="Images 30   ·   GIFs 5   ·   Videos 2"
                                  CacheText="Cache 5 MB"
                                  AddedText="Added 2026-04-12" ImportedText="Imported 2026-06-15"/>
+        </ctrl:SheetHost>
+
+        <!-- Settings sheet demo (a design-time SettingsViewModel — changes don't persist, but the theme
+             choice really applies, like the header toggle). -->
+        <ctrl:SheetHost x:Name="SettingsDemoSheet">
+            <ctrl:SettingsSheet x:Name="DemoSettingsSheet"/>
         </ctrl:SheetHost>
 
         <!-- Confirmation popup — opened ON TOP of an Edit popup by any destructive action (must be last so it

@@ -138,7 +138,7 @@ capture on a >12px drag. **(7)** programmatic `SelectedAsset=null` (move/reload)
 (factor already 1) before any measure builds the band packer, so `ExpandedBandTop` would be null and the switch
 wouldn't scroll; kept. **Tests: 95 (Core) / 38 (Desktop) green. Committed `5dbf29c`.**
 
-**Increment 2 — UNCOMMITTED (working tree), pending runtime verification.** Three pieces:
+**Increment 2 — COMMITTED `6697899`, user-verified.** Three pieces:
 - **Fullscreen zoom/pan lightbox** (`Controls/Lightbox.{axaml,cs}`): tapping the band's media opens a near-black
   overlay (new `LightboxScrimBrush` / `LightboxForegroundBrush` tokens) that views the **full-resolution** image
   (or the GIF via `AnimatedImageControl`). Scroll-wheel zooms anchored at the cursor, drag pans, double-click
@@ -434,14 +434,15 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 
 ## Next up — finish Phase 2
 
-- **Sub-boards / sections** — Pinterest sections are stored as child `Collection`s; the Board screen currently
-  shows only loose pins. Show child boards as `BoardCard`s to drill into (the decided "keep sections as sub-boards").
-- **Image-detail as a pushed screen** — currently a Board-screen overlay; convert to a back-stack screen, and
-  migrate its **delete** off the `DeleteDialog` window (a note-collecting in-app sheet that routes through
-  `ConfirmSheet`). Then **retire the old single-screen `LibraryView` remnants + FluentTheme + the placeholder
-  `accent`/`danger`/`overlay` styles** (the new screens already use the token theme).
-- **Restore project search** (removed from the top bars for now; backend still in the VMs) — place it wherever
-  the redesign lands it.
+- ~~**Sub-boards / sections**~~ — **done** (schema v7 nested folders; folder cards on the Board screen, drill-in
+  via the back-stack, auto-foldering on import — see Status above).
+- ~~**Image-detail as a pushed screen**~~ — **done, as an inline band instead** (the full-width masonry band +
+  band/zoom as history steps; delete moved to an in-app note sheet, `DeleteDialog` deleted). Still open from
+  this bullet: **retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles** (the screens all use
+  the token theme now; the base theme is still layered over Fluent).
+- ~~**Restore project search**~~ — **done** (the floating bar's contextual search: a board live-filters its
+  images + folder names, the Library filters board cards, the launcher filters recents; see the shell-chrome
+  session below).
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
@@ -626,3 +627,32 @@ does **not** open or activate it — only a left click does. **GIF check:** play
 in the grid — its see-through regions show the card background, with no ghost of the still thumbnail behind it.
 **Still deferred:** the larger architectural follow-ups (pin-id-keyed link model, an "Unfiled" view for orphaned
 assets, `Sha256`-reassign dedup on restore). Section auto-foldering and the small review cleanups are done.
+
+## This session — shell chrome (breadcrumb + floating bar + contextual search) + Settings, user-verified
+
+The per-page top bars are **gone**, replaced by shell chrome (see the CLAUDE.md bullets for the full mechanics):
+
+- **Thin breadcrumb strip** (34px, top): the nav trail (`Projects › project › board › folder`), ancestors
+  clickable (`NavigationService.BackTo` over the new `PageChain`), current crumb plain and carrying a **live
+  search-result count** ("Terrain Ideas (2 folders · 12 items found)"). Overflow crops from the BASE end via
+  the pure, unit-tested `BreadcrumbTrimmer` ("…est Backup › Terrain Ideas › Buildings").
+- **Floating bottom bar** (Pinterest-style pill; `RadiusXl` = buttons' `RadiusLg` scaled to the bar, concentric
+  ＋-menu card): **← back** · **🔍 search** (the pill morphs into the input; Ctrl+F opens it; contextual scope —
+  board images + folder names / Library board names / launcher recents, all hidden-not-removed filters; the
+  "All images" card is exempt) · **＋** (context menu: New project / Import board / Sync + New folder) ·
+  **⚙ Settings**. The bar fades out under any sheet (`SheetHost.IsOpenChangedEvent` → `Chrome.IsModalOpen`)
+  and the lightbox (`IImmersivePage`). Pages feed the chrome via the `PageChrome` contracts
+  (`ICrumbTitled`/`IProvidesSearch`/`IProvidesPlusActions`), tested against fakes. `IHasBack` + the ← chevrons
+  are deleted.
+- **Settings** (`UiSettingsStore` → `%APPDATA%/Hoard/ui-settings.json`, its own file so `ProjectManager`'s
+  `settings.json` rewrites can't clobber it): theme (applies live + at startup), **interface scale 75–150%**
+  (a layout transform over the whole shell — screens reflow, masonry re-columns), default cookies browser
+  (pre-selects in the import/sync sheets), **GIF autoplay + max-playing budget** (the old hardcoded LRU of 12).
+  Autoplay is **viewport-driven** (debounced scan in `BoardView`), NOT realization-driven — playing on
+  `ElementPrepared` let the repeater's off-screen realization buffer evict every visible GIF from the LRU.
+  `AnimatedImageControl` hardening: re-attach reloads a source-but-frameless control (recycled elements),
+  detach can't strand `IsLoading`, and the tile's still thumbnail stays under the loading bar until frames
+  actually render (`HasFrames`). Gallery gained a Shell-chrome section (working breadcrumb/bar/Settings demos).
+
+**Tests: 95 (Core) / 81 (Desktop) green.** New Desktop suites: `BreadcrumbTrimmerTests`,
+`ShellChromeViewModelTests`, + `PageChain`/`BackTo` coverage in `NavigationServiceTests`.

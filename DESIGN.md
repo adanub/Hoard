@@ -75,7 +75,7 @@ not pure black/white) with a single indigo **accent**.
 
 The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — change the indigo in `Tokens.axaml` to recolour the whole UI.
 
-- **Radius:** `RadiusSm` 6 · `RadiusMd` 10 · `RadiusLg` 14 · `RadiusLgTop` (lg on top corners only — card covers) · `RadiusFull`. Buttons/cards use `RadiusLg`, list rows `RadiusMd`, pills/badges `RadiusFull`.
+- **Radius:** `RadiusSm` 6 · `RadiusMd` 10 · `RadiusLg` 14 · `RadiusLgTop` (lg on top corners only — card covers) · `RadiusXl` 18 (RadiusLg scaled to the floating bar's height) · `RadiusFull`. Buttons/cards use `RadiusLg`, list rows `RadiusMd`, pills/badges `RadiusFull`.
 - **Control heights** (the explicit size metric for buttons): `ControlHeight` 38 (default) · `ControlHeightSm` 28 · `ControlHeightLg` 48; the `sm`/`lg` classes set `Height`, the icon button is square at `ControlHeight`.
 - **Spacing:** 4 / 8 / 12 / 16 / 24 / 32 (`Space1`…`Space8`).
 - **Type:** Inter; `FontSizeBase` **14** (shadcn component default), xs 12 · sm 13 · lg 16 · xl 20 · 2xl 24.
@@ -182,7 +182,9 @@ thickness ~1.5–2 scaled to size). Keep a NOTICE for the ISC licence. Initial s
 - **Fluid reflow, real pixels (primary).** No global scaling. Screens lay out in real DIPs inside a
   `ScrollViewer` and reflow by *actual* width — the **masonry grid spans the full window width and gains
   columns as it widens** (columns = width ÷ `MasonryLayout.TargetColumnWidth`, ~200px → 2 on a phone, 6–8 on
-  desktop). This is the Pinterest model; the grid was already built for it (`MasonryPacker`).
+  desktop). This is the Pinterest model; the grid was already built for it (`MasonryPacker`). (The Settings
+  **interface scale** is a different thing and allowed: an opt-in accessibility zoom applied as a *layout*
+  transform over the shell, under which screens still reflow — it bans nothing this rule protects.)
 - **Breakpoints** (window / container width): compact `<600` (phone) · medium `600–1024` (tablet) ·
   expanded `≥1024` (desktop).
 - **Techniques** (Avalonia 12, no library): `OnFormFactor` for structural mobile/desktop differences;
@@ -201,6 +203,19 @@ Projects ──▶ Library (boards/collections) ──▶ Board (images) ──�
 ```
 
 Project management, import, and new-collection are **sheets/popups**, not persistent chrome.
+
+The only persistent chrome is the **shell's**, shared by every screen (no per-screen top bars):
+
+- A **thin breadcrumb strip** (34px, top): the navigation trail (`Projects › project › board › folder`),
+  ancestors clickable, current crumb plain. When it overflows, the ellipsis eats from the **base** end
+  ("…est Backup › Terrain Ideas › Buildings") so the current page always keeps its name.
+- A **floating bottom bar** (Pinterest-style pill, bottom-centre; corners = the buttons' `RadiusLg` scaled to
+  the bar's height via `RadiusXl`, not fully circular): **← back** · **🔍 search** (the pill morphs into the
+  input; it always filters the *current* grid — a board's images, the Library's boards by name, the recents on
+  Projects; project-wide image search = open "All images" and filter there) · **＋** (a context menu of the
+  screen's actions: New project / Import board / Sync + New folder) · **⚙ settings** (a sheet: theme,
+  interface scale, default cookies browser, GIF behaviour, about/diagnostics). The bar hides while a sheet or
+  the fullscreen zoom owns the screen.
 
 ## Conventions (and for Claude)
 

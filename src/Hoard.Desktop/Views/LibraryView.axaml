@@ -13,54 +13,41 @@
     </Design.DataContext>
 
     <Panel>
-        <DockPanel>
-            <!-- Top bar: back (← to Projects) · project name. Importing is done via the "+ Import" card.
-                 (Search goes elsewhere later.) -->
-            <Border DockPanel.Dock="Top" Padding="16,12"
-                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-                    <Button Grid.Column="0" Theme="{StaticResource HoardButton}" Classes="ghost"
-                            Width="38" Height="38" Padding="0" Command="{Binding BackCommand}"
-                            ToolTip.Tip="Back to projects">
-                        <ctrl:Icon Data="{StaticResource Icon.chevron-left}" Width="20" Height="20"/>
-                    </Button>
+        <!-- No top bar: the project name lives in the shell's breadcrumb strip, back/search/import in the
+             floating bar. The grid owns the whole screen (the trailing margin keeps the last row clear of
+             the floating bar). -->
 
-                    <TextBlock Grid.Column="1" Text="{Binding ProjectName}" Classes="h2" VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis"/>
-                </Grid>
-            </Border>
-
-            <!-- Board grid: "+ Import" + "All images" + one card per board, reflowing by width. ClipToBounds
-                 =False down to the item ContentPresenter so the raised cards' shadow + hover-scale aren't cropped
-                 to their cells (see the CLAUDE.md raised-card-in-grid rule). -->
-            <ScrollViewer>
-                <ItemsControl ItemsSource="{Binding Tiles}" Margin="36,28" ClipToBounds="False">
-                    <ItemsControl.Styles>
-                        <Style Selector="ContentPresenter">
-                            <Setter Property="ClipToBounds" Value="False"/>
-                        </Style>
-                    </ItemsControl.Styles>
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <WrapPanel ClipToBounds="False"/>
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.DataTemplates>
-                        <DataTemplate DataType="vm:NewBoardTile">
-                            <ctrl:NewCard Label="Import" Margin="0,0,16,16"
-                                          Command="{Binding $parent[ItemsControl].((vm:LibraryViewModel)DataContext).OpenImportSheetCommand}"/>
-                        </DataTemplate>
-                        <DataTemplate DataType="vm:BoardCardRef">
-                            <ctrl:BoardCard Margin="0,0,16,16"
-                                            Title="{Binding Name}" MetaText="{Binding MetaText}"
-                                            Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
-                                            IsImporting="{Binding IsImporting}" ImportStatusText="{Binding ImportStatusText}"
-                                            OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>
-                        </DataTemplate>
-                    </ItemsControl.DataTemplates>
-                </ItemsControl>
-            </ScrollViewer>
-        </DockPanel>
+        <!-- Board grid: "+ Import" + "All images" + one card per board, reflowing by width. ClipToBounds
+             =False down to the item ContentPresenter so the raised cards' shadow + hover-scale aren't cropped
+             to their cells (see the CLAUDE.md raised-card-in-grid rule). -->
+        <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding Tiles}" Margin="36,28,36,96" ClipToBounds="False">
+                <ItemsControl.Styles>
+                    <Style Selector="ContentPresenter">
+                        <Setter Property="ClipToBounds" Value="False"/>
+                    </Style>
+                </ItemsControl.Styles>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel ClipToBounds="False"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.DataTemplates>
+                    <DataTemplate DataType="vm:NewBoardTile">
+                        <ctrl:NewCard Label="Import" Margin="0,0,16,16"
+                                      Command="{Binding $parent[ItemsControl].((vm:LibraryViewModel)DataContext).OpenImportSheetCommand}"/>
+                    </DataTemplate>
+                    <!-- IsVisible carries the floating bar's live board-name filter (hidden, not removed). -->
+                    <DataTemplate DataType="vm:BoardCardRef">
+                        <ctrl:BoardCard Margin="0,0,16,16" IsVisible="{Binding !IsFilteredOut}"
+                                        Title="{Binding Name}" MetaText="{Binding MetaText}"
+                                        Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
+                                        IsImporting="{Binding IsImporting}" ImportStatusText="{Binding ImportStatusText}"
+                                        OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>
+                    </DataTemplate>
+                </ItemsControl.DataTemplates>
+            </ItemsControl>
+        </ScrollViewer>
 
         <!-- Import sheet: paste a Pinterest URL + pick cookies. (Target-board picker arrives with the board model.) -->
         <ctrl:SheetHost IsOpen="{Binding IsImportSheetOpen}" DismissCommand="{Binding CloseImportSheetCommand}">

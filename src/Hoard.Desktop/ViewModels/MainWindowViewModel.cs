@@ -19,12 +19,19 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly CurationService _curation;
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
+    private readonly UiSettingsStore? _uiSettings;
 
     // One thumbnail cache per opened project, shared by the Library (board covers) and Board (tiles) screens.
     private ThumbnailCache? _thumbnails;
 
     /// <summary>The shell binds <c>Navigation.Current</c> to show the active page.</summary>
     public NavigationService Navigation { get; } = new();
+
+    /// <summary>The shell chrome: the breadcrumb trail and the floating bottom bar (back · search · ＋ · ⚙).</summary>
+    public ShellChromeViewModel Chrome { get; }
+
+    /// <summary>The Settings sheet's state (opened from the bar's ⚙; hosted in a shell-level SheetHost).</summary>
+    public SettingsViewModel Settings { get; }
 
     /// <summary>App-wide transient toasts; the shell overlays a <c>ToastHost</c> bound to this.</summary>
     public ToastService ToastService { get; } = new();
@@ -34,13 +41,17 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public MainWindowViewModel(
         IngestService ingest, LibraryService library, CurationService curation,
-        ProjectManager projects, ProjectDbContextFactory dbFactory)
+        ProjectManager projects, ProjectDbContextFactory dbFactory,
+        UiSettingsStore? uiSettings = null, AppPaths? appPaths = null)
     {
         _ingest = ingest;
         _library = library;
         _curation = curation;
         _projects = projects;
         _dbFactory = dbFactory;
+        _uiSettings = uiSettings;
+        Settings = new SettingsViewModel(uiSettings, projects, appPaths);
+        Chrome = new ShellChromeViewModel(Navigation, openSettings: Settings.Open);
         if (projects is not null) ShowLauncher(); // skip in the design-time (null) ctor
     }
 
@@ -63,7 +74,7 @@ public partial class MainWindowViewModel : ViewModelBase
             _thumbnails = _projects.Current is { } p ? new ThumbnailCache(p.ThumbnailsRoot) : null;
             return new LibraryViewModel(
                 _ingest, _library, _curation, _projects, _thumbnails, ToastService, ImportStatus,
-                openBoard: ShowBoard, requestBack: Navigation.Back);
+                openBoard: ShowBoard, uiSettings: _uiSettings);
         }
         // The forward-rebuild thunk returns null if the project was closed/deleted while backed out, so GoForward
         // drops the dead entry instead of rebuilding a blank Library for a project that no longer exists.
@@ -80,7 +91,7 @@ public partial class MainWindowViewModel : ViewModelBase
         // back/forward stack as pages.
         BoardViewModel Create() => new(
             _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus, _projects,
-            target, Navigation, openBoard: ShowBoard);
+            target, Navigation, openBoard: ShowBoard, uiSettings: _uiSettings);
         // Null thunk when the project is gone, so forward drops the dead entry instead of rebuilding a board
         // against a closed/deleted project.
         Navigation.Push(Create(), () => _projects.Current is null ? null : Create());

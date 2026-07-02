@@ -14,10 +14,9 @@
 
     <!-- Panel so the new-project sheet overlays the whole screen. -->
     <Panel>
+        <!-- No page heading — the shell's breadcrumb already says "Projects". -->
         <ScrollViewer>
-            <StackPanel Margin="36,28" Spacing="20" MaxWidth="1040" HorizontalAlignment="Left">
-                <TextBlock Classes="h1" Text="Projects"/>
-
+            <StackPanel Margin="36,28,36,96" Spacing="20" MaxWidth="1040" HorizontalAlignment="Left">
                 <!-- The “+ New project” tile + one card per recent project, reflowing by width. ClipToBounds
                      =False all the way down (incl. the item ContentPresenter) so the raised cards' drop shadow
                      and hover-scale aren't cropped to their cells — see the CLAUDE.md raised-card-in-grid rule. -->
@@ -42,9 +41,10 @@
                         </DataTemplate>
 
                         <!-- Project card (inset): collage cover + name + cache, with Open + Edit (pencil) buttons.
-                             Open/Edit are per-item commands on the ref; Edit opens the popup below. -->
+                             Open/Edit are per-item commands on the ref; Edit opens the popup below. IsVisible
+                             carries the floating bar's live filter (hidden, not removed — no bitmap churn). -->
                         <DataTemplate DataType="vm:RecentProjectRef">
-                            <ctrl:ProjectCard Margin="0,0,16,16"
+                            <ctrl:ProjectCard Margin="0,0,16,16" IsVisible="{Binding !IsFilteredOut}"
                                               Title="{Binding Name}" MetaText="{Binding CacheSizeText}"
                                               Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
                                               OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>

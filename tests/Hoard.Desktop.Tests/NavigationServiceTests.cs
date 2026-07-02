@@ -366,6 +366,117 @@ public class NavigationServiceTests
         Assert.False(nav.CanGoForward);
     }
 
+    // ── Page chain (the breadcrumb trail) ───────────────────────────────────────────
+
+    [Fact]
+    public void PageChain_lists_pages_root_first_and_tracks_push_back_forward()
+    {
+        var nav = new NavigationService();
+        var root = new Page();
+        var library = new Page();
+        var board = new Page();
+        nav.Reset(root);
+        nav.Push(library);
+        nav.Push(board, () => board);
+
+        Assert.Equal(new ViewModelBase[] { root, library, board }, nav.PageChain);
+
+        nav.Back();
+        Assert.Equal(new ViewModelBase[] { root, library }, nav.PageChain);
+
+        nav.Forward(); // rebuilds via the thunk
+        Assert.Equal(new ViewModelBase[] { root, library, board }, nav.PageChain);
+    }
+
+    [Fact]
+    public void PageChain_excludes_in_page_state_steps()
+    {
+        var nav = new NavigationService();
+        var root = new Page();
+        nav.Reset(root);
+        nav.PushState(_ => true, _ => { }); // the band — not a page
+
+        Assert.Equal(new ViewModelBase[] { root }, nav.PageChain);
+    }
+
+    [Fact]
+    public void PageChain_notifies_when_the_page_composition_changes()
+    {
+        var nav = new NavigationService();
+        nav.Reset(new Page());
+        var raised = 0;
+        nav.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(NavigationService.PageChain)) raised++; };
+
+        nav.Push(new Page());
+        nav.Back();
+
+        Assert.Equal(2, raised);
+    }
+
+    [Fact]
+    public void BackTo_pops_to_the_target_ancestor_and_keeps_forward_history()
+    {
+        var nav = new NavigationService();
+        var root = new Page();
+        var library = new Page();
+        nav.Reset(root);
+        nav.Push(library);
+        nav.Push(new Page(), () => new Page());
+        nav.PushState(_ => true, _ => { }); // an open band on the board — reverted on the way out
+
+        nav.BackTo(root);
+
+        Assert.Same(root, nav.Current);
+        Assert.True(nav.CanGoForward); // every hop landed in forward, so the jump can be retraced
+    }
+
+    [Fact]
+    public void BackTo_is_a_no_op_when_the_target_is_current()
+    {
+        var nav = new NavigationService();
+        var root = new Page();
+        nav.Reset(root);
+        nav.Push(new Page());
+        var current = nav.Current!;
+
+        nav.BackTo(current);
+
+        Assert.Same(current, nav.Current);
+        Assert.True(nav.CanGoBack);
+    }
+
+    [Fact]
+    public void BackTo_ignores_absorption_and_pops_a_mid_transition_page()
+    {
+        // Absorption protects a SINGLE-step gesture from popping a page out from under its own animation; a
+        // crumb jump LEAVES the page (like a Push), whose leave path abandons the animation — so BackTo must
+        // pop straight through, not stall after the first hop (the band-open crumb-click bug).
+        var nav = new NavigationService();
+        var root = new Page();
+        nav.Reset(root);
+        var board = new AbsorbingPage { Absorb = true }; // mid-transition — a plain Back would be absorbed
+        nav.Push(board);
+        nav.PushState(_ => true, _ => { });              // the open band
+
+        nav.BackTo(root);
+
+        Assert.Same(root, nav.Current);
+        Assert.True(nav.CanGoForward);
+    }
+
+    [Fact]
+    public void Plain_Back_still_respects_absorption()
+    {
+        var nav = new NavigationService();
+        nav.Reset(new Page());
+        var board = new AbsorbingPage { Absorb = true };
+        nav.Push(board);
+
+        nav.Back();
+
+        Assert.Same(board, nav.Current); // absorbed — the single-step contract is unchanged
+    }
+
     // ── Page-lifetime contract ──────────────────────────────────────────────────────
 
     [Fact]

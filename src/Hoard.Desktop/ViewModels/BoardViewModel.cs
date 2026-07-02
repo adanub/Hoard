@@ -17,12 +17,12 @@ using Hoard.Ingest.GalleryDl;
 
 namespace Hoard.Desktop.ViewModels;
 
-/// <summary>Where a board screen points: a specific board, or the whole project ("All images"), optionally
-/// pre-filtered by a search query (used for project-wide search results). <see cref="ParentId"/> is set when
-/// drilling into a child folder (a Pinterest section / sub-folder), carrying the parent so the folder screen
-/// can offer "move up" + edit-this-folder.</summary>
+/// <summary>Where a board screen points: a specific board, or the whole project ("All images").
+/// <see cref="ParentId"/> is set when drilling into a child folder (a Pinterest section / sub-folder),
+/// carrying the parent so the folder screen can offer "move up" + edit-this-folder. (Searching happens live
+/// through the floating bar — a target is never pre-filtered.)</summary>
 public sealed record BoardTarget(
-    int? CollectionId, string Title, string? Search = null, int? ParentId = null, string? ParentTitle = null);
+    int? CollectionId, string Title, int? ParentId = null, string? ParentTitle = null);
 
 /// <summary>Marker for the leading "+ New folder" tile in the Board screen's folder row (own template).</summary>
 public sealed class NewFolderTile : ViewModelBase
@@ -41,7 +41,8 @@ public sealed record MoveTarget(string Display, int? CollectionId);
 /// tracks what's visible), the detail panel, and per-asset delete/restore. Pushed above the Library screen;
 /// the back chevron pops back.
 /// </summary>
-public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IHasBack, IAbsorbsBack
+public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IAbsorbsBack,
+    ICrumbTitled, IProvidesSearch, IProvidesPlusActions, IImmersivePage
 {
     private readonly LibraryService _library;
     private readonly CurationService _curation;
@@ -75,15 +76,22 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     private readonly CancellationTokenSource _disposeCts = new();
     private IReadOnlyList<string> _sourceUrls = Array.Empty<string>();
 
-    // GIFs the user has tapped keep autoplaying in the grid; bounded (LRU) so memory stays sane.
-    private const int MaxPlayingGifs = 12;
+    // GIFs the user has tapped (or, with the autoplay setting, scrolled into view) keep playing in the grid;
+    // bounded (LRU, size from Settings) so memory stays sane.
     private readonly LinkedList<AssetTileViewModel> _playing = new();
+    private readonly UiSettingsStore? _uiSettingsStore;
+    private readonly UiSettings? _uiSettings;
 
     public BoardViewModel(
         LibraryService library, CurationService curation, IngestService ingest,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus, ProjectManager? projects,
-        BoardTarget target, NavigationService nav, Action<BoardTarget> openBoard)
+        BoardTarget target, NavigationService nav, Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null)
     {
+        _uiSettingsStore = uiSettings;
+        _uiSettings = uiSettings?.Settings;
+        // Settings saves notify here so GIF changes apply to THIS open board immediately (a lowered budget
+        // trims the playing LRU; the view rescans) instead of waiting for the next tap or scroll.
+        if (_uiSettingsStore is not null) _uiSettingsStore.Changed += OnUiSettingsChanged;
         _library = library;
         _curation = curation;
         _ingest = ingest;
@@ -97,18 +105,25 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         _title = target.Title;
         _nav = nav;
         _openBoard = openBoard;
-        _searchQuery = target.Search ?? "";
         FolderEditor = new BoardCardEditor(
             library, curation, thumbnails, toasts, "folder",
             removeCard: r => { FolderTiles.Remove(r); r.Dispose(); },
             afterChange: () => OnPropertyChanged(nameof(CanMoveSelected)));
+
+        // The floating bar's ＋ menu: Sync appears once the source load proves there's something to sync
+        // (OnSourceCountChanged), and disables while an import runs. The virtual "All images" / results
+        // board contributes nothing (no sources, no folder row), which hides the ＋ button entirely.
+        _syncAction = new PlusAction("Sync board", OpenSyncSheetCommand) { IsVisible = IsSyncable };
+        PlusActions = _collectionId is null
+            ? Array.Empty<PlusAction>()
+            : new[] { _syncAction, new PlusAction("New folder", OpenNewFolderSheetCommand) };
 
         _importStatus.PropertyChanged += OnImportStatusChanged;
         Assets.CollectionChanged += (_, _) => SyncExpandedIndex(); // keep the band on the selected tile as items shift
         Infrastructure.LeakCanary.Track(this);
         UpdateImportState();
         _ = LoadAssetsAsync();
-        _ = LoadSourcesAsync(); // for the Sync button (a real board with at least one URL'd source)
+        _ = LoadSourcesAsync(); // for the Sync action (a real board with at least one URL'd source)
         _ = LoadFoldersAsync(); // child folders (Pinterest sections / sub-folders) shown above the grid
     }
 
@@ -118,6 +133,66 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
 
     [ObservableProperty] private string _title;
     public ObservableCollection<AssetTileViewModel> Assets { get; } = new();
+
+    // ── Shell chrome (breadcrumb + floating bar) ─────────────────────────────
+
+    /// <summary>The crumb carries the live result count while a search is active — "Terrain Ideas
+    /// (2 folders · 12 items found)". Re-raised when the query, the (debounced) filtered grid, or the
+    /// folder-name filter changes, so the shell rebuilds the trail.</summary>
+    public string CrumbTitle => IsSearchActive ? $"{Title} ({SearchSummary})" : Title;
+
+    /// <summary>True while the floating bar's search query is non-empty (drives the crumb's result count,
+    /// the folder-name filter, and hides the "+ New folder" tile — a search grid isn't a place to create).</summary>
+    public bool IsSearchActive => SearchQuery.Trim().Length > 0;
+
+    private string SearchSummary
+    {
+        get
+        {
+            var items = Assets.Count;
+            var folders = FolderTiles.OfType<BoardCardRef>().Count(f => !f.IsFilteredOut);
+            var itemsText = items == 1 ? "1 item found" : $"{items} items found";
+            return folders > 0
+                ? $"{(folders == 1 ? "1 folder" : $"{folders} folders")} · {itemsText}"
+                : itemsText;
+        }
+    }
+
+    // The images reload through the debounced query, but folder cards filter by NAME instantly, in memory —
+    // same hidden-not-removed pattern as the Library/launcher card filters (no cover churn while typing).
+    private void ApplyFolderSearchFilter()
+    {
+        var q = SearchQuery.Trim();
+        foreach (var f in FolderTiles.OfType<BoardCardRef>())
+            f.IsFilteredOut = q.Length > 0 && !f.Name.Contains(q, StringComparison.OrdinalIgnoreCase);
+        OnPropertyChanged(nameof(CrumbTitle));
+    }
+
+    partial void OnTitleChanged(string value) => OnPropertyChanged(nameof(CrumbTitle));
+
+    private readonly PlusAction _syncAction;
+
+    /// <summary>The floating bar's ＋ menu for this screen.</summary>
+    public IReadOnlyList<PlusAction> PlusActions { get; }
+
+    /// <summary>The floating bar's search: the existing live (debounced) grid filter.</summary>
+    public string SearchText
+    {
+        get => SearchQuery;
+        set => SearchQuery = value;
+    }
+
+    public string SearchPlaceholder => _collectionId is null ? "Search all images…" : "Search this board…";
+
+    public void SubmitSearch() { } // live filter — Enter has nothing extra to do
+
+    partial void OnSourceCountChanged(int value) => _syncAction.IsVisible = IsSyncable;
+    partial void OnIsBoardImportingChanged(bool value) => _syncAction.IsEnabled = !value;
+
+    /// <summary>The fullscreen zoom is immersive — the floating bar hides while it's open.</summary>
+    public bool IsImmersive => IsLightboxOpen;
+
+    partial void OnIsLightboxOpenChanged(bool value) => OnPropertyChanged(nameof(IsImmersive));
 
     [ObservableProperty] private AssetTileViewModel? _selectedAsset;
     /// <summary>Index of <see cref="SelectedAsset"/> in <see cref="Assets"/> (-1 when nothing is expanded), bound
@@ -211,6 +286,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     {
         _disposed = true; // in-flight grid/folder loads check this on resume and apply nothing to the dead VM
         Infrastructure.LeakCanary.MarkDead(this);
+        if (_uiSettingsStore is not null) _uiSettingsStore.Changed -= OnUiSettingsChanged;
         _importStatus.PropertyChanged -= OnImportStatusChanged;
         CollapseStarting = null; // drop the view's handler so a disposed board doesn't keep its (detached) view alive
         // Cancel (not just Dispose) so a debounced search/folder-reload mid-Task.Delay bails instead of waking up
@@ -296,6 +372,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
 
         FolderTiles.DisposeAndClear();
         foreach (var t in tiles) FolderTiles.Add(t);
+        ApplyFolderSearchFilter(); // rebuilt cards start unfiltered — reapply the bar's live query
         OnPropertyChanged(nameof(CanMoveSelected));
         _ = LoadFolderCoversAsync();
     }
@@ -423,7 +500,8 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     [RelayCommand]
     private void OpenSyncSheet()
     {
-        SyncCookiesBrowser = BrowserCookies.None;
+        // Pre-select the user's default cookies browser (Settings), falling back to "(none)".
+        SyncCookiesBrowser = BrowserCookies.NormaliseChoice(_uiSettings?.DefaultCookiesBrowser);
         IsSyncSheetOpen = true;
     }
 
@@ -602,11 +680,6 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         if (target is not null) await DeleteAsync(target, note);
     }
 
-    // The ← chevron: one "back" that steps zoom → band → out of the page, same as Esc / mouse-5 (all funnel into
-    // NavigationService.Back). Esc itself is handled at the window (MainWindow), not here, so it works regardless of
-    // where keyboard focus sits and on every page.
-    [RelayCommand]
-    private void Back() => _nav.Back();
 
     // The band's ✕: closing the band is a back step (pops the band history step → animated collapse via Revert).
     [RelayCommand]
@@ -711,8 +784,17 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     private void SyncExpandedIndex() =>
         ExpandedIndex = _collapsing || SelectedAsset is null ? -1 : Assets.IndexOf(SelectedAsset);
 
-    // Reload after a short pause so we don't query on every keystroke.
-    partial void OnSearchQueryChanged(string value) => _ = DebouncedSearchAsync();
+    // Reload after a short pause so we don't query on every keystroke. SearchText (the floating bar's alias
+    // for this query) notifies alongside so the bar stays in sync when the query is set programmatically.
+    // Folder cards filter instantly (in-memory, no debounce needed); the crumb's count follows via the
+    // filter's CrumbTitle raise and again when the debounced grid reload applies.
+    partial void OnSearchQueryChanged(string value)
+    {
+        OnPropertyChanged(nameof(SearchText));
+        OnPropertyChanged(nameof(IsSearchActive));
+        ApplyFolderSearchFilter();
+        _ = DebouncedSearchAsync();
+    }
 
     private async Task LoadDetailsAsync(AssetTileViewModel? tile)
     {
@@ -741,14 +823,61 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
     {
         if (ReferenceEquals(SelectedAsset, tile)) _nav.Back();                         // tap the open tile again → close the band
         else BandState(tile.Model.Id, replace: SelectedAsset is not null);            // grid → band, or switch (replace, no stacking)
-        if (!tile.IsGif) return;
+        if (tile.IsGif) PlayGif(tile);
+    }
 
+    /// <summary>True when the autoplay setting is on, so the view can skip its viewport scans entirely.</summary>
+    public bool GifAutoplayEnabled => _uiSettings is { GifAutoplay: true };
+
+    // A Settings save changed something: apply a lowered GIF budget to what's already playing right away, and
+    // raise unconditionally so the view rescans — that's what makes a RAISED budget start more visible GIFs,
+    // and it's a debounced no-op for saves that didn't touch GIFs (the rescan gates on the setting itself).
+    private void OnUiSettingsChanged()
+    {
+        if (_disposed) return;
+        TrimPlayingToBudget();
+        OnPropertyChanged(nameof(GifAutoplayEnabled));
+    }
+
+    /// <summary>Autoplay (Settings): play the GIFs whose tiles are actually IN the viewport — called by the
+    /// view, debounced, after scrolling/reflow settles, with <paramref name="visible"/> in TOP-TO-BOTTOM
+    /// viewport order. Deliberately NOT realization-driven: the repeater realizes a buffer beyond the
+    /// viewport, last, so playing-on-realize let off-screen GIFs evict the on-screen ones from the LRU
+    /// (memory climbed while nothing visible animated). Capped at the budget — playing every visible GIF
+    /// through the LRU made each scan cycle the excess through play→evict (decode churn + on-screen flicker
+    /// whenever visible GIFs outnumbered the budget); the topmost <c>max</c> play, stably, and eviction
+    /// falls on scrolled-past ones.</summary>
+    public void AutoplayVisibleGifs(IReadOnlyList<AssetTileViewModel> visible)
+    {
+        if (!GifAutoplayEnabled) return;
+        var budget = MaxPlaying;
+        var played = 0;
+        foreach (var tile in visible)
+        {
+            if (played >= budget) break;
+            if (!tile.IsGif || tile.IsDeleted || tile.IsFileMissing) continue;
+            PlayGif(tile);
+            played++;
+        }
+    }
+
+    private int MaxPlaying => Math.Max(1, _uiSettings?.MaxPlayingGifs ?? 12); // 12 = the pre-Settings bound
+
+    // Start (or refresh the LRU position of) one playing GIF; the least-recently-played beyond the budget stop.
+    private void PlayGif(AssetTileViewModel tile)
+    {
         var existing = _playing.Find(tile);
         if (existing is not null) { _playing.Remove(existing); _playing.AddFirst(existing); return; }
 
         tile.IsPlaying = true;
         _playing.AddFirst(tile);
-        while (_playing.Count > MaxPlayingGifs)
+        TrimPlayingToBudget();
+    }
+
+    private void TrimPlayingToBudget()
+    {
+        var max = MaxPlaying;
+        while (_playing.Count > max)
         {
             var oldest = _playing.Last!.Value;
             _playing.RemoveLast();
@@ -903,6 +1032,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IH
         foreach (var v in views)
             Assets.Add(NewTile(v));
         _assetsLoaded = true; // AFTER Assets is populated — ShowBandFor/ShowZoom read this to know the grid is ready
+        OnPropertyChanged(nameof(CrumbTitle)); // the crumb's "(x items found)" tracks the applied result set
         if (firstLoad)
         {
             // Cross-page forward applied a band/zoom step before this rebuilt board finished loading — apply it now.

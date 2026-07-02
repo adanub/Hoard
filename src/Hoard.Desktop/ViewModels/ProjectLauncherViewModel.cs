@@ -38,6 +38,10 @@ public partial class RecentProjectRef : ViewModelBase, IDisposable
     [ObservableProperty] private Bitmap? _thumb1;
     [ObservableProperty] private Bitmap? _thumb2;
 
+    /// <summary>True when the card doesn't match the floating bar's live project filter — hidden (collapsed)
+    /// in the grid rather than removed, so its cover bitmaps aren't churned by typing.</summary>
+    [ObservableProperty] private bool _isFilteredOut;
+
     // The covers are native (Skia) bitmaps — free the outgoing surface on every swap (rebuild, clear-cache, card
     // drop) rather than leaving it to lagging finalization; the eager-free rule from AssetTileViewModel.Thumbnail.
     partial void OnThumb0Changed(Bitmap? oldValue, Bitmap? newValue) => oldValue?.Dispose();
@@ -86,7 +90,7 @@ public partial class RecentProjectRef : ViewModelBase, IDisposable
 /// creating/adopting a project via the new-project sheet) raises a callback so the shell pushes the library.
 /// Per-project management (open / clear cache / remove / delete) acts on a specific card; feedback is toasted.
 /// </summary>
-public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
+public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrumbTitled, IProvidesSearch, IProvidesPlusActions, IImmersivePage
 {
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
@@ -100,6 +104,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
         _dbFactory = dbFactory;
         _toasts = toasts;
         _onProjectOpened = onProjectOpened;
+        PlusActions = new[] { new PlusAction("New project", OpenNewProjectSheetCommand) };
 
         Tiles.Add(NewProjectTile.Instance);
         if (projects is not null) ReloadRecents(); // skip in the design-time (null) ctor
@@ -124,6 +129,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
             }
         foreach (var path in _projects.RecentProjects)
             Tiles.Add(NewRef(path, new DirectoryInfo(path).Name));
+        ApplySearchFilter(); // rebuilt cards start unfiltered — reapply the bar's live query
         _ = LoadRecentsAsync();
     }
 
@@ -135,6 +141,40 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
     public ObservableCollection<ViewModelBase> Tiles { get; } = new();
 
     private IEnumerable<RecentProjectRef> Recents => Tiles.OfType<RecentProjectRef>();
+
+    // ── Shell chrome (breadcrumb + floating bar) ─────────────────────────────
+
+    /// <summary>The crumb carries the live match count while the project filter is active.</summary>
+    public string CrumbTitle
+    {
+        get
+        {
+            if (SearchText.Trim().Length == 0) return "Projects";
+            var n = Recents.Count(r => !r.IsFilteredOut);
+            return $"Projects ({(n == 1 ? "1 project" : $"{n} projects")} found)";
+        }
+    }
+
+    /// <summary>The floating bar's ＋ menu for this screen.</summary>
+    public IReadOnlyList<PlusAction> PlusActions { get; }
+
+    /// <summary>The floating bar's search: a live, in-memory filter over the recent-project cards (hidden via
+    /// <see cref="RecentProjectRef.IsFilteredOut"/>, never removed — no cover-bitmap churn while typing).</summary>
+    [ObservableProperty] private string _searchText = "";
+
+    public string SearchPlaceholder => "Filter projects…";
+
+    public void SubmitSearch() { } // live filter — Enter has nothing extra to do
+
+    partial void OnSearchTextChanged(string value) => ApplySearchFilter();
+
+    private void ApplySearchFilter()
+    {
+        var q = SearchText.Trim();
+        foreach (var r in Recents)
+            r.IsFilteredOut = q.Length > 0 && !r.Name.Contains(q, StringComparison.OrdinalIgnoreCase);
+        OnPropertyChanged(nameof(CrumbTitle)); // the crumb's "(x projects found)" tracks the filter
+    }
 
     // ── New-project sheet ────────────────────────────────────────────────────
 
@@ -188,6 +228,13 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable
     // CPU-heavy first-use cost) — done off the UI thread behind this flag so the shell shows a spinner instead
     // of freezing. See OpenOffUiThreadAsync.
     [ObservableProperty] private bool _isOpening;
+
+    /// <summary>The busy overlay (project opening/creating) is a page-LOCAL scrim, so it can't cover the
+    /// shell's floating bar — surfacing it as "immersive" hides the bar (and gates crumb clicks) for the
+    /// duration, otherwise ＋ → New project could start a second concurrent open over the first.</summary>
+    public bool IsImmersive => IsOpening;
+
+    partial void OnIsOpeningChanged(bool value) => OnPropertyChanged(nameof(IsImmersive));
     [ObservableProperty] private string _openingText = "Opening project…";
 
     [RelayCommand(CanExecute = nameof(CanCreate))]

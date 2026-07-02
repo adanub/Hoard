@@ -66,6 +66,10 @@ public partial class BoardCardRef : ViewModelBase, IDisposable
     [ObservableProperty] private bool _isImporting;
     [ObservableProperty] private string _importStatusText = "";
 
+    /// <summary>True when the card doesn't match the floating bar's live board-name filter — hidden
+    /// (collapsed) in the grid rather than removed, so its cover bitmaps aren't churned by typing.</summary>
+    [ObservableProperty] private bool _isFilteredOut;
+
     // Edit-popup detail (loaded lazily when the pencil is clicked).
     [ObservableProperty] private string _countsText = "";
     [ObservableProperty] private string _cacheText = "";
@@ -90,11 +94,12 @@ public partial class BoardCardRef : ViewModelBase, IDisposable
 public sealed record ImportTarget(string Display, int? CollectionId);
 
 /// <summary>
-/// The Library screen: a grid of the project's boards (as cards) led by "+ New board" and "All images", with a
-/// project-wide search and an Import action. Opening a card (or searching) pushes the Board screen; the back
-/// chevron returns to Projects (switching project). Per-board editing/merge arrives with the board model.
+/// The Library screen: a grid of the project's boards (as cards) led by "+ New board" and "All images", with
+/// an Import action in the floating bar's ＋ menu. The bar's search live-filters the board cards by name
+/// (image search lives inside the "All images" board); opening a card pushes the Board screen, and the shell's
+/// back returns to Projects (switching project).
 /// </summary>
-public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, IHasBack
+public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, ICrumbTitled, IProvidesSearch, IProvidesPlusActions
 {
     private readonly IngestService _ingest;
     private readonly LibraryService _library;
@@ -104,15 +109,19 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     private readonly ToastService _toasts;
     private readonly ImportStatus _importStatus;
     private readonly Action<BoardTarget> _openBoard;
-    private readonly Action _requestBack;
+    private readonly UiSettingsStore? _uiSettings;
     // Cancelled when the Library is navigated away from (disposed), so an in-flight import doesn't keep running
     // and toast / rebuild the grid on this dead VM after the user has left.
     private readonly CancellationTokenSource _disposeCts = new();
+    // Set first thing in Dispose: an in-flight RefreshAsync resuming after the Library was popped must apply
+    // NOTHING — it used to repopulate the dead VM's Tiles and strand freshly-decoded native cover bitmaps
+    // (the cards were created after Dispose, so nothing would ever free them). The BoardViewModel rule.
+    private bool _disposed;
 
     public LibraryViewModel(
         IngestService ingest, LibraryService library, CurationService curation, ProjectManager projects,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus,
-        Action<BoardTarget> openBoard, Action requestBack)
+        Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null)
     {
         _ingest = ingest;
         _library = library;
@@ -122,10 +131,11 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         _toasts = toasts;
         _importStatus = importStatus;
         _openBoard = openBoard;
-        _requestBack = requestBack;
+        _uiSettings = uiSettings;
         BoardEditor = new BoardCardEditor(
             library, curation, thumbnails, toasts, "board",
             removeCard: r => { Tiles.Remove(r); r.Dispose(); }, loadExtraDetail: LoadBoardSourcesAsync);
+        PlusActions = new[] { new PlusAction("Import board", OpenImportSheetCommand) };
         // Watch the shared import state so a board card lights up whoever started the import — this grid's own
         // import sheet OR a board's Sync button (which drives only ImportStatus, not this grid directly).
         _importStatus.PropertyChanged += OnImportStatusChanged;
@@ -163,6 +173,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
 
     public void Dispose()
     {
+        _disposed = true; // an in-flight RefreshAsync checks this on resume and applies nothing to the dead VM
         _importStatus.PropertyChanged -= OnImportStatusChanged;
         _disposeCts.Cancel(); // abort any in-flight import before it touches this disposed VM
         _disposeCts.Dispose();
@@ -170,24 +181,50 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     }
 
     // Design-time constructor for the XAML previewer.
-    public LibraryViewModel() : this(null!, null!, null!, null!, null, new ToastService(), new ImportStatus(), _ => { }, () => { }) { }
+    public LibraryViewModel() : this(null!, null!, null!, null!, null, new ToastService(), new ImportStatus(), _ => { }) { }
 
     /// <summary>"+ New board" tile followed by "All images" and one card per board (one ItemsControl flow).</summary>
     public ObservableCollection<ViewModelBase> Tiles { get; } = new();
 
     public string ProjectName => _projects?.Current?.Name ?? "";
 
-    [ObservableProperty] private string _searchQuery = "";
+    // ── Shell chrome (breadcrumb + floating bar) ─────────────────────────────
 
-    [RelayCommand]
-    private void Back() => _requestBack();
-
-    /// <summary>Run the project-wide search: open the Board screen over "All images" filtered to the query.</summary>
-    [RelayCommand]
-    private void Search()
+    /// <summary>The crumb carries the live match count while the board-name filter is active. The virtual
+    /// "All images" card is exempt from the filter (a navigation staple, not a board), so it isn't counted.</summary>
+    public string CrumbTitle
     {
-        var q = SearchQuery.Trim();
-        if (q.Length > 0) _openBoard(new BoardTarget(null, $"Results for “{q}”", q));
+        get
+        {
+            if (SearchText.Trim().Length == 0) return ProjectName;
+            var n = Tiles.OfType<BoardCardRef>().Count(r => r.CollectionId is not null && !r.IsFilteredOut);
+            return $"{ProjectName} ({(n == 1 ? "1 board" : $"{n} boards")} found)";
+        }
+    }
+
+    /// <summary>The floating bar's ＋ menu for this screen.</summary>
+    public IReadOnlyList<PlusAction> PlusActions { get; private set; } = Array.Empty<PlusAction>();
+
+    /// <summary>The floating bar's search: a live, in-memory filter over the board cards by name (hidden via
+    /// <see cref="BoardCardRef.IsFilteredOut"/>, never removed — no cover churn). Searching the project's
+    /// IMAGES is deliberately not here: open "All images" and filter there instead.</summary>
+    [ObservableProperty] private string _searchText = "";
+
+    public string SearchPlaceholder => "Filter boards…";
+
+    public void SubmitSearch() { } // live filter — Enter has nothing extra to do
+
+    partial void OnSearchTextChanged(string value) => ApplySearchFilter();
+
+    private void ApplySearchFilter()
+    {
+        var q = SearchText.Trim();
+        // "All images" (CollectionId null) stays visible through any filter — it's where a project-wide
+        // image search happens, so the filter must never hide the way there.
+        foreach (var r in Tiles.OfType<BoardCardRef>())
+            r.IsFilteredOut = q.Length > 0 && r.CollectionId is not null
+                              && !r.Name.Contains(q, StringComparison.OrdinalIgnoreCase);
+        OnPropertyChanged(nameof(CrumbTitle)); // the crumb's "(x boards found)" tracks the filter
     }
 
     /// <summary>Revealed again after a board was popped: refresh the cards — a board's subtree count, size, and
@@ -197,12 +234,14 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     [RelayCommand]
     private async Task RefreshAsync()
     {
-        if (_library is null || _projects?.Current is null) return;
+        if (_disposed || _library is null || _projects?.Current is null) return;
+        var collections = await _library.GetCollectionsAsync();
+        if (_disposed) return; // popped while querying — don't refill a dead VM's tiles (stranded covers)
 
         Tiles.DisposeAndClear();
         Tiles.Add(NewBoardTile.Instance);
         Tiles.Add(new BoardCardRef(null, "All images", OpenBoardRef, edit: null)); // virtual board: no edit
-        foreach (var c in await _library.GetCollectionsAsync())
+        foreach (var c in collections)
         {
             var count = c.ItemCount == 1 ? "1 image" : $"{c.ItemCount} images";
             // Seed the importing strip if a sync/import is in flight for this board (e.g. rebuilt on return to the
@@ -226,6 +265,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
             else BoardEditor.Begin(rebuilt);
         }
 
+        ApplySearchFilter(); // rebuilt cards start unfiltered — reapply the bar's live query
         _ = LoadCoversAsync();
     }
 
@@ -315,6 +355,8 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     {
         BoardUrl = "";
         NewBoardName = "";
+        // Pre-select the user's default cookies browser (Settings), falling back to "(none)".
+        CookiesBrowser = BrowserCookies.NormaliseChoice(_uiSettings?.Settings.DefaultCookiesBrowser);
         ImportTargets.Clear();
         ImportTargets.Add(new ImportTarget("＋  New board", null));
         foreach (var b in Tiles.OfType<BoardCardRef>().Where(r => r.CollectionId is not null))

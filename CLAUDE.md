@@ -97,8 +97,10 @@ Concepts that span multiple files:
   ComboBox/TextBox don't) — keep that invariant when adding controls, or Esc-as-back silently dies wherever such a
   control has focus. `SheetHost` itself must NOT handle Esc (it once did: with a confirm floating over an edit sheet,
   focus bubbling from the edit sheet's own button dismissed the *underlying* sheet); the window's topmost-open-sheet
-  sweep is the single dismiss path. The ← chevron (`IHasBack.BackCommand`) funnels
-  into the same `Back`. (Sheets dismiss first; band/zoom go through nav — a new sheet needs no special-casing.) The old
+  sweep is the single dismiss path. The floating bar's ← button and the breadcrumb's ancestor crumbs funnel
+  into the same `Back` (`ShellChromeViewModel` → `NavigationService.Back`/`BackTo`; the per-page ← chevrons and
+  `IHasBack` are **gone**). (The window's Back order: close the floating bar's ＋ menu → dismiss the topmost
+  sheet → nav; band/zoom go through nav — a new sheet needs no special-casing.) The old
   single-screen `LibraryView` was **split**: `LibraryViewModel` = the board grid, `BoardViewModel` = a board's
   asset grid (the GIF/detail/delete logic moved there). `MainWindowViewModel` holds the per-project
   `ThumbnailCache` shared by both. Image-detail is now an **inline full-width masonry band** (see the Masonry
@@ -107,6 +109,78 @@ Concepts that span multiple files:
   `ProjectManager.Open/Create` + `EnsureCreatedAsync` in `Task.Run`, behind an `IsOpening` busy overlay): the
   first `DbContext` use **compiles the EF model synchronously** before its first `await` yields — a one-off,
   CPU-heavy cost that froze the shell if run inline. Keep DB-first-touch off the UI thread.
+- **Shell chrome: a thin breadcrumb strip + the floating bottom bar (the per-page top bars are GONE).**
+  `MainWindow` docks a 34px strip above the page host: `Controls/BreadcrumbBar` renders
+  `NavigationService.PageChain` (pages only — band/zoom state steps never appear) as clickable ancestor crumbs
+  around a plain current crumb; fitting is the pure, unit-tested `Controls/BreadcrumbTrimmer` — on overflow the
+  ellipsis eats from the BASE end ("…est Backup › Terrain Ideas › Buildings"), whole ancestors drop when even a
+  3-char stub won't fit (the marker moves onto the next crumb), and the current page trims last. An ancestor
+  click = `NavigationService.BackTo(page)` — repeated `Back`s, so the dispose ordering and forward history
+  hold — with two deliberate twists: **it IGNORES `IAbsorbsBack`** (absorption protects a single-step gesture
+  from popping a page mid-band-collapse; a crumb jump LEAVES the page like a `Push`, whose leave path abandons
+  the animation — honouring the absorb stalled the jump after the band closed), and **crumb clicks are gated on
+  `Chrome.IsBarVisible`** — the strip is docked ABOVE the page, so no page-level sheet scrim (or the lightbox)
+  covers it; ungated it could pop a page out from under an open modal. The **floating bar** (`Controls/FloatingBar` bound to
+  `ViewModels/ShellChromeViewModel`, both shell-lifetime) is a bottom-centre pill: **← back** (plain
+  `Navigation.Back`, disabled at the root), **🔍 search** (the pill *morphs into the input*), and **＋** (a
+  context-menu card rendered ABOVE the pill in the same visual tree — token styles apply, no `Popup` root —
+  with a transparent click-away backdrop). Pages feed the chrome through the small `ViewModels/PageChrome.cs`
+  contracts — `ICrumbTitled`, `IProvidesSearch` (live `SearchText` + `SubmitSearch` on Enter),
+  `IProvidesPlusActions` (a fixed list of `PlusAction`s with observable visible/enabled), `IImmersivePage`
+  (the Board's lightbox) — so it stays page-agnostic and is tested against fakes (`ShellChromeViewModelTests`).
+  **Search scope is contextual, and it filters the CURRENT grid:** a Board live-filters its images (the
+  pre-existing debounced `SearchQuery`) **AND its subfolder cards by name** (instant, no debounce; the
+  "+ New folder" tile hides while searching); the Library live-filters its board cards **by name**
+  (`BoardCardRef.IsFilteredOut` — image search is done from inside "All images", not from the board grid); the
+  launcher live-filters the recents grid (`RecentProjectRef.IsFilteredOut`). Filtered cards are hidden, never
+  removed, so covers aren't churned by typing. **While a search is active, the current page's crumb carries a
+  live result count** — "Terrain Ideas (2 folders · 12 items found)" / "(x boards found)" / "(x projects
+  found)": `CrumbTitle` is computed + re-raised by the page (on query change, on the debounced grid apply, on
+  the folder filter), and `ShellChromeViewModel` rebuilds the trail on the current page's `CrumbTitle`
+  notification.
+  **The bar's search state always mirrors the current page's query** (arriving on a page with a query opens the
+  field; ✕/Esc-in-field clears the page's filter as it collapses) — a collapsed bar can never hide an active
+  filter. **＋ menu per page:** Projects → New project; Library → Import board; Board → Sync (hidden until the
+  async source load proves ≥1 source, disabled while importing) + New folder; the virtual "All images"/results
+  board contributes nothing, which hides ＋ entirely. **The whole bar hides while any sheet is open or the
+  lightbox is up:** `SheetHost` raises a bubbling `IsOpenChangedEvent` that `MainWindow` folds into
+  `Chrome.IsModalOpen` (also recomputed, posted, on page swaps — a page can leave with its sheet open); the
+  lightbox flows through `IImmersivePage.IsImmersive`. **Esc/back order at the window:** close the ＋ menu →
+  dismiss the topmost sheet → `NavigationService.Back`. The search field claims Esc itself while open (the
+  open-control contract from the Esc bullet above) and collapses. Pages keep a ~96px bottom content inset so
+  the pill never permanently covers the last grid row.
+- **Settings are shell chrome too (the bar's ⚙).** `Services/UiSettingsStore` persists the desktop head's
+  preferences at `%APPDATA%/Hoard/ui-settings.json` — its OWN file, not Core's `settings.json`, which
+  `ProjectManager` rewrites whole (recents) and would clobber anything else stored there. One mutable
+  `UiSettings` instance is shared app-wide: the sheet (`Controls/SettingsSheet` + `ViewModels/SettingsViewModel`,
+  hosted in a shell-level `SheetHost` in `MainWindow`; saves on every change, no Apply/Cancel) writes it, and
+  consumers read it live — the import/sync cookie pickers pre-select `DefaultCookiesBrowser` when they open;
+  the board's GIF playback reads `GifAutoplay` and `MaxPlayingGifs` (the LRU bound that used to be a
+  hardcoded 12, so memory stays capped either way; a Settings save also **trims already-playing GIFs to a
+  lowered budget immediately** via `UiSettingsStore.Changed`). **Autoplay is VIEWPORT-driven, never
+  realization-driven:** `BoardView` runs a debounced (200ms) scan on `ScrollChanged` of the realized
+  containers that actually intersect the viewport, **sorted top-to-bottom and capped at the budget**
+  (`BoardViewModel.AutoplayVisibleGifs` → the same `PlayGif` LRU as tapping) — uncapped, a viewport holding
+  more GIFs than the budget made every scan cycle the excess through play→evict (decode churn + flicker).
+  Playing on `ElementPrepared` was tried and is a trap — the repeater realizes a buffer BEYOND the viewport,
+  last, so the off-screen buffer GIFs evicted every visible one from the LRU: memory climbed while nothing on
+  screen animated. Related hardening in `AnimatedImageControl`: detach cancels the load and frees frames, so
+  re-attach now reloads when it still has a `Source` but no frames (a recycled element re-attaching with the
+  same source gets no property change), and detach clears `IsLoading` (a superseded load used to strand the
+  spinner). Theme applies through
+  `Application.RequestedThemeVariant` (`SettingsViewModel.ApplyTheme`, also called at startup from `App`).
+  The **interface scale** (75–150%) is a `LayoutTransformControl` around the WHOLE shell
+  (`MainWindow.RootScale`, applied from code-behind — a transform has no DataContext to bind through): a
+  LAYOUT transform, so screens re-measure and the masonry reflows its columns at the new size. That's
+  user-chosen accessibility zoom — compatible with DESIGN.md's "no global scaling", which bans scaling a
+  fixed desktop layout *instead of* reflowing. **Known limitation: popup-rooted UI (ComboBox dropdowns,
+  ToolTips, flyouts) renders in separate popup roots that do NOT inherit the layout transform**, so at
+  non-100% scale a dropdown renders at system scale beside its scaled anchor — the ＋ menu deliberately lives
+  in-tree (no `Popup` root) partly for this reason; fixing the rest needs a popup-scaling strategy.
+  `SettingsViewModel`'s ctor **persists its snap-backs** (an out-of-choice stored value is normalised AND
+  written back) because consumers read the raw shared `UiSettings` live — display and enforcement must be one
+  value. About rows report the app version and the bundled gallery-dl's
+  file version (`FileVersionInfo`, deliberately no `--version` subprocess).
 - **Import targets one board, and progress is shared state.** The import sheet picks a target board (new —
   created up front via `IngestService.CreateBoardAsync` so the card shows immediately — or existing to merge);
   `IngestService.ImportAsync(targetCollectionId)` links every pin into it instead of auto-foldering by source
@@ -116,8 +190,8 @@ Concepts that span multiple files:
   (`IngestProgress.ImportedIntoCollectionId`, set per item): a loose pin lands on the board grid, a **sectioned pin
   updates its folder card live** (debounced) instead of flashing on the root grid to be reorganised at the end.
   gallery-dl reports no total mid-stream, so progress is a count + indeterminate bar, never a %.
-- **Syncing a board re-runs the import per source.** The Board-screen top-bar **Sync** button (visible only for a
-  real board with ≥1 URL'd source) opens a cookie sheet, then `BoardViewModel.SyncAsync` loops the board's
+- **Syncing a board re-runs the import per source.** The Board screen's **Sync** action (in the floating bar's
+  ＋ menu; visible only for a real board with ≥1 URL'd source) opens a cookie sheet, then `BoardViewModel.SyncAsync` loops the board's
   `CollectionSource` URLs (`LibraryService.GetBoardSourceUrlsAsync`) through `IngestService.ImportAsync(targetCollectionId)`.
   No new download logic — it reuses the whole pipeline, so it pulls in missing/new items and **skips already-held
   AND tombstoned (blacklisted) items** (the `KnownItems` skip-archive includes tombstones, and `ImportAsync`

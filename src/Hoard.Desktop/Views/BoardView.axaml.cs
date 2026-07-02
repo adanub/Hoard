@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Animation.Easings;
@@ -7,6 +9,7 @@ using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.Controls;
 using Hoard.Desktop.Infrastructure;
@@ -50,7 +53,48 @@ public partial class BoardView : UserControl
             masonry.ReflowSettled += OnReflowSettled;
         }
         DataContextChanged += OnDataContextChanged;
+        // GIF autoplay (Settings) is driven by what's actually IN the viewport, debounced so a fling doesn't
+        // decode every GIF it passes. NOT realization-driven: the repeater realizes a buffer beyond the
+        // viewport (last), so playing-on-realize let off-screen GIFs evict the visible ones from the play LRU.
+        _gifScan = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _gifScan.Tick += OnGifScanTick;
+        GridScroll.ScrollChanged += OnGridScrollChanged;
         WireFolderEditSheet();
+    }
+
+    private readonly DispatcherTimer _gifScan;
+
+    // Extent changes fire this too, so the initial asset load and the band's open/close reflow all reschedule.
+    private void OnGridScrollChanged(object? sender, ScrollChangedEventArgs e) => ScheduleGifScan();
+
+    private void ScheduleGifScan()
+    {
+        if (Vm is not { GifAutoplayEnabled: true }) return;
+        _gifScan.Stop();
+        _gifScan.Start(); // restart the debounce window
+    }
+
+    private void OnGifScanTick(object? sender, EventArgs e)
+    {
+        _gifScan.Stop();
+        if (Vm is not { GifAutoplayEnabled: true } vm) return;
+
+        // Realized containers whose bounds intersect the ScrollViewer's viewport (TranslatePoint maps through
+        // the scroll offset). Recycled/pooled elements fall out via the intersection test (the repeater
+        // arranges them far off-screen). Sorted top-to-bottom: the VM plays at most the GIF budget, so the
+        // TOPMOST visible GIFs must be the ones that win — GetVisualChildren is realization order, which
+        // would make the surviving set arbitrary.
+        var visible = new List<(double Y, AssetTileViewModel Tile)>();
+        var viewportHeight = GridScroll.Bounds.Height;
+        foreach (var child in AssetGrid.GetVisualChildren())
+        {
+            if (child is not Control { DataContext: AssetTileViewModel tile, IsVisible: true } control) continue;
+            if (control.TranslatePoint(default, GridScroll) is not { } topLeft) continue;
+            if (topLeft.Y + control.Bounds.Height > 0 && topLeft.Y < viewportHeight)
+                visible.Add((topLeft.Y, tile));
+        }
+        visible.Sort((a, b) => a.Y.CompareTo(b.Y));
+        vm.AutoplayVisibleGifs(visible.Select(v => v.Tile).ToList());
     }
 
     private BoardViewModel? Vm => DataContext as BoardViewModel;
@@ -60,10 +104,17 @@ public partial class BoardView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; }
+        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; _subscribedVm.PropertyChanged -= OnVmPropertyChanged; }
         _subscribedVm = Vm;
-        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting += OnCollapseStarting; _subscribedVm.ViewTeardown += OnViewTeardown; }
+        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting += OnCollapseStarting; _subscribedVm.ViewTeardown += OnViewTeardown; _subscribedVm.PropertyChanged += OnVmPropertyChanged; }
         UpdateBandStacked(AssetGrid.Bounds.Width); // seed the new VM (SizeChanged keeps it current thereafter)
+    }
+
+    // Flipping GIF autoplay on in Settings applies to this open board straight away (ScheduleGifScan gates on
+    // the setting itself, so the flip-off case is a cheap no-op).
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(BoardViewModel.GifAutoplayEnabled)) ScheduleGifScan();
     }
 
     // The board VM is disposing while this view is (still) attached (NavigationService.Back disposes the page before
@@ -101,6 +152,8 @@ public partial class BoardView : UserControl
         // stack, reappears half-open when revealed. (Done before DataContext is nulled, while Vm is still reachable.)
         Vm?.AbandonBand();
         _scroll.Stop();
+        _gifScan.Stop(); // don't let a pending autoplay scan tick against a dead page
+        GridScroll.ScrollChanged -= OnGridScrollChanged;
         _masonry?.StopAnimation();
         _expandedBinding?.Dispose();
         _expandedBinding = null;
@@ -109,7 +162,7 @@ public partial class BoardView : UserControl
         AssetGrid.ElementClearing -= OnAssetElementClearing;
         AssetGrid.SizeChanged -= OnGridSizeChanged;
         DataContextChanged -= OnDataContextChanged;
-        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; _subscribedVm = null; }
+        if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; _subscribedVm.PropertyChanged -= OnVmPropertyChanged; _subscribedVm = null; }
         AssetGrid.ItemsSource = null; // release the ItemsRepeater's realized elements + its subscription to Assets
         DataContext = null;           // sever the last view→board edge so a lingering view shell can't drag the board
     }

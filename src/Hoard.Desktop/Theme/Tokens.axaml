@@ -119,6 +119,7 @@
     <CornerRadius x:Key="RadiusMd">10</CornerRadius>
     <CornerRadius x:Key="RadiusLg">14</CornerRadius>
     <CornerRadius x:Key="RadiusLgTop">14,14,0,0</CornerRadius> <!-- RadiusLg on top corners only (card cover) -->
+    <CornerRadius x:Key="RadiusXl">18</CornerRadius> <!-- RadiusLg scaled to the floating bar's ~50px height (14 × 50/38) -->
     <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
 
     <!-- Control heights (the direct size metric for buttons etc.; the icon button is square at ControlHeight). -->

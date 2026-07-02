@@ -1,0 +1,79 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Hoard.Desktop.ViewModels"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.SettingsSheet"
+             x:DataType="vm:SettingsViewModel">
+
+    <Design.DataContext>
+        <vm:SettingsViewModel/>
+    </Design.DataContext>
+
+    <!-- The Settings sheet (opened from the floating bar's ⚙, hosted in a shell-level SheetHost). Every
+         change saves immediately — there's no Apply/Cancel; Done just closes. -->
+    <StackPanel Margin="24" Spacing="16" MinWidth="340">
+        <TextBlock Classes="h2" Text="Settings"/>
+
+        <StackPanel Spacing="6">
+            <TextBlock Classes="muted" Text="Theme"/>
+            <ComboBox ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding ThemeChoice}"
+                      HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+            <TextBlock Classes="muted" Text="Interface scale (text and controls)"/>
+            <ComboBox ItemsSource="{Binding UiScaleChoices}" SelectedItem="{Binding UiScalePercent}"
+                      HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="x:Int32">
+                        <TextBlock Text="{Binding StringFormat='{}{0}%'}"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+            <TextBlock Classes="muted" Text="Default cookies browser (for private boards)"/>
+            <ComboBox ItemsSource="{Binding CookieBrowsers}" SelectedItem="{Binding DefaultCookiesBrowser}"
+                      HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+                <TextBlock Text="Autoplay GIFs"/>
+                <TextBlock Classes="muted" FontSize="{DynamicResource FontSizeXs}" TextWrapping="Wrap"
+                           Text="Play GIFs as they scroll into view. Memory stays capped by the limit below."/>
+            </StackPanel>
+            <ToggleButton Grid.Column="1" Theme="{StaticResource HoardSwitch}"
+                          IsChecked="{Binding GifAutoplay}" VerticalAlignment="Center"/>
+        </Grid>
+
+        <StackPanel Spacing="6">
+            <TextBlock Classes="muted" Text="Playing GIFs at once (the oldest stops beyond this)"/>
+            <ComboBox ItemsSource="{Binding MaxPlayingGifsChoices}" SelectedItem="{Binding MaxPlayingGifs}"
+                      HorizontalAlignment="Stretch"/>
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource LineBrush}" Margin="0,2"/>
+
+        <!-- About / diagnostics -->
+        <StackPanel Spacing="4">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Classes="muted" Text="Hoard"/>
+                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding AppVersion}"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Classes="muted" Text="gallery-dl"/>
+                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding GalleryDlVersion}"/>
+            </Grid>
+        </StackPanel>
+
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Open log folder"
+                    Command="{Binding OpenLogsFolderCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Open project folder"
+                    Command="{Binding OpenProjectFolderCommand}" IsVisible="{Binding HasOpenProject}"/>
+            <Button Theme="{StaticResource HoardButton}" Content="Done" Command="{Binding CloseCommand}"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.ViewModels;
 
 namespace Hoard.Desktop.Navigation;
@@ -13,13 +13,6 @@ namespace Hoard.Desktop.Navigation;
 public interface IResumable
 {
     void OnResumed();
-}
-
-/// <summary>A page with its own "back" action (its ← button), so a global gesture (the mouse back button) can
-/// trigger the <i>same</i> navigation the on-screen control does — a Board pops, the Library pops to Projects.</summary>
-public interface IHasBack
-{
-    IRelayCommand BackCommand { get; }
 }
 
 /// <summary>A page that can absorb a <see cref="NavigationService.Back"/> OR <see cref="NavigationService.Forward"/>
@@ -59,11 +52,40 @@ public partial class NavigationService : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanGoForward))]
     private ViewModelBase? _current;
 
+    // Every operation that changes the page composition also sets Current (state steps never do), so this one
+    // hook keeps PageChain notifications complete — a future stack operation can't forget the raise.
+    partial void OnCurrentChanged(ViewModelBase? value) => OnPropertyChanged(nameof(PageChain));
+
     /// <summary>True when there's a step (a page beneath, or an in-page state) to go <see cref="Back"/> to.</summary>
     public bool CanGoBack => _stack.Count > 1;
 
     /// <summary>True when a step was backed out of and can be returned to via <see cref="Forward"/>.</summary>
     public bool CanGoForward => _forward.Count > 0;
+
+    /// <summary>The chain of PAGES on the stack, root first, current last — the breadcrumb trail. In-page state
+    /// steps (the band/zoom) aren't pages and don't appear. Change-notified whenever the page composition
+    /// changes (<see cref="Reset"/>/<see cref="Push"/>, and a <see cref="Back"/>/<see cref="Forward"/> that
+    /// pops/rebuilds a page); state-only steps leave it untouched.</summary>
+    public IReadOnlyList<ViewModelBase> PageChain =>
+        _stack.OfType<PageStep>().Select(p => p.Page!).Reverse().ToArray(); // Stack enumerates top→bottom
+
+    /// <summary>Step back repeatedly until <paramref name="page"/> is <see cref="Current"/> (a breadcrumb
+    /// ancestor click). Each hop is the ordinary unified Back — open states revert, popped pages dispose with
+    /// their pinned ordering, and every step lands in forward history so Forward can retrace the jump —
+    /// EXCEPT that absorption is ignored: <see cref="IAbsorbsBack"/> protects a single-step gesture from
+    /// popping a page out from under its own transition (the band's animated collapse), but a crumb jump is
+    /// LEAVING the page entirely, the same as a <see cref="Push"/> — the leave path abandons the animation
+    /// (the Board's view drops its band state on detach), so honouring the absorb here just stalled the jump
+    /// after the first hop. Stops when a hop makes no progress (the root was reached without the page).</summary>
+    public void BackTo(ViewModelBase page)
+    {
+        while (!ReferenceEquals(Current, page))
+        {
+            var before = _stack.Count;
+            BackCore(ignoreAbsorb: true);
+            if (_stack.Count == before) return; // at the root — don't spin
+        }
+    }
 
     /// <summary>Start a fresh stack at <paramref name="root"/> (e.g. returning to the launcher), disposing the pages
     /// that were on the stack and clearing forward history.</summary>
@@ -73,7 +95,7 @@ public partial class NavigationService : ObservableObject
         _stack.Clear();
         _forward.Clear();
         _stack.Push(new PageStep(root, null));
-        Current = root;
+        Current = root; // raises PageChain via OnCurrentChanged
     }
 
     /// <summary>Navigate forward to a new page, keeping the current one beneath it. Pass <paramref name="recreate"/>
@@ -111,8 +133,10 @@ public partial class NavigationService : ObservableObject
 
     /// <summary>Go back one step: revert the topmost in-page state, or pop the current page (disposing it, revealing
     /// the one beneath, refreshing it via <see cref="IResumable"/>). No-op at the root. The single "back" for the
-    /// mouse button, the ← chevron, and Esc.</summary>
-    public void Back()
+    /// mouse button, the floating bar's ← button, and Esc.</summary>
+    public void Back() => BackCore(ignoreAbsorb: false);
+
+    private void BackCore(bool ignoreAbsorb)
     {
         if (_stack.Count == 0) return;
         if (_stack.Peek() is StateStep s)
@@ -128,7 +152,8 @@ public partial class NavigationService : ObservableObject
         // The current page can hold the back while it's mid-transition (a board animating its band closed): the band
         // step was just reverted but its collapse hasn't cleared the selection, so popping the page now would yank
         // the user off it mid-animation. Absorb this back; the next one (after the animation) pops normally.
-        if (Current is IAbsorbsBack g && g.AbsorbBack()) return;
+        // (BackTo bypasses this — a multi-hop jump leaves the page, which abandons the animation like a Push does.)
+        if (!ignoreAbsorb && Current is IAbsorbsBack g && g.AbsorbBack()) return;
         var popped = (PageStep)_stack.Pop();
         var revealed = ((PageStep)_stack.Peek()).Page; // states never sit beneath a page (Push collapses them)
         _forward.Push(popped with { Page = null });    // forward keeps only the rebuild thunk

@@ -30,6 +30,12 @@ public static class BrowserCookies
 
     public const string None = "(none)";
 
+    /// <summary>Map a stored/user value onto the canonical <see cref="Choices"/> entry it names
+    /// (case-insensitive, like <see cref="Resolve"/>), or <see cref="None"/> when it isn't offered — the one
+    /// home for the "is this saved default still valid" rule the cookie pickers and Settings all need.</summary>
+    public static string NormaliseChoice(string? choice)
+        => Choices.FirstOrDefault(c => string.Equals(c, choice, StringComparison.OrdinalIgnoreCase)) ?? None;
+
     public readonly record struct Resolution(string? Spec, bool Found, string? Error);
 
     /// <summary>
