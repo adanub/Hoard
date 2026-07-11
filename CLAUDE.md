@@ -38,7 +38,9 @@ pwsh tools/fetch-gallery-dl.ps1                           # download the bundled
   `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations. The version is
   stamped at publish time via `-p:Version` — **never hardcode a version in a csproj**, and never hand-edit the
   release-please-owned files (`version.txt`, `.release-please-manifest.json`, `CHANGELOG.md`). To force a
-  specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`.
+  specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
+  changelog starts fresh at pipeline adoption — `bootstrap-sha` in the config excludes all earlier history
+  (it's only consulted until the first release; harmless after that).
 - The build jobs chain off the release-please job via `needs` because events created with the workflow's own
   `GITHUB_TOKEN` never trigger other workflows; for the same reason the release PR gets no CI checks unless a
   PAT is configured. `workflow_dispatch` on the release workflow is a packaging dry run (artifacts only, no
