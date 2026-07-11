@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for the released Hoard.app bundle; __VERSION__ is substituted by
+     .github/workflows/release.yml at package time. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Hoard</string>
+    <key>CFBundleDisplayName</key>
+    <string>Hoard</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.adanub.hoard</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>CFBundleExecutable</key>
+    <string>Hoard.Desktop</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+</dict>
+</plist>

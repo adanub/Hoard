@@ -62,6 +62,10 @@ public sealed class HoardProject
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     };
 
+    // The Windows-invalid set, applied on every OS: a project folder must stay portable across
+    // platforms, and Path.GetInvalidFileNameChars() only covers the one we're running on.
+    private static readonly char[] InvalidNameChars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+
     /// <summary>
     /// Validate a project name for use as a folder name. Returns a human-readable error, or null if
     /// the name is usable. Keeps project creation from failing with a cryptic filesystem error.
@@ -72,7 +76,7 @@ public sealed class HoardProject
             return "Enter a project name.";
 
         var trimmed = name.Trim();
-        if (trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        if (trimmed.IndexOfAny(InvalidNameChars) >= 0 || trimmed.Any(char.IsControl))
             return "Name can't contain any of: \\ / : * ? \" < > |";
         if (trimmed.EndsWith('.'))
             return "Name can't end with a period.";

@@ -16,13 +16,34 @@ dotnet run  --project src/Hoard.Desktop                   # run the app (launche
 dotnet test Hoard.slnx                                    # all tests (Hoard.Core.Tests + Hoard.Desktop.Tests)
 dotnet test tests/Hoard.Core.Tests/Hoard.Core.Tests.csproj          # one project
 dotnet test Hoard.slnx --filter "FullyQualifiedName~Search_filters" # one test / class
-pwsh tools/fetch-gallery-dl.ps1                           # download the bundled gallery-dl.exe (not committed)
+pwsh tools/fetch-gallery-dl.ps1                           # download the bundled gallery-dl binary for this OS (not committed)
 ```
 
 - **The running app locks its output DLLs**, so a full build fails with `MSB3027` while it's open. Build a
   non-Desktop project (`tests/...` or `src/Hoard.Core`) to iterate, or close the app first.
 - **`tools/gallery-dl/gallery-dl.exe` is required at runtime but gitignored** — run the fetch script after a
   clone. The Desktop csproj copies it next to the app output.
+
+## CI & releases
+
+- **CI** (`.github/workflows/ci.yml`) builds + runs the full test suite on every PR and push to `main`
+  (ubuntu), so tests must stay platform-neutral — validate against fixed cross-platform rules (e.g.
+  `HoardProject.ValidateName` applies the Windows-invalid filename set on every OS), never
+  `Path.GetInvalidFileNameChars()`-style current-OS behaviour.
+- **Releases are automated from Conventional Commits** (`.github/workflows/release.yml`): release-please keeps
+  a release PR open on `main` with the next semver computed from commit types since the last release (feat →
+  minor, fix/perf → patch, `feat!`/`BREAKING CHANGE` → major; pre-1.0 the bumps are shifted down one level) plus
+  the `CHANGELOG.md` update. **Merging that PR** creates the `vX.Y.Z` tag + GitHub Release, and the build matrix
+  uploads self-contained apps (win-x64 zip; osx-arm64/osx-x64 ad-hoc-signed `.app` zips, template at
+  `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations. The version is
+  stamped at publish time via `-p:Version` — **never hardcode a version in a csproj**, and never hand-edit the
+  release-please-owned files (`version.txt`, `.release-please-manifest.json`, `CHANGELOG.md`). To force a
+  specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`.
+- The build jobs chain off the release-please job via `needs` because events created with the workflow's own
+  `GITHUB_TOKEN` never trigger other workflows; for the same reason the release PR gets no CI checks unless a
+  PAT is configured. `workflow_dispatch` on the release workflow is a packaging dry run (artifacts only, no
+  release). All actions are pinned to full commit SHAs; Dependabot (`.github/dependabot.yml`) refreshes the pins
+  weekly — keep new actions pinned the same way.
 
 ## Architecture
 
@@ -419,6 +440,15 @@ Concepts that span multiple files:
 - **Commits: Conventional Commits** — `feat:`, `fix:`, `docs:`, `refactor:`, `perf:`, `chore:`, with optional
   scope and a `(wip)` marker for in-progress work (e.g. `perf(wip): …`). End commit messages with the
   `Co-Authored-By: Claude …` trailer.
+- **The subject line of a `feat:`/`fix:`/`perf:` commit IS a changelog line** — release-please copies it
+  verbatim into the user-facing `CHANGELOG.md` and the GitHub Release notes. So for those three types: state
+  the *user-visible effect*, briefly (aim ≤ ~70 chars), one concern per commit — "fix(board): folder covers
+  refresh after a pin moves out", not a `+`-chained list of internals; implementation detail, root-cause
+  narrative, and review/process notes go in the commit *body* (release-please only takes the subject) or in a
+  hidden-type commit. `docs:`/`chore:`/`test:`/`refactor:` never reach the changelog (see
+  `release-please-config.json`), so dev-log style subjects are fine there. Avoid landing `feat/fix/perf` with a
+  `(wip)` scope on `main` — the changelog would print it as a "**wip:**" entry; use `chore(wip): …` until the
+  work is user-ready, then land the finishing commit as the real `feat:`/`fix:`.
 - **Never run destructive git** (force-push, `reset --hard`, `clean -f`, `branch -D`, `checkout --`/`.`, history
   rewrites of pushed commits) regardless of permission mode. Don't commit machine-specific absolute paths into
   tracked files.

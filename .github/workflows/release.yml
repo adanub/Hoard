@@ -1,0 +1,171 @@
+name: Release
+
+# Versioning + releases are fully automated from Conventional Commits:
+#  1. release-please watches main, works out the next semver from the commit
+#     types since the last release (feat → minor, fix → patch, feat!/BREAKING
+#     CHANGE → major; pre-1.0 the bumps are shifted down one level), and keeps
+#     a "release PR" up to date with the version bump + CHANGELOG.md.
+#  2. Merging that PR makes release-please create the vX.Y.Z tag + GitHub
+#     Release, and the build matrix below publishes the Windows/macOS apps
+#     and uploads them (plus checksums + build provenance) to that release.
+#
+# The build jobs chain off the release-please job (needs:) rather than
+# triggering on the release event, because events created with the workflow's
+# own GITHUB_TOKEN never start other workflows.
+#
+# workflow_dispatch runs the build matrix as a dry run (artifacts only, no
+# release), so packaging changes can be tested without cutting a version.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege by default; each job asks for exactly what it needs.
+permissions: {}
+
+# Never run two release flows at once, and never cancel one mid-release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # create the tag + release
+      pull-requests: write   # maintain the release PR
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Run release-please
+        id: release
+        if: github.event_name == 'push'
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    # Build on a real release, or on a manual dispatch as a packaging dry run.
+    if: needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: osx-arm64
+            os: macos-latest
+          - rid: osx-x64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: write        # upload assets to the release
+      id-token: write        # sign the provenance attestation
+      attestations: write    # store the provenance attestation
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Build exactly the released commit; empty ref = default branch on dry runs.
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Work out version
+        shell: bash
+        run: |
+          if [[ -n "$TAG" ]]; then
+            echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      # Latest build on purpose — Pinterest changes break old gallery-dl builds
+      # (see tools/fetch-gallery-dl.ps1). The zip checksum + provenance below
+      # cover what was actually shipped.
+      - name: Fetch gallery-dl
+        shell: pwsh
+        run: ./tools/fetch-gallery-dl.ps1
+
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish src/Hoard.Desktop/Hoard.Desktop.csproj \
+            --configuration Release \
+            --runtime ${{ matrix.rid }} \
+            --self-contained true \
+            -p:Version="$VERSION" \
+            -p:DebugType=embedded \
+            --output publish
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory out | Out-Null
+          Move-Item publish out/Hoard
+          Compress-Archive -Path out/Hoard -DestinationPath "Hoard-$env:VERSION-${{ matrix.rid }}.zip"
+
+      - name: Package (macOS .app)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP="out/Hoard.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp -R publish/. "$APP/Contents/MacOS/"
+          sed "s/__VERSION__/$VERSION/g" tools/packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+          chmod +x "$APP/Contents/MacOS/Hoard.Desktop"
+          [[ -f "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl" ]] && chmod +x "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl"
+          # Ad-hoc signature: enough for local Gatekeeper integrity checks.
+          # Real Developer ID signing + notarisation needs Apple secrets — see
+          # the workflow README note before adding them.
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --keepParent "$APP" "Hoard-$VERSION-${{ matrix.rid }}.zip"
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $zip = Get-Item "Hoard-$env:VERSION-${{ matrix.rid }}.zip"
+          "$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())  $($zip.Name)" |
+            Out-File -Encoding ascii "$($zip.Name).sha256"
+
+      - name: Attest build provenance
+        if: needs.release-please.outputs.release_created == 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip
+
+      - name: Upload release assets
+        if: needs.release-please.outputs.release_created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" \
+            "Hoard-$VERSION-${{ matrix.rid }}.zip" \
+            "Hoard-$VERSION-${{ matrix.rid }}.zip.sha256" \
+            --clobber
+
+      - name: Upload dry-run artifact
+        if: needs.release-please.outputs.release_created != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Hoard-${{ env.VERSION }}-${{ matrix.rid }}
+          path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip*
+          retention-days: 7

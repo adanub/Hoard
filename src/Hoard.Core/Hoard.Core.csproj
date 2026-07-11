@@ -8,6 +8,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+    <!-- Direct override: the 2.1.11 native SQLite that EF pulls in has a known vulnerability
+         (GHSA-2m69-gcr7-jv3q) with no patched 2.x — the 3.x line carries the fixed SQLite. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
