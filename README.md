@@ -49,13 +49,19 @@ A **project** is a folder *you* choose; all of one archive's data lives inside i
 
 ```
 <YourChosenFolder>/
-  hoard.project.json   # marker + project name
+  hoard.project.json   # marker: project name + stable id + archive format version
   store/               # the images (content-addressed blobs)
-  hoard.db             # metadata (SQLite)
+  ops/                 # the archive's history — append-only op log, one file per computer
   thumbnails/          # cached thumbnails (regenerable, content-addressed)
   download-archive.db  # gallery-dl's record of fetched pins (drives incremental re-imports)
   logs/                # per-import logs
 ```
+
+Everything in the folder is static: immutable images plus an append-only history of every change.
+Each computer keeps its own fast metadata index (SQLite) under its app data, rebuilt from that
+history — which is why the same project folder can sit on a NAS or synced drive and be opened from
+several computers. Projects created by older versions still hold a `hoard.db` inside the folder;
+opening one offers a one-time storage upgrade (a `hoard.db.pre-v2.bak` backup stays in the folder).
 
 On launch you get a **project launcher**: pick a recent project, **Open existing folder…**, or create
 a **New project** (just type a name + choose a parent location — Hoard creates the folder for you).
@@ -64,9 +70,10 @@ Select a recent project to **Remove from list** (forget it, files untouched) or 
 project, **Switch project** returns to the launcher. Only a tiny app-level settings file and the
 global diagnostic log live under `%APPDATA%/Hoard` — never gallery data.
 
-The metadata database is **SQLite** (in WAL mode, so background imports and browsing don't block each
-other) — the right fit for a self-contained, portable project folder. Full-text search (FTS5) and
-optional vector search (`sqlite-vec`) stay available without leaving the embedded model.
+The per-computer metadata index is **SQLite** (in WAL mode on a local disk, so background imports and
+browsing don't block each other) — while the archive itself stays plain, portable files. Full-text
+search (FTS5) and optional vector search (`sqlite-vec`) stay available without leaving the embedded
+model.
 
 ## Logs & debugging
 

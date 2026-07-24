@@ -206,7 +206,13 @@ ignore it).
   keyed by ProjectId). **NAS multi-machine works from here.** Proven by `ArchiveFormatV2Tests`.
 - **P4 — hygiene + scale.** Segment rotation + compaction (a compacted snapshot segment, safe once every
   known device's watermark has passed the retired segments — single-user, so deferrable); an on-demand
-  "verify project" (orphan blob sweep, hash check).
+  "verify project" (orphan blob sweep, hash check); relocate the remaining derived data out of the folder
+  (`thumbnails/`, `logs/`, retire `download-archive.db` to a per-run temp). Plus the review-deferred
+  items (also listed in `ROADMAP.md`): batch a first index build in one transaction (per-op saves make a
+  huge archive's first open slow), unify `ArchiveRebuilder` with `ArchiveSync`'s live applier (one apply
+  semantics — the rebuilder currently has no production caller and can resurrect a deleted parent),
+  canonicalise synthesised `relativePath`s, a "not opened here" state for launcher cards of unindexed v2
+  projects, offer the migration on the Adopt path, centralise the marker writer.
 - **P5 — remotes (Phase 3 proper).** The same format over S3/B2 (segments + blobs are already
   object-storage-shaped); replicated local stores with fetch-on-demand; the mobile head reuses all of it.
 

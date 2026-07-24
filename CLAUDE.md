@@ -307,10 +307,13 @@ Concepts that span multiple files:
   missing"** state with a one-click **re-download** (`IngestService.RefetchAsync` → re-fetch from the saved
   source URL; shares `ReDownloadAsync` with restore). No full content-hash verification on open (deferred to a
   future on-demand "verify project" action). Keep open cheap: schema + marker + recents only.
-- **Recycle, don't delete.** `IFileRecycler` (Core, platform-neutral interface) → `WindowsFileRecycler` (Desktop,
-  `SHFileOperation` + `FOF_ALLOWUNDO` P/Invoke — platform code stays out of Core), registered in DI and injected
-  (optionally) into `ProjectManager` **and `CurationService`**; when absent (Core tests) the fallback is a
-  permanent delete. **`ProjectManager.DeleteProject`** recycles the project folder; **`CurationService` recycles
+- **Recycle, don't delete (Windows only).** `IFileRecycler` (Core, platform-neutral interface) →
+  `WindowsFileRecycler` (Desktop, `SHFileOperation` + `FOF_ALLOWUNDO` P/Invoke — platform code stays out of
+  Core), **registered in DI only when `OperatingSystem.IsWindows()`** (the P/Invoke throws elsewhere) and
+  injected (optionally) into `ProjectManager` **and `CurationService`**; when absent (macOS/Linux, Core tests)
+  the fallback is a permanent delete — and the delete confirms/toasts say so honestly via
+  `Services/RecycleWording` (keep any new delete UI wording routed through it; a macOS trash implementation
+  is future work). **`ProjectManager.DeleteProject`** recycles the project folder; **`CurationService` recycles
   image blobs** on the hard-delete paths (remove-source, delete-board). The lone exception is **per-image delete**,
   which tombstones (keeps a restorable row, frees the blob permanently) — that one is in-app restorable by design.
 - **Decoded GIF frames are reference-counted, not cached-with-retention.** `RefCountedCache<T>` (in

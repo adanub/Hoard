@@ -3,12 +3,22 @@
 Progress tracker so a fresh session can resume. Architecture/conventions are in `CLAUDE.md`; the
 user-facing model is in `README.md`. Keep this file current as work lands.
 
-**Status (2026-06-22):** Phase 1 complete. Phase 2 — UI/UX redesign **integrated into the real screens** plus a
-deep pass on the import/library data model. The **Projects → Library → Board** nav flow runs end to end. The
-board-merge model, rename, Sync, hard-delete-to-recycle-bin, compatibility/resilience, and import-correctness
-fixes landed earlier and are **committed** as `e8285d3` (schema **v6**).
+**Status (2026-07-25):** Phases 1–2 complete (shell chrome, nested folders, inline detail band + zoom,
+memory work — see the session notes below). **Release automation live** (`da3b993`/`3f1f877`: CI +
+release-please + win/macOS build matrix — see CLAUDE.md "CI & releases"; first release PR will be v0.1.0).
+**Phase 3's foundation is BUILT: archive format v2** — increments **P0–P3 of `SYNC-DESIGN.md`** landed as
+`9c1aeb1` (plus `d03c5c0` cross-platform blob paths, `405335f` macOS delete fix), all **pushed**. The
+project folder is now static-only (marker + store + append-only per-device op segments); each machine
+derives a rebuildable SQLite index under app data (schema **v8**: uids + `ArchiveOps`); legacy projects
+migrate behind a launcher confirm; two machines converge through the segments — **NAS multi-machine
+works**. A 21-candidate adversarial review ran pre-commit; all 10 surviving confirmed findings fixed (the
+verified-but-minor remainder is under "Deferred / known tech-debt"). Tests: **120 Core / 84 Desktop**,
+green. **Next:** SYNC-DESIGN **P4** (segment compaction, batch the first index build in a transaction,
+relocate `thumbnails/`/`logs/`/`download-archive.db` out of the folder, on-demand "verify project",
+unify `ArchiveRebuilder` with `ArchiveSync`'s applier) → **P5** (S3/B2 remotes, mobile). User-verified on
+real projects: Windows-migrated NAS project opens on the Mac.
 
-**This session — nested folders (Pinterest sections):** a section/sub-folder is a **child `Collection`** (via the
+**Earlier session — nested folders (Pinterest sections):** a section/sub-folder is a **child `Collection`** (via the
 long-present `ParentId`); schema bumped to **v7** (additive `Collection.SourceSectionId`, guarded add).
 **Phase 1 (Core, done + tested):** `GetCollectionsAsync` lists only top-level boards, new `GetChildBoardsAsync`,
 `CreateBoardAsync(parentId, sectionId)`, `DeleteBoardAsync` recurses the subtree (recycle), new
@@ -486,13 +496,13 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 
 ## Later phases
 
-- **Phase 3 — multi-device archive + sync: designed in `SYNC-DESIGN.md` (the plan of record).** Archive
-  format v2: the project folder becomes 100% immutable files (content-addressed blobs + per-device
-  append-only op segments with project-scoped effects); SQLite becomes a per-machine, rebuildable derived
-  index in app-data. Dissolves the WAL-over-SMB/NAS failure (SQLite never crosses a network filesystem
-  again), makes a NAS folder the first sync remote, and S3/B2 remotes + the mobile head reuse the same
-  format. Increments P0–P5 in the doc; P1 (replayable op catalogue + round-trip rebuild proof) is the
-  risky one, P3 is where NAS multi-machine works.
+- **Phase 3 — multi-device archive + sync: `SYNC-DESIGN.md` is the plan of record, and increments
+  P0–P3 are DONE** (committed `9c1aeb1` — see the Status block). The project folder is 100% immutable
+  files (content-addressed blobs + per-device append-only op segments with project-scoped effects);
+  SQLite is a per-machine, rebuildable derived index in app-data; NAS multi-machine works. Remaining:
+  **P4** (compaction, batched first-build, relocate the derived caches out of the folder, verify-project,
+  applier unification) and **P5** (S3/B2 remotes as the same format over object storage; the mobile head
+  reuses all of it).
 - **Phase 4 — mobile:** extract Core behind a `Hoard.Server` (ASP.NET Core minimal API, does ingestion
   server-side since mobile can't spawn gallery-dl); Avalonia mobile client with background sync.
 - **Phase 5 — capture + more connectors:** TS browser extension (in-page "save to Hoard"); more sources
