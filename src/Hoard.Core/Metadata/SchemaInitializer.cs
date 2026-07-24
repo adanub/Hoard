@@ -14,7 +14,7 @@ public static class SchemaInitializer
 {
     /// <summary>Bump this and add a matching <see cref="Upgrades"/> entry whenever the model gains additive objects.
     /// (v5 and v6 are data-only steps — the attribution backfill and the stale-tombstone repair — with no DDL.)</summary>
-    public const long LatestSchemaVersion = 7;
+    public const long LatestSchemaVersion = 8;
 
     /// <summary>
     /// Ordered additive patches applied to a pre-existing database whose <c>user_version</c> is below the
@@ -129,6 +129,38 @@ public static class SchemaInitializer
                 await db.Database.ExecuteSqlRawAsync(
                     "ALTER TABLE \"Collections\" ADD COLUMN \"SourceSectionId\" TEXT NULL;", ct).ConfigureAwait(false);
             await SetVersionAsync(db, 7, ct).ConfigureAwait(false);
+        }
+
+        // v8 — the archive op log (SYNC-DESIGN.md P1): cross-device identities for collections/sources
+        // ("Uid", minted for existing rows so everything is addressable in ops from the moment of upgrade)
+        // and the replayable "ArchiveOps" table. Column adds are guarded like v7; the rest is idempotent.
+        if (current < 8)
+        {
+            if (!await ColumnExistsAsync(db, "Collections", "Uid", ct).ConfigureAwait(false))
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE \"Collections\" ADD COLUMN \"Uid\" TEXT NULL;", ct).ConfigureAwait(false);
+            if (!await ColumnExistsAsync(db, "CollectionSources", "Uid", ct).ConfigureAwait(false))
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE \"CollectionSources\" ADD COLUMN \"Uid\" TEXT NULL;", ct).ConfigureAwait(false);
+            await db.Database.ExecuteSqlRawAsync("""
+                UPDATE "Collections" SET "Uid" = lower(hex(randomblob(16))) WHERE "Uid" IS NULL;
+                UPDATE "CollectionSources" SET "Uid" = lower(hex(randomblob(16))) WHERE "Uid" IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS "IX_Collections_Uid" ON "Collections" ("Uid");
+                CREATE UNIQUE INDEX IF NOT EXISTS "IX_CollectionSources_Uid" ON "CollectionSources" ("Uid");
+                CREATE TABLE IF NOT EXISTS "ArchiveOps" (
+                    "Id" INTEGER NOT NULL CONSTRAINT "PK_ArchiveOps" PRIMARY KEY AUTOINCREMENT,
+                    "DeviceId" TEXT NOT NULL,
+                    "Seq" INTEGER NOT NULL,
+                    "Hlc" TEXT NOT NULL,
+                    "Kind" TEXT NOT NULL,
+                    "Sha256" TEXT NULL,
+                    "EntityUid" TEXT NULL,
+                    "PayloadJson" TEXT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS "IX_ArchiveOps_DeviceId_Seq" ON "ArchiveOps" ("DeviceId", "Seq");
+                CREATE INDEX IF NOT EXISTS "IX_ArchiveOps_Hlc" ON "ArchiveOps" ("Hlc");
+                """, ct).ConfigureAwait(false);
+            await SetVersionAsync(db, 8, ct).ConfigureAwait(false);
         }
     }
 

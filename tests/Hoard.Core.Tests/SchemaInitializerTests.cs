@@ -308,6 +308,99 @@ public class SchemaInitializerTests : IDisposable
         Assert.Equal("TEXT|notnull=0|dflt=null", freshDef); // and it is what EF generates for a nullable string
     }
 
+    [Fact]
+    public async Task V8_backfills_uids_and_makes_the_op_log_usable_on_a_pre_v8_database()
+    {
+        // Simulate a pre-v8 DB with existing data: full model, seed a board + source, then strip the v8
+        // objects and rewind. The upgrade must mint a uid for every existing row and create ArchiveOps.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync();
+            var board = new Collection { Name = "Legacy Board", SourceConnector = "pinterest", CreatedAt = DateTimeOffset.UtcNow };
+            db.Collections.Add(board);
+            await db.SaveChangesAsync();
+            db.CollectionSources.Add(new CollectionSource
+            {
+                CollectionId = board.Id, SourceConnector = "pinterest",
+                SourceBoardId = "b1", SourceUrl = "https://example/b1", AddedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"ArchiveOps\";");
+            await DropUidObjectsAsync(db);
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 7;");
+        }
+
+        await using (var db = _dbFactory.CreateDbContext())
+            await SchemaInitializer.InitializeAsync(db);
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            Assert.Equal(SchemaInitializer.LatestSchemaVersion, await ReadUserVersionAsync(db));
+
+            // Every pre-existing row got a minted uid (Guid "N" shape — 32 hex chars).
+            var boardUid = (await db.Collections.SingleAsync()).Uid;
+            var sourceUid = (await db.CollectionSources.SingleAsync()).Uid;
+            Assert.Equal(32, boardUid?.Length);
+            Assert.Equal(32, sourceUid?.Length);
+            Assert.NotEqual(boardUid, sourceUid);
+
+            // And the op log is writable.
+            db.ArchiveOps.Add(new ArchiveOp { DeviceId = "d1", Seq = 1, Hlc = "h", Kind = "asset.added", Sha256 = "abc" });
+            await db.SaveChangesAsync();
+            Assert.Equal(1, await db.ArchiveOps.CountAsync());
+        }
+    }
+
+    [Fact]
+    public async Task V8_ArchiveOps_table_built_by_the_upgrade_matches_the_EF_model()
+    {
+        var fresh = new TestDbContextFactory(Path.Combine(_dir, "fresh8.db"));
+        await using (var db = fresh.CreateDbContext()) await SchemaInitializer.InitializeAsync(db);
+
+        var upgraded = new TestDbContextFactory(Path.Combine(_dir, "upgraded8.db"));
+        await using (var db = upgraded.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync();
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"ArchiveOps\";");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 7;");
+        }
+        await using (var db = upgraded.CreateDbContext()) await SchemaInitializer.InitializeAsync(db);
+
+        Assert.Equal(await ReadObjectSqlAsync(fresh, "ArchiveOps"), await ReadObjectSqlAsync(upgraded, "ArchiveOps"));
+    }
+
+    [Fact]
+    public async Task V8_Uid_column_definitions_match_the_EF_model()
+    {
+        var fresh = new TestDbContextFactory(Path.Combine(_dir, "fresh8c.db"));
+        await using (var db = fresh.CreateDbContext()) await SchemaInitializer.InitializeAsync(db);
+
+        var upgraded = new TestDbContextFactory(Path.Combine(_dir, "upgraded8c.db"));
+        await using (var db = upgraded.CreateDbContext())
+        {
+            await db.Database.EnsureCreatedAsync();
+            await DropUidObjectsAsync(db);
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 7;");
+        }
+        await using (var db = upgraded.CreateDbContext()) await SchemaInitializer.InitializeAsync(db);
+
+        foreach (var table in new[] { "Collections", "CollectionSources" })
+        {
+            var freshDef = await ReadColumnDefAsync(fresh, table, "Uid");
+            Assert.Equal(freshDef, await ReadColumnDefAsync(upgraded, table, "Uid"));
+            Assert.Equal("TEXT|notnull=0|dflt=null", freshDef);
+        }
+    }
+
+    // Strip the v8 Uid columns to simulate a pre-v8 DB (SQLite refuses DROP COLUMN while an index covers it).
+    private static async Task DropUidObjectsAsync(HoardDbContext db)
+    {
+        await db.Database.ExecuteSqlRawAsync("DROP INDEX \"IX_Collections_Uid\";");
+        await db.Database.ExecuteSqlRawAsync("DROP INDEX \"IX_CollectionSources_Uid\";");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Collections\" DROP COLUMN \"Uid\";");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"CollectionSources\" DROP COLUMN \"Uid\";");
+    }
+
     // The column's definition (type affinity, NOT NULL flag, default) from pragma table_info — order-independent.
     private static async Task<string> ReadColumnDefAsync(TestDbContextFactory factory, string table, string column)
     {

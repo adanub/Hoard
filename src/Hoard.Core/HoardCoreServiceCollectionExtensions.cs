@@ -3,6 +3,7 @@ using Hoard.Core.Library;
 using Hoard.Core.Metadata;
 using Hoard.Core.Projects;
 using Hoard.Core.Storage;
+using Hoard.Core.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -24,6 +25,14 @@ public static class HoardCoreServiceCollectionExtensions
         services.AddSingleton<ProjectDbContextFactory>();
         services.AddSingleton<IDbContextFactory<HoardDbContext>>(sp => sp.GetRequiredService<ProjectDbContextFactory>());
         services.AddSingleton<IMediaStore, ProjectMediaStore>();
+
+        // One ArchiveLog for the whole app: the per-device op sequence must have a single allocator
+        // (SYNC-DESIGN.md — one writer per device id). The ops root follows the open project, so a
+        // project switch re-points the dual-write segment like it re-points storage.
+        services.AddSingleton(sp => new ArchiveLog(
+            DeviceIdentity.GetOrCreate(sp.GetRequiredService<AppPaths>()),
+            opsRoot: () => sp.GetRequiredService<ProjectManager>().Current?.OpsRoot,
+            logger: sp.GetService<Microsoft.Extensions.Logging.ILogger<ArchiveLog>>()));
 
         services.AddSingleton<IngestService>();
         services.AddSingleton<LibraryService>();

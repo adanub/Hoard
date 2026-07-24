@@ -17,8 +17,28 @@ public sealed class HoardProject
     /// JSON shape changes so an old marker can be recognised and migrated.</summary>
     public const int CurrentMarkerVersion = 1;
 
+    /// <summary>
+    /// Current ARCHIVE format version (the <c>format</c> marker field; distinct from the marker shape
+    /// version above). 1 = legacy: the metadata DB lives in the project folder. 2 = immutable archive
+    /// (<c>SYNC-DESIGN.md</c> P3): the folder holds only static content (blobs + op segments + marker) and
+    /// each machine derives its own index DB under app data, keyed by <see cref="Id"/>.
+    /// </summary>
+    public const int CurrentFormatVersion = 2;
+
     public string Root { get; }
     public string Name { get; private set; }
+
+    /// <summary>
+    /// Stable identity of the archive itself, minted at creation and carried in the marker. Unlike
+    /// <see cref="Root"/> it survives moves/renames and means the same thing on every machine — it's what
+    /// per-machine derived state (the future app-data index, see <c>SYNC-DESIGN.md</c>) is keyed by.
+    /// Legacy markers without one are backfilled on open.
+    /// </summary>
+    public Guid Id { get; private set; }
+
+    /// <summary>The archive format this folder is in — see <see cref="CurrentFormatVersion"/>. A marker
+    /// without the field reads as 1 (legacy). Upgraded by <c>Sync/ArchiveMigration</c>, never silently.</summary>
+    public int FormatVersion { get; private set; } = 1;
 
     public string StoreRoot => Path.Combine(Root, "store");
     public string DatabasePath => Path.Combine(Root, "hoard.db");
@@ -33,6 +53,9 @@ public sealed class HoardProject
 
     /// <summary>Connector "already-fetched" archive, so re-imports skip items already backed up here.</summary>
     public string DownloadArchivePath => Path.Combine(Root, "download-archive.db");
+
+    /// <summary>Per-device append-only op segments (<c>SYNC-DESIGN.md</c> P2): <c>ops/&lt;deviceId&gt;.jsonl</c>.</summary>
+    public string OpsRoot => Path.Combine(Root, Sync.ArchiveSegments.DirectoryName);
 
     private HoardProject(string root, string name)
     {
@@ -99,9 +122,17 @@ public sealed class HoardProject
             throw new InvalidOperationException($"'{full}' is already a Hoard project. Open it instead.");
 
         Directory.CreateDirectory(full);
-        var project = new HoardProject(full, string.IsNullOrWhiteSpace(name) ? DeriveName(full) : name.Trim());
+        var project = new HoardProject(full, string.IsNullOrWhiteSpace(name) ? DeriveName(full) : name.Trim())
+        {
+            Id = Guid.NewGuid(),
+            FormatVersion = CurrentFormatVersion, // new projects are born in the immutable-archive format
+        };
         project.EnsureSubdirectories();
-        project.WriteMarker(new ProjectMarker { Name = project.Name, SchemaVersion = CurrentMarkerVersion });
+        project.WriteMarker(new ProjectMarker
+        {
+            Name = project.Name, Id = project.Id.ToString("N"),
+            SchemaVersion = CurrentMarkerVersion, Format = project.FormatVersion,
+        });
         return project;
     }
 
@@ -118,16 +149,33 @@ public sealed class HoardProject
             throw new InvalidOperationException($"'{full}' doesn't look like a Hoard project (no database or store).");
 
         string? existingName = null;
+        Guid existingId = default;
+        var existingFormat = 0;
         if (File.Exists(Path.Combine(full, MarkerFileName)))
         {
-            // A present-but-corrupt marker: keep its name if we can still read one, otherwise fall back.
-            try { existingName = JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(Path.Combine(full, MarkerFileName)))?.Name; }
+            // A present-but-corrupt marker: keep its name/id/format if we can still read them, else fall back.
+            try
+            {
+                var existing = JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(Path.Combine(full, MarkerFileName)));
+                existingName = existing?.Name;
+                Guid.TryParse(existing?.Id, out existingId);
+                existingFormat = existing?.Format ?? 0;
+            }
             catch { /* unreadable marker — derive the name from the folder */ }
         }
 
-        var project = new HoardProject(full, string.IsNullOrWhiteSpace(existingName) ? DeriveName(full) : existingName!);
+        var project = new HoardProject(full, string.IsNullOrWhiteSpace(existingName) ? DeriveName(full) : existingName!)
+        {
+            Id = existingId == default ? Guid.NewGuid() : existingId,
+            // A readable marker keeps its format; otherwise infer from the folder's contents.
+            FormatVersion = existingFormat > 0 ? existingFormat : InferFormatFromFolder(full),
+        };
         project.EnsureSubdirectories();
-        project.WriteMarker(new ProjectMarker { Name = project.Name, SchemaVersion = CurrentMarkerVersion });
+        project.WriteMarker(new ProjectMarker
+        {
+            Name = project.Name, Id = project.Id.ToString("N"),
+            SchemaVersion = CurrentMarkerVersion, Format = project.FormatVersion,
+        });
         return project;
     }
 
@@ -143,9 +191,82 @@ public sealed class HoardProject
         try { marker = JsonSerializer.Deserialize<ProjectMarker>(File.ReadAllText(Path.Combine(full, MarkerFileName))); }
         catch { /* unreadable marker — derive the name from the folder below */ }
 
-        var project = new HoardProject(full, string.IsNullOrWhiteSpace(marker?.Name) ? DeriveName(full) : marker!.Name!);
+        var project = new HoardProject(full, string.IsNullOrWhiteSpace(marker?.Name) ? DeriveName(full) : marker!.Name!)
+        {
+            // An absent/unreadable format must be INFERRED, never defaulted to legacy: a v2 project whose
+            // marker was torn by a crashed write would otherwise be persisted back to v1 — re-pointing
+            // SQLite at a fresh empty hoard.db inside the (possibly network-shared) folder, the exact
+            // failure v2 exists to remove.
+            FormatVersion = marker?.Format is > 0 and int f ? f : InferFormatFromFolder(full),
+        };
+        if (Guid.TryParse(marker?.Id, out var id) && id != default)
+        {
+            project.Id = id;
+        }
+        else
+        {
+            // Legacy (or unreadable) marker with no id: mint one and persist it so every machine that
+            // opens this archive from now on agrees on its identity. Best-effort — a read-only mount
+            // still opens, with a session-scoped id until a writable open lands one.
+            project.Id = Guid.NewGuid();
+            try
+            {
+                project.WriteMarker(new ProjectMarker
+                {
+                    Name = marker?.Name ?? project.Name,
+                    Id = project.Id.ToString("N"),
+                    SchemaVersion = marker?.SchemaVersion is > 0 and int v ? v : CurrentMarkerVersion,
+                    Format = project.FormatVersion, // preserved — a rewrite must never downgrade a v2 marker
+                });
+            }
+            catch { /* tolerated: the open itself must not fail */ }
+        }
         project.EnsureSubdirectories();
         return project;
+    }
+
+    /// <summary>
+    /// Read a folder's format version and project id from its marker with <b>no side effects</b> (no
+    /// directory creation, no marker rewrite) — for the launcher's stats/offer peeks. Unreadable or
+    /// absent values read as (1, empty).
+    /// </summary>
+    public static (int FormatVersion, Guid Id) Peek(string folder)
+    {
+        try
+        {
+            var marker = JsonSerializer.Deserialize<ProjectMarker>(
+                File.ReadAllText(Path.Combine(folder, MarkerFileName)));
+            Guid.TryParse(marker?.Id, out var id);
+            return (Math.Max(1, marker?.Format ?? 0), id);
+        }
+        catch
+        {
+            return (1, default);
+        }
+    }
+
+    /// <summary>
+    /// Infer a folder's archive format when its marker can't say (unreadable, or the pre-format legacy
+    /// shape): a migration backup proves v2 (a stray <c>hoard.db</c> beside it is an old build's empty
+    /// shell, not the archive); a <c>hoard.db</c> alone means legacy v1; anything else (store/ops-only
+    /// v2 remnant, or an empty folder) reads as the current format, whose index derives from the ops.
+    /// </summary>
+    private static int InferFormatFromFolder(string folder)
+    {
+        if (File.Exists(Path.Combine(folder, "hoard.db" + Sync.ArchiveMigration.BackupSuffix))) return CurrentFormatVersion;
+        if (File.Exists(Path.Combine(folder, "hoard.db"))) return 1;
+        return CurrentFormatVersion;
+    }
+
+    /// <summary>Stamp the archive format (the migration's final step), preserving the rest of the marker.</summary>
+    public void StampFormatVersion(int version)
+    {
+        FormatVersion = version;
+        WriteMarker(new ProjectMarker
+        {
+            Name = Name, Id = Id.ToString("N"),
+            SchemaVersion = CurrentMarkerVersion, Format = version,
+        });
     }
 
     private void EnsureSubdirectories()
@@ -182,6 +303,8 @@ public sealed class HoardProject
     private sealed class ProjectMarker
     {
         [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("id")] public string? Id { get; set; }
         [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; }
+        [JsonPropertyName("format")] public int Format { get; set; } // 0/absent = legacy v1
     }
 }

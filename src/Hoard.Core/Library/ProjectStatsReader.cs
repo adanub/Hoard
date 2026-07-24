@@ -16,21 +16,17 @@ public sealed record ProjectStats(int Images, int Gifs, int Videos, int Boards);
 /// </summary>
 public static class ProjectStatsReader
 {
-    public static async Task<ProjectStats> ReadAsync(string projectFolder, CancellationToken ct = default)
+    public static async Task<ProjectStats> ReadAsync(string projectFolder, AppPaths appPaths, CancellationToken ct = default)
     {
-        var dbPath = Path.Combine(projectFolder, "hoard.db");
+        // Format v2 keeps the metadata in this machine's derived index; legacy v1 in the folder itself.
+        // Peek (side-effect-free) rather than Open — this runs for every recents card.
+        var (format, id) = HoardProject.Peek(projectFolder);
+        var dbPath = format >= HoardProject.CurrentFormatVersion && id != default
+            ? appPaths.IndexDbPath(id)
+            : Path.Combine(projectFolder, "hoard.db");
         if (!File.Exists(dbPath)) return new ProjectStats(0, 0, 0, 0);
 
-        var connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = dbPath,
-            Pooling = false,
-        }.ToString();
-
-        var options = new DbContextOptionsBuilder<HoardDbContext>()
-            .UseSqlite(connectionString)
-            .Options;
-        await using var db = new HoardDbContext(options);
+        await using var db = ProjectDbContextFactory.CreateForPath(dbPath);
 
         // Count live assets per kind (tombstones — DeletedAt set — don't count); boards = top-level collections.
         var live = db.Assets.Where(a => a.DeletedAt == null);

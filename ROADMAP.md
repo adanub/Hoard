@@ -486,14 +486,30 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 
 ## Later phases
 
-- **Phase 3 — cloud backup/sync:** S3-compatible blob backup (Backblaze B2 / R2 / MinIO) + sync-log replay
-  for adds/removals; multi-device reconciliation.
+- **Phase 3 — multi-device archive + sync: designed in `SYNC-DESIGN.md` (the plan of record).** Archive
+  format v2: the project folder becomes 100% immutable files (content-addressed blobs + per-device
+  append-only op segments with project-scoped effects); SQLite becomes a per-machine, rebuildable derived
+  index in app-data. Dissolves the WAL-over-SMB/NAS failure (SQLite never crosses a network filesystem
+  again), makes a NAS folder the first sync remote, and S3/B2 remotes + the mobile head reuse the same
+  format. Increments P0–P5 in the doc; P1 (replayable op catalogue + round-trip rebuild proof) is the
+  risky one, P3 is where NAS multi-machine works.
 - **Phase 4 — mobile:** extract Core behind a `Hoard.Server` (ASP.NET Core minimal API, does ingestion
   server-side since mobile can't spawn gallery-dl); Avalonia mobile client with background sync.
 - **Phase 5 — capture + more connectors:** TS browser extension (in-page "save to Hoard"); more sources
   behind the same `ISourceConnector`.
 
 ## Deferred / known tech-debt
+
+- **From the archive-format (P0–P3) code review** (10 confirmed findings fixed pre-commit; these
+  verified-but-lower-ranked ones remain): `ArchiveRebuilder` can resurrect a deleted parent via a later
+  child `collection.created` referencing it, and its apply semantics have drifted from `ArchiveSync`'s
+  live applier (unify them — the rebuilder currently has no production caller, which caps the blast
+  radius); the per-op-SaveChanges catch-up makes a first index build of a big archive slow (batch in a
+  transaction at P4); op payloads synthesised from a Windows-written DB carry backslashed `relativePath`s
+  (harmless — the store's reader normalises — but canonicalise at synthesis); launcher recents cards show
+  zero counts for a v2 project this machine hasn't opened yet (no index to read — show "not opened here"
+  instead); the Adopt path never offers the storage upgrade (v1 adoptees only get it on their next open);
+  the marker is rewritten from four sites with hand-copied field lists (centralise one writer).
 
 - `GifDecoder.Snapshot` double-encodes (full-res PNG → `DecodeToWidth`) per frame; a direct Skia resize
   would avoid the round-trip. Kept the safe path (off-thread, not a render hot path).

@@ -29,6 +29,9 @@ public sealed class ProjectManager
     /// <summary>The open project, or null when none is open (first run / after the folder went missing).</summary>
     public HoardProject? Current { get; private set; }
 
+    /// <summary>The app-level paths (per-machine derived state lives under them — the v2 index DBs).</summary>
+    public AppPaths AppPaths => _appPaths;
+
     /// <summary>Recently opened project folders, most-recent first.</summary>
     public IReadOnlyList<string> RecentProjects => _recent;
 
@@ -152,7 +155,23 @@ public sealed class ProjectManager
         if (Current is not null && string.Equals(Current.Root, Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase))
             Current = null;
 
+        var (_, projectId) = HoardProject.Peek(folder); // before the marker goes with the folder
         RemoveDirectoryResilient(folder);   // throws if it can't (e.g. files still locked)
+
+        // This machine's derived state (the v2 index) goes too — permanently, it's rebuildable cache.
+        if (projectId != default)
+        {
+            try
+            {
+                var stateRoot = _appPaths.ProjectStateRoot(projectId);
+                if (Directory.Exists(stateRoot)) Directory.Delete(stateRoot, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Couldn't remove the project's derived state under app data.");
+            }
+        }
+
         RemoveFromRecents(folder);
         _logger.LogInformation("{Action} project folder {Folder}", _recycler is null ? "Deleted" : "Recycled", folder);
     }

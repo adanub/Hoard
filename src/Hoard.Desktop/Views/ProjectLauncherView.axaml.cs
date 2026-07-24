@@ -14,9 +14,48 @@ public partial class ProjectLauncherView : UserControl
     {
         InitializeComponent();
         WireEditSheet();
+        DataContextChanged += (_, _) => HookMigrationOffer();
     }
 
     private ProjectLauncherViewModel? Vm => DataContext as ProjectLauncherViewModel;
+
+    // The storage-upgrade offer originates in the view model (it gates every open of a legacy project),
+    // but the confirm UI lives here — re-hook whenever the DataContext changes.
+    private ProjectLauncherViewModel? _migrationHooked;
+
+    private void HookMigrationOffer()
+    {
+        if (_migrationHooked is not null) _migrationHooked.MigrationOfferRequested -= ShowMigrateConfirm;
+        _migrationHooked = Vm;
+        if (_migrationHooked is not null) _migrationHooked.MigrationOfferRequested += ShowMigrateConfirm;
+    }
+
+    // Offer the one-time v1 → v2 storage upgrade (SYNC-DESIGN.md P3). Both answers open the project —
+    // Cancel just keeps the legacy layout and the offer returns on the next open.
+    private void ShowMigrateConfirm(string folder, string name)
+    {
+        ConfirmContent.Title = "Upgrade project storage?";
+        ConfirmContent.Message =
+            $"“{name}” uses the older storage layout, where the live database sits inside the project folder — " +
+            "which breaks opening the project from another computer or a network drive.\n\n" +
+            "Upgrading keeps only your media and the archive history in the folder; this computer gets its own " +
+            "fast index instead, and other computers can then open the same folder safely. A database backup " +
+            $"(hoard.db{Hoard.Core.Sync.ArchiveMigration.BackupSuffix}) stays in the folder.\n\n" +
+            "Older versions of Hoard can't read an upgraded project. Cancel opens it the old way for now.";
+        ConfirmContent.ConfirmLabel = "Upgrade";
+        ConfirmContent.ConfirmCommand = new RelayCommand(() =>
+        {
+            ConfirmHost.IsOpen = false;
+            if (Vm is { } vm) _ = vm.FinishOpenAsync(folder, name, migrate: true);
+        });
+        ConfirmContent.CancelCommand = new RelayCommand(() =>
+        {
+            ConfirmHost.IsOpen = false;
+            if (Vm is { } vm) _ = vm.FinishOpenAsync(folder, name, migrate: false);
+        });
+        ConfirmContent.Begin(0);
+        ConfirmHost.IsOpen = true;
+    }
 
     // The Edit popup's actions are orchestrated here (sheets + the delete confirm); the view model owns the
     // data. The lambdas read Vm/EditTarget lazily, so they pick up the DataContext set after construction.
@@ -46,7 +85,9 @@ public partial class ProjectLauncherView : UserControl
     private void ShowDeleteConfirm(RecentProjectRef r)
     {
         ConfirmContent.Title = "Delete project?";
-        ConfirmContent.Message = $"Move “{r.Name}” and all of its data to your recycle bin?\n\n{r.Path}";
+        ConfirmContent.Message = Hoard.Desktop.Services.RecycleWording.RecyclerAvailable
+            ? $"Move “{r.Name}” and all of its data to your recycle bin?\n\n{r.Path}"
+            : $"Permanently delete “{r.Name}” and all of its data? This can't be undone.\n\n{r.Path}";
         ConfirmContent.ConfirmLabel = "Delete";
         ConfirmContent.ConfirmCommand = new RelayCommand(() =>
         {

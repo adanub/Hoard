@@ -16,12 +16,18 @@ public sealed class CurationService
     private readonly IDbContextFactory<HoardDbContext> _dbFactory;
     private readonly IMediaStore _store;
     private readonly IFileRecycler? _recycler;
+    private readonly ArchiveLog _archive;
 
-    public CurationService(IDbContextFactory<HoardDbContext> dbFactory, IMediaStore store, IFileRecycler? recycler = null)
+    public CurationService(
+        IDbContextFactory<HoardDbContext> dbFactory, IMediaStore store, IFileRecycler? recycler = null,
+        ArchiveLog? archive = null)
     {
         _dbFactory = dbFactory;
         _store = store;
         _recycler = recycler;
+        // The null fallback (tests/headless) mints its own device id, so two service instances writing
+        // the same DB can never collide on the unique (DeviceId, Seq) index.
+        _archive = archive ?? new ArchiveLog(ArchiveLog.NewUid());
     }
 
     /// <summary>
@@ -37,6 +43,7 @@ public sealed class CurationService
             throw new ArgumentException("A deletion note is required.", nameof(note));
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
         if (asset is null || asset.DeletedAt is not null) return null;
 
@@ -47,7 +54,9 @@ public sealed class CurationService
         asset.DeletedAt = DateTimeOffset.UtcNow;
         asset.DeletionNote = note.Trim();
         SyncLog.RecordRemove(db, sha);
+        _archive.RecordAssetTombstoned(db, sha, asset.DeletionNote, asset.DeletedAt.Value);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
 
         // Free the blob only after the commit, so a failure here leaves an orphan blob (harmless,
         // reclaimable) rather than a live row pointing at a missing file.
@@ -66,10 +75,13 @@ public sealed class CurationService
             throw new ArgumentException("A board name is required.", nameof(newName));
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct).ConfigureAwait(false);
         if (collection is null) return;
         collection.DisplayName = newName.Trim();
+        _archive.RecordCollectionRenamed(db, collection);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -85,6 +97,7 @@ public sealed class CurationService
     public async Task<int> RemoveSourceAsync(int collectionSourceId, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         var source = await db.CollectionSources
             .FirstOrDefaultAsync(s => s.Id == collectionSourceId, ct).ConfigureAwait(false);
         if (source is null) return 0;
@@ -104,6 +117,7 @@ public sealed class CurationService
         var assets = await items.Select(ci => ci.Asset).Distinct().ToListAsync(ct).ConfigureAwait(false);
 
         var freed = StageAssetRemovals(db, assets);
+        _archive.RecordSourceRemoved(db, source);
         db.CollectionSources.Remove(source); // (its links are gone with the assets; any others SET NULL by the FK)
 
         var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == source.CollectionId, ct).ConfigureAwait(false);
@@ -122,6 +136,7 @@ public sealed class CurationService
         }
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         await FreeBlobsAsync(freed, ct).ConfigureAwait(false);
         return freed.Count;
     }
@@ -136,6 +151,7 @@ public sealed class CurationService
     public async Task<int> DeleteBoardAsync(int collectionId, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         var collection = await db.Collections.FirstOrDefaultAsync(c => c.Id == collectionId, ct).ConfigureAwait(false);
         if (collection is null) return 0;
 
@@ -151,8 +167,11 @@ public sealed class CurationService
 
         var freed = StageAssetRemovals(db, assets);
         var collections = await db.Collections.Where(c => subtreeIds.Contains(c.Id)).ToListAsync(ct).ConfigureAwait(false);
+        // Granular ops: one delete per collection in the subtree (replay removes each one's links + sources).
+        foreach (var c in collections) _archive.RecordCollectionDeleted(db, c);
         db.Collections.RemoveRange(collections); // cascade removes each one's CollectionItems
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         await FreeBlobsAsync(freed, ct).ConfigureAwait(false);
         return freed.Count;
     }
@@ -170,6 +189,7 @@ public sealed class CurationService
     {
         if (fromCollectionId == toCollectionId) return;
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
 
         var link = await db.CollectionItems
             .FirstOrDefaultAsync(ci => ci.AssetId == assetId && ci.CollectionId == fromCollectionId, ct).ConfigureAwait(false);
@@ -190,7 +210,21 @@ public sealed class CurationService
             link.CollectionId = toCollectionId;
             link.CollectionSourceId = null; // now user-organised, not auto-attributed to a merged source
         }
+
+        // Ops: unlink from the old board, (re-)link into the new one with the attribution cleared — the
+        // item.linked upsert models both branches (the survivor keeps its own note/added-at).
+        var sha = await db.Assets.Where(a => a.Id == assetId).Select(a => a.Sha256).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        var from = await db.Collections.FirstOrDefaultAsync(c => c.Id == fromCollectionId, ct).ConfigureAwait(false);
+        var to = await db.Collections.FirstOrDefaultAsync(c => c.Id == toCollectionId, ct).ConfigureAwait(false);
+        if (sha is not null && from is not null && to is not null)
+        {
+            var survivor = destLink ?? link;
+            _archive.RecordItemUnlinked(db, sha, ArchiveLog.UidOf(from));
+            _archive.RecordItemLinked(db, sha, ArchiveLog.UidOf(to), sourceUid: null, survivor.Note, survivor.AddedAt);
+        }
+
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -199,12 +233,13 @@ public sealed class CurationService
     /// free <i>after</i> the commit (so a mid-way failure orphans a blob harmlessly rather than stranding a row).
     /// Does not call SaveChanges, so the caller can remove the owning source/board in the same transaction.
     /// </summary>
-    private static List<string> StageAssetRemovals(HoardDbContext db, IReadOnlyList<Asset> assets)
+    private List<string> StageAssetRemovals(HoardDbContext db, IReadOnlyList<Asset> assets)
     {
         var blobs = new List<string>(assets.Count);
         foreach (var asset in assets)
         {
             SyncLog.RecordRemove(db, asset.Sha256);
+            _archive.RecordAssetRemoved(db, asset.Sha256);
             blobs.Add(asset.RelativePath);
             db.Assets.Remove(asset);
         }

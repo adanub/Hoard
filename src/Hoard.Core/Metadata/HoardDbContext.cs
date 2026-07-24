@@ -14,6 +14,7 @@ public class HoardDbContext : DbContext
     public DbSet<Tag> Tags => Set<Tag>();
     public DbSet<AssetTag> AssetTags => Set<AssetTag>();
     public DbSet<SyncOp> SyncOps => Set<SyncOp>();
+    public DbSet<ArchiveOp> ArchiveOps => Set<ArchiveOp>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -27,6 +28,7 @@ public class HoardDbContext : DbContext
 
         b.Entity<Collection>(e =>
         {
+            e.HasIndex(c => c.Uid).IsUnique();
             e.HasIndex(c => new { c.SourceConnector, c.SourceBoardId });
             e.HasOne(c => c.Parent)
                 .WithMany(c => c.Children)
@@ -36,6 +38,7 @@ public class HoardDbContext : DbContext
 
         b.Entity<CollectionSource>(e =>
         {
+            e.HasIndex(s => s.Uid).IsUnique();
             // A given source board is merged into a local board at most once.
             e.HasIndex(s => new { s.CollectionId, s.SourceConnector, s.SourceBoardId }).IsUnique();
             e.Property(s => s.SourceUrl).IsRequired();
@@ -71,6 +74,17 @@ public class HoardDbContext : DbContext
             // order, and SQLite can't ORDER BY DateTimeOffset, so the index is on Id implicitly (PK).
             e.Property(o => o.EntityKey).IsRequired();
             e.HasIndex(o => o.EntityKey);
+        });
+
+        b.Entity<ArchiveOp>(e =>
+        {
+            // Append-only op log (SYNC-DESIGN.md). (DeviceId, Seq) is an op's identity — replay dedups on
+            // it; Hlc is the sortable cross-device order, read back whole in ORDER BY Hlc.
+            e.HasIndex(o => new { o.DeviceId, o.Seq }).IsUnique();
+            e.HasIndex(o => o.Hlc);
+            e.Property(o => o.DeviceId).IsRequired();
+            e.Property(o => o.Hlc).IsRequired();
+            e.Property(o => o.Kind).IsRequired();
         });
 
         b.Entity<Tag>(e => e.HasIndex(t => t.Name).IsUnique());

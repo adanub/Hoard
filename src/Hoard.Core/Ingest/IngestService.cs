@@ -20,17 +20,22 @@ public sealed class IngestService
     private readonly IMediaStore _store;
     private readonly IReadOnlyList<ISourceConnector> _connectors;
     private readonly ILogger<IngestService> _logger;
+    private readonly ArchiveLog _archive;
 
     public IngestService(
         IDbContextFactory<HoardDbContext> dbFactory,
         IMediaStore store,
         IEnumerable<ISourceConnector> connectors,
-        ILogger<IngestService>? logger = null)
+        ILogger<IngestService>? logger = null,
+        ArchiveLog? archive = null)
     {
         _dbFactory = dbFactory;
         _store = store;
         _connectors = connectors.ToList();
         _logger = logger ?? NullLogger<IngestService>.Instance;
+        // The null fallback (tests/headless) mints its own device id, so two service instances writing
+        // the same DB can never collide on the unique (DeviceId, Seq) index.
+        _archive = archive ?? new ArchiveLog(ArchiveLog.NewUid());
     }
 
     /// <summary>
@@ -45,6 +50,7 @@ public sealed class IngestService
     {
         var connectorName = _connectors.FirstOrDefault(c => c.CanHandle(url))?.Name ?? "";
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         var collection = new Collection
         {
             Name = name,
@@ -54,7 +60,17 @@ public sealed class IngestService
             CreatedAt = DateTimeOffset.UtcNow,
         };
         db.Collections.Add(collection);
+
+        string? parentUid = null;
+        if (parentId is int pid)
+        {
+            var parent = await db.Collections.FirstOrDefaultAsync(c => c.Id == pid, ct).ConfigureAwait(false);
+            if (parent is not null) parentUid = ArchiveLog.UidOf(parent);
+        }
+        _archive.RecordCollectionCreated(db, collection, parentUid);
+
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         return collection.Id;
     }
 
@@ -70,6 +86,7 @@ public sealed class IngestService
         progress?.Report(new IngestProgress(IngestPhase.Starting, 0, 0, $"Starting {connector.Name} download…"));
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
 
         var targetCollection = targetCollectionId is int tid
             // Include the existing sources so EnsureSourceAsync's in-graph check sees them (no per-source query).
@@ -172,7 +189,7 @@ public sealed class IngestService
                 await LinkToCollectionAsync(db, linkTarget, asset, item, source, committed).ConfigureAwait(false);
             }
 
-            await AttachTagsAsync(db, tags, asset, item, committed).ConfigureAwait(false);
+            await AttachTagsAsync(db, tags, asset, item, isNew, committed).ConfigureAwait(false);
 
             // Persist per item so the asset gets an Id and is immediately queryable/displayable.
             await db.SaveChangesAsync(committed).ConfigureAwait(false);
@@ -190,6 +207,10 @@ public sealed class IngestService
         }, ct).ConfigureAwait(false);
 
         var reattached = await ReattachOrphansAsync(db, targetCollection, sourceByBoard, importedPins, connector.Name, progress, ct).ConfigureAwait(false);
+
+        // One segment flush for the whole import (not per item): everything committed above re-lands
+        // from the authoritative table even if this call never runs (crash/cancel).
+        await _archive.FlushSegmentAsync(db, CancellationToken.None).ConfigureAwait(false);
 
         var skippedNote = skippedDeleted > 0 ? $", {skippedDeleted} skipped (deleted)" : "";
         var reattachedNote = reattached > 0 ? $", {reattached} re-attached" : "";
@@ -216,16 +237,16 @@ public sealed class IngestService
     {
         if (targetCollection is null) return 0;
 
-        // The board id → CollectionSource id the orphan should be attributed to: this run's crawl sources, plus
-        // the target's existing sources (so re-sync of a now-empty board still finds its board id).
-        var sourceIdByBoard = new Dictionary<string, int>();
+        // The board id → CollectionSource (id + uid) the orphan should be attributed to: this run's crawl
+        // sources, plus the target's existing sources (so re-sync of a now-empty board still finds its board id).
+        var sourceIdByBoard = new Dictionary<string, (int Id, string? Uid)>();
         foreach (var ((connector, boardId), source) in sourceByBoard)
-            if (connector == connectorName) sourceIdByBoard[boardId] = source.Id;
+            if (connector == connectorName) sourceIdByBoard[boardId] = (source.Id, ArchiveLog.UidOf(source));
         foreach (var s in await db.CollectionSources
                      .Where(s => s.CollectionId == targetCollection.Id && s.SourceConnector == connectorName && s.SourceBoardId != null)
-                     .Select(s => new { s.Id, s.SourceBoardId })
+                     .Select(s => new { s.Id, s.SourceBoardId, s.Uid })
                      .ToListAsync(ct).ConfigureAwait(false))
-            sourceIdByBoard.TryAdd(s.SourceBoardId!, s.Id);
+            sourceIdByBoard.TryAdd(s.SourceBoardId!, (s.Id, s.Uid));
         if (sourceIdByBoard.Count == 0) return 0;
 
         // Un-tracked read (we only insert links, never modify the orphan rows).
@@ -239,15 +260,17 @@ public sealed class IngestService
         {
             if (importedPins.Contains(orphan.SourceId!)) continue; // the crawl already re-listed this pin
             var boardId = SidecarBoardId.From(orphan.MetadataJson);
-            if (boardId is null || !sourceIdByBoard.TryGetValue(boardId, out var sourceId)) continue;
+            if (boardId is null || !sourceIdByBoard.TryGetValue(boardId, out var source)) continue;
 
-            db.CollectionItems.Add(new CollectionItem
+            var link = new CollectionItem
             {
                 CollectionId = targetCollection.Id,
                 AssetId = orphan.Id,
-                CollectionSourceId = sourceId,
+                CollectionSourceId = source.Id,
                 AddedAt = DateTimeOffset.UtcNow,
-            });
+            };
+            db.CollectionItems.Add(link);
+            _archive.RecordItemLinked(db, orphan.Sha256, ArchiveLog.UidOf(targetCollection), source.Uid, link.Note, link.AddedAt);
             reattached++;
             progress?.Report(new IngestProgress(IngestPhase.Storing, 0, 0,
                 $"Re-attached {orphan.Title ?? orphan.SourceId}", ToView(orphan), targetCollection.Id));
@@ -268,9 +291,11 @@ public sealed class IngestService
     public async Task<AssetView?> RestoreAsync(int assetId, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
         if (asset is null || asset.DeletedAt is null) return null;
 
+        var oldSha = asset.Sha256; // the re-download can yield different bytes; the op keys on the old identity
         var blob = await ReDownloadAsync(asset, ct).ConfigureAwait(false);
         asset.RelativePath = blob.RelativePath;
         asset.Sha256 = blob.Sha256;
@@ -278,7 +303,9 @@ public sealed class IngestService
         asset.DeletedAt = null;
         asset.DeletionNote = null;
         SyncLog.RecordAdd(db, asset); // a restore is a genuine re-add to the library
+        _archive.RecordAssetRestored(db, oldSha, asset);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         return ToView(asset);
     }
 
@@ -295,11 +322,20 @@ public sealed class IngestService
         if (asset is null || asset.DeletedAt is not null) return null;
         if (File.Exists(_store.GetAbsolutePath(asset.RelativePath))) return ToView(asset); // already present
 
+        var oldSha = asset.Sha256;
         var blob = await ReDownloadAsync(asset, ct).ConfigureAwait(false);
         asset.RelativePath = blob.RelativePath;
         asset.Sha256 = blob.Sha256;
         asset.Bytes = blob.Bytes;
+        // Same bytes back = pure repair of local state, no op. Different bytes = the asset's content
+        // identity changed, which every other machine must follow.
+        if (asset.Sha256 != oldSha)
+        {
+            await _archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
+            _archive.RecordAssetRefetched(db, oldSha, asset);
+        }
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         return ToView(asset);
     }
 
@@ -396,7 +432,7 @@ public sealed class IngestService
     /// board, matched by parent + section id), so sectioned pins file into it instead of the board's main grid.
     /// Cached per run; matches an existing folder on a re-import via <see cref="Collection.SourceSectionId"/>.
     /// </summary>
-    private static async Task<Collection> GetOrCreateSectionFolderAsync(
+    private async Task<Collection> GetOrCreateSectionFolderAsync(
         HoardDbContext db, Dictionary<(Collection Parent, string SectionId), Collection> cache,
         Collection parent, string sectionId, SourceMediaItem item, CancellationToken ct)
     {
@@ -419,6 +455,7 @@ public sealed class IngestService
                 CreatedAt = DateTimeOffset.UtcNow,
             };
             db.Collections.Add(folder);
+            _archive.RecordCollectionCreated(db, folder, ArchiveLog.UidOf(parent));
         }
         cache[key] = folder;
         return folder;
@@ -463,6 +500,7 @@ public sealed class IngestService
         // Log the add in the same SaveChanges as the asset, so the sync history can never drift from
         // what's actually in the library.
         SyncLog.RecordAdd(db, asset);
+        _archive.RecordAssetAdded(db, asset, item.Tags);
         cache[blob.Sha256] = asset;
         return asset;
     }
@@ -493,6 +531,7 @@ public sealed class IngestService
                 CreatedAt = DateTimeOffset.UtcNow,
             };
             db.Collections.Add(collection);
+            _archive.RecordCollectionCreated(db, collection, parentUid: null);
         }
         cache[key] = collection;
         return collection;
@@ -503,7 +542,7 @@ public sealed class IngestService
     /// first sight. Idempotent on (collection, connector, source board id); returns the source so each imported
     /// link can be attributed to it.
     /// </summary>
-    private static async Task<CollectionSource> GetOrAddSourceAsync(
+    private async Task<CollectionSource> GetOrAddSourceAsync(
         HoardDbContext db, Collection collection, string connectorName, SourceMediaItem item, string fallbackUrl, CancellationToken ct)
     {
         var boardId = item.BoardId;
@@ -517,9 +556,13 @@ public sealed class IngestService
         }
         if (existing is not null)
         {
-            // A source backfilled (v3) without a URL becomes syncable once a real import supplies one.
+            // A source backfilled (v3) without a URL becomes syncable once a real import supplies one —
+            // a real mutation, so it's op'd (the index must stay derivable from the archive alone).
             if (string.IsNullOrEmpty(existing.SourceUrl) && !string.IsNullOrWhiteSpace(item.BoardUrl))
+            {
                 existing.SourceUrl = item.BoardUrl;
+                _archive.RecordSourceUpdated(db, existing);
+            }
             return existing;
         }
 
@@ -534,10 +577,11 @@ public sealed class IngestService
         };
         collection.Sources.Add(source);
         db.CollectionSources.Add(source);
+        _archive.RecordSourceAttached(db, source, collection);
         return source;
     }
 
-    private static async Task LinkToCollectionAsync(
+    private async Task LinkToCollectionAsync(
         HoardDbContext db, Collection collection, Asset asset, SourceMediaItem item, CollectionSource? source, CancellationToken ct)
     {
         // Same-run duplicates resolve against the tracked graph; cross-run duplicates (both already
@@ -559,11 +603,14 @@ public sealed class IngestService
         };
         collection.Items.Add(link);
         asset.CollectionItems.Add(link);
+        _archive.RecordItemLinked(db, asset.Sha256, ArchiveLog.UidOf(collection),
+            source is null ? null : ArchiveLog.UidOf(source), link.Note, link.AddedAt);
     }
 
     private async Task AttachTagsAsync(
-        HoardDbContext db, Dictionary<string, Tag> cache, Asset asset, SourceMediaItem item, CancellationToken ct)
+        HoardDbContext db, Dictionary<string, Tag> cache, Asset asset, SourceMediaItem item, bool isNew, CancellationToken ct)
     {
+        var attached = 0;
         foreach (var name in item.Tags)
         {
             if (!cache.TryGetValue(name, out var tag))
@@ -577,7 +624,25 @@ public sealed class IngestService
             if (!linked && asset.Id != 0 && tag.Id != 0)
                 linked = await db.AssetTags.AnyAsync(at => at.AssetId == asset.Id && at.TagId == tag.Id, ct).ConfigureAwait(false);
             if (!linked)
+            {
                 asset.AssetTags.Add(new AssetTag { Asset = asset, Tag = tag });
+                attached++;
+            }
         }
+
+        // A new asset's tags ride in its asset.added op; tags landing on an already-held asset (a
+        // re-import from another board) are a mutation of their own and must be op'd — the payload is the
+        // FULL resulting set (saved rows + this run's in-graph adds), applied as a replacement.
+        if (isNew || attached == 0) return;
+        var saved = asset.Id == 0
+            ? []
+            : await db.AssetTags.Where(at => at.AssetId == asset.Id)
+                .Select(at => at.Tag.Name).ToListAsync(ct).ConfigureAwait(false);
+        var full = saved
+            .Concat(asset.AssetTags.Where(at => at.Tag is not null).Select(at => at.Tag.Name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+        _archive.RecordAssetRetagged(db, asset.Sha256, full);
     }
 }

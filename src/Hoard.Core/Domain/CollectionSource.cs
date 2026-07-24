@@ -24,4 +24,8 @@ public class CollectionSource
     public string? Name { get; set; }
 
     public DateTimeOffset AddedAt { get; set; }
+
+    /// <summary>Cross-device identity for archive ops (schema v8) — same contract as <see cref="Collection.Uid"/>,
+    /// declared last for the same DDL-parity reason.</summary>
+    public string? Uid { get; set; }
 }

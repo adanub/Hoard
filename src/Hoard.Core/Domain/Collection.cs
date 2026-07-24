@@ -41,6 +41,15 @@ public class Collection
 
     public DateTimeOffset CreatedAt { get; set; }
 
+    /// <summary>
+    /// Cross-device identity for archive ops (schema v8, see <c>SYNC-DESIGN.md</c>): local int ids mean
+    /// nothing on another machine. Guid "N" format; minted at creation, backfilled for pre-v8 rows.
+    /// Nullable only because SQLite's additive ADD COLUMN can't be NOT NULL — treat it as always present
+    /// after the v8 upgrade. Declared last so a fresh model's column order matches an upgraded DB's
+    /// (ADD COLUMN appends), keeping the DDL-parity tests exact.
+    /// </summary>
+    public string? Uid { get; set; }
+
     public List<CollectionItem> Items { get; } = new();
 
     /// <summary>The Pinterest source boards merged into this local board (one board ↔ many sources).</summary>

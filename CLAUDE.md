@@ -60,11 +60,22 @@ Three assemblies, split by *platform reach* — this is the load-bearing decisio
 
 Concepts that span multiple files:
 
-- **Storage is project-scoped.** A "project" is a user-chosen folder (`HoardProject`) holding `store/`,
-  `hoard.db`, `thumbnails/`, `logs/`, `download-archive.db`. `ProjectManager.Current` is the single source of
-  truth; `ProjectDbContextFactory` and `ProjectMediaStore` read it, so opening/switching a project re-points
-  all storage with no other wiring. Only app settings + the global log live under `%APPDATA%/Hoard`. SQLite
-  uses **WAL** and **`Pooling=False`** (so an idle project folder holds no file lock and stays movable/deletable).
+- **Storage is project-scoped, and the archive format is v2 — "immutable archive + derived index"
+  (`SYNC-DESIGN.md` is the deep doc; read it before touching storage/sync).** A "project" is a user-chosen
+  folder (`HoardProject`) whose durable contents are **static only**: the marker (`hoard.project.json`,
+  carrying a stable `ProjectId` + the archive `format`), the content-addressed `store/`, and the
+  **append-only per-device op segments** `ops/<deviceId>.jsonl` — the replayable history of every change
+  (`Sync/` — `ArchiveLog` emits ops in the same SaveChanges as each change; `ArchiveSync` catches up other
+  devices' segments at open; `ArchiveSegments` owns the torn-tail-safe file format). The **metadata DB is a
+  per-machine derived index** at `%APPDATA%/Hoard/projects/<projectId>/index.db` — rebuildable from the
+  segments alone (delete it and the next open replays it), which is why SQLite never touches a network
+  share and a NAS-hosted project opens from any machine. Legacy (format v1) projects keep `hoard.db` in the
+  folder until the user accepts the one-time migration (`Sync/ArchiveMigration`, offered by the launcher;
+  keeps a `hoard.db.pre-v2.bak`). `ProjectManager.Current` is the single source of truth;
+  `ProjectDbContextFactory` and `ProjectMediaStore` read it, so opening/switching a project re-points all
+  storage with no other wiring. SQLite uses **WAL** and **`Pooling=False`**. `thumbnails/`, `logs/`,
+  `download-archive.db` are derived data still in the folder (P4 relocates them). **Never mutate or delete
+  ops** — the log is append-only; blob writes stay temp-file + rename.
 - **Schema versioning is additive, via `PRAGMA user_version` — not EF migrations.** `EnsureCreated` builds a
   fresh project DB from the full current model; an existing DB (maybe from an older app version) is patched by
   `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.

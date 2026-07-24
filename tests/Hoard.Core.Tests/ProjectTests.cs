@@ -48,6 +48,33 @@ public class ProjectTests : IDisposable
     }
 
     [Fact]
+    public void Project_id_is_minted_at_create_and_stable_across_opens()
+    {
+        var folder = Path.Combine(_dir, "with-id");
+        var created = HoardProject.Create(folder);
+
+        Assert.NotEqual(default, created.Id);
+        Assert.Equal(created.Id, HoardProject.Open(folder).Id);
+        Assert.Equal(created.Id, HoardProject.Open(folder).Id); // and again — never re-minted
+    }
+
+    [Fact]
+    public void Open_backfills_an_id_into_a_legacy_marker_once()
+    {
+        // A marker written by an older build: valid JSON, no "id".
+        var folder = Path.Combine(_dir, "legacy-id");
+        HoardProject.Create(folder);
+        File.WriteAllText(Path.Combine(folder, HoardProject.MarkerFileName),
+            """{ "name": "Legacy", "schemaVersion": 1 }""");
+
+        var first = HoardProject.Open(folder);
+        Assert.NotEqual(default, first.Id);
+        Assert.Equal("Legacy", first.Name); // backfill preserves the stored name
+
+        Assert.Equal(first.Id, HoardProject.Open(folder).Id); // persisted — later opens agree
+    }
+
+    [Fact]
     public void Open_tolerates_a_corrupt_marker_by_deriving_the_name()
     {
         var folder = Path.Combine(_dir, "Corrupt Marker");

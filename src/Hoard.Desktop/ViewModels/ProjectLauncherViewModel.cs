@@ -265,9 +265,43 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
     /// <summary>Open an existing project folder chosen via the sheet's folder picker.</summary>
     public async Task OpenExistingAsync(string folder)
     {
+        if (OfferMigrationIfLegacy(folder, new DirectoryInfo(folder).Name)) return;
         var err = await TryOpenAsync(folder);
         if (err is null) IsNewProjectSheetOpen = false;
         else SheetError = "Couldn't open project: " + err;
+    }
+
+    /// <summary>
+    /// Raised when an open lands on a legacy-format (v1) project: the view shows the one-time
+    /// storage-upgrade confirm and finishes via <see cref="FinishOpenAsync"/> with the user's answer.
+    /// With no listener the open just proceeds in the legacy layout, as before.
+    /// </summary>
+    public event Action<string, string>? MigrationOfferRequested;
+
+    private bool OfferMigrationIfLegacy(string folder, string name)
+    {
+        try
+        {
+            if (MigrationOfferRequested is null || !HoardProject.IsProject(folder)) return false;
+            var (format, _) = HoardProject.Peek(folder);
+            if (format >= HoardProject.CurrentFormatVersion) return false;
+            if (!File.Exists(Path.Combine(folder, "hoard.db"))) return false;
+        }
+        catch
+        {
+            return false; // let the normal open path surface the real error
+        }
+        MigrationOfferRequested.Invoke(folder, name);
+        return true;
+    }
+
+    /// <summary>The migration confirm's outcome: upgrade the storage format (Upgrade) or keep the legacy
+    /// layout for now (Cancel) — the project opens either way.</summary>
+    public async Task FinishOpenAsync(string folder, string name, bool migrate)
+    {
+        var err = await TryOpenAsync(folder, migrate);
+        if (err is null) IsNewProjectSheetOpen = false;
+        else _toasts.Show($"Couldn't open “{name}”: {err}", isError: true);
     }
 
     /// <summary>Adopt a folder that holds project data but has lost/altered its marker (rewrite the marker and
@@ -298,18 +332,19 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
     /// <summary>Open the project behind a card (the card's Open button calls this).</summary>
     public async Task OpenProjectAsync(RecentProjectRef r)
     {
+        if (OfferMigrationIfLegacy(r.Path, r.Name)) return;
         var err = await TryOpenAsync(r.Path);
         if (err is not null) _toasts.Show($"Couldn't open “{r.Name}”: {err}", isError: true);
     }
 
-    private async Task<string?> TryOpenAsync(string folder)
+    private async Task<string?> TryOpenAsync(string folder, bool migrate = false)
     {
         try
         {
-            await OpenOffUiThreadAsync("Opening project…", () =>
+            await OpenOffUiThreadAsync(migrate ? "Upgrading project storage…" : "Opening project…", () =>
             {
                 _projects.Open(folder);
-                return _dbFactory.EnsureCreatedAsync();
+                return _dbFactory.EnsureCreatedAsync(upgradeLegacyFormat: migrate);
             });
             _onProjectOpened();
             return null;
@@ -372,7 +407,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
 
         try
         {
-            var stats = await ProjectStatsReader.ReadAsync(r.Path);
+            var stats = await ProjectStatsReader.ReadAsync(r.Path, _projects.AppPaths);
             r.CountsText = $"{stats.Images} images · {stats.Gifs} GIFs · {stats.Videos} videos";
             r.BoardsText = stats.Boards == 1 ? "1 board" : $"{stats.Boards} boards";
         }
