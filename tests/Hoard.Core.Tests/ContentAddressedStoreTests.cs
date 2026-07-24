@@ -54,6 +54,34 @@ public class ContentAddressedStoreTests : IDisposable
         Assert.True(File.Exists(store.GetAbsolutePath(result.RelativePath)));
     }
 
+    [Fact]
+    public async Task Relative_paths_are_stored_in_canonical_forward_slash_form()
+    {
+        // The relative path is persisted to the project DB, so it must be OS-independent — a project
+        // written on Windows has to open on macOS/Linux and vice versa.
+        var store = new ContentAddressedStore(_root);
+        var result = await store.PutAsync(WriteTemp("a.jpg", "canonical"));
+
+        Assert.DoesNotContain('\\', result.RelativePath);
+        Assert.Equal(2, result.RelativePath.Count(c => c == '/'));
+    }
+
+    [Fact]
+    public async Task Legacy_backslashed_relative_paths_resolve_and_delete()
+    {
+        // DBs written by Windows builds before the canonical form hold "ab\cd\<sha>.jpg" — the store
+        // must resolve them on every OS (this was the "all tiles say file missing" cross-machine bug).
+        var store = new ContentAddressedStore(_root);
+        var result = await store.PutAsync(WriteTemp("a.jpg", "legacy"));
+        var backslashed = result.RelativePath.Replace('/', '\\');
+
+        Assert.True(File.Exists(store.GetAbsolutePath(backslashed)));
+
+        await store.DeleteAsync(backslashed);
+        Assert.False(File.Exists(store.GetAbsolutePath(result.RelativePath)));
+        Assert.Empty(Directory.EnumerateDirectories(_root)); // shard dirs pruned via the same resolution
+    }
+
     private string WriteTemp(string name, string content)
     {
         var path = Path.Combine(_work, name);

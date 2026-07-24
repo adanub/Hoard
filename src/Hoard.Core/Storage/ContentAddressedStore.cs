@@ -39,14 +39,14 @@ public sealed class ContentAddressedStore : IMediaStore
         return new StoredBlob(sha, relativePath, new FileInfo(absolutePath).Length, AlreadyExisted: false);
     }
 
-    public string GetAbsolutePath(string relativePath) => Path.Combine(_root, relativePath);
+    public string GetAbsolutePath(string relativePath) => Path.Combine(_root, Normalise(relativePath));
 
     public bool Exists(string sha256, string extension)
-        => File.Exists(Path.Combine(_root, BuildRelativePath(sha256, extension.TrimStart('.').ToLowerInvariant())));
+        => File.Exists(GetAbsolutePath(BuildRelativePath(sha256, extension.TrimStart('.').ToLowerInvariant())));
 
     public Task DeleteAsync(string relativePath, CancellationToken ct = default)
     {
-        var absolutePath = Path.Combine(_root, relativePath);
+        var absolutePath = GetAbsolutePath(relativePath);
         if (File.Exists(absolutePath))
         {
             File.Delete(absolutePath);
@@ -59,7 +59,7 @@ public sealed class ContentAddressedStore : IMediaStore
     public void PruneEmptyShards(IEnumerable<string> relativePaths)
     {
         foreach (var relativePath in relativePaths)
-            PruneEmptyParents(Path.GetDirectoryName(Path.Combine(_root, relativePath)));
+            PruneEmptyParents(Path.GetDirectoryName(GetAbsolutePath(relativePath)));
     }
 
     /// <summary>Remove empty parent directories up to (but not including) the store root.</summary>
@@ -76,11 +76,18 @@ public sealed class ContentAddressedStore : IMediaStore
         }
     }
 
+    // Relative paths are persisted to the project DB, and a project folder must open on any OS — so the
+    // stored form is canonically '/'-separated (never Path.Combine, whose separator is the current OS's).
     private static string BuildRelativePath(string sha, string ext)
     {
         var name = string.IsNullOrEmpty(ext) ? sha : $"{sha}.{ext}";
-        return Path.Combine(sha[..2], sha[2..4], name);
+        return $"{sha[..2]}/{sha[2..4]}/{name}";
     }
+
+    // DBs written by Windows builds before the canonical form hold '\'-separated paths; resolve either
+    // separator to the current OS's so those projects keep opening everywhere.
+    private static string Normalise(string relativePath)
+        => relativePath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
     {
