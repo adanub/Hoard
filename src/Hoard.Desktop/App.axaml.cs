@@ -54,7 +54,11 @@ public partial class App : Application
 
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddSerilog(dispose: true));
-        services.AddSingleton<Hoard.Core.Storage.IFileRecycler, Services.WindowsFileRecycler>(); // delete → recycle bin
+        // Delete → recycle bin, Windows only: WindowsFileRecycler P/Invokes shell32, which would throw
+        // DllNotFoundException elsewhere. Unregistered, Core's optional-recycler fallback deletes permanently
+        // (documented in CLAUDE.md); a macOS/Linux trash implementation can slot in here later.
+        if (OperatingSystem.IsWindows())
+            services.AddSingleton<Hoard.Core.Storage.IFileRecycler, Services.WindowsFileRecycler>();
         services.AddSingleton<Services.UiSettingsStore>(); // desktop-head preferences (theme/scale/GIFs/cookies)
         services.AddHoardCore(appPaths);
         services.AddGalleryDlConnectors(ResolveGalleryDlPath()); // desktop-only ingestion

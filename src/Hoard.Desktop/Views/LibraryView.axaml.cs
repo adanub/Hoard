@@ -47,7 +47,7 @@ public partial class LibraryView : UserControl
         if (source is null) return;
         BoardConfirmContent.Title = "Remove source board?";
         BoardConfirmContent.Message = source.ImageCount > 0
-            ? $"Stop merging “{source.Name}” and delete its {source.ImageCount} image(s) — files go to your recycle bin (any also in another board are removed there too)."
+            ? $"Stop merging “{source.Name}” and delete its {source.ImageCount} image(s) — {Hoard.Desktop.Services.RecycleWording.FilesFate} (any also in another board are removed there too)."
             : $"Stop merging “{source.Name}” into this board. It won't be listed or re-synced.";
         BoardConfirmContent.ConfirmLabel = "Remove";
         BoardConfirmContent.ConfirmCommand = new RelayCommand(() =>
@@ -65,7 +65,7 @@ public partial class LibraryView : UserControl
         if (Vm?.BoardEditor.EditTarget is not { } r) return;
         BoardConfirmContent.Title = "Delete board?";
         BoardConfirmContent.Message =
-            $"Delete the board “{r.Name}” and its images — files go to your recycle bin (any also in another board are removed there too).";
+            $"Delete the board “{r.Name}” and its images — {Hoard.Desktop.Services.RecycleWording.FilesFate} (any also in another board are removed there too).";
         BoardConfirmContent.ConfirmLabel = "Delete";
         BoardConfirmContent.ConfirmCommand = new RelayCommand(() =>
         {

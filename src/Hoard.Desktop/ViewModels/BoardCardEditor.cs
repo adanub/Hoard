@@ -113,7 +113,7 @@ public sealed partial class BoardCardEditor : ObservableObject
             var removed = await _curation.DeleteBoardAsync(id);
             _removeCard(r);
             _afterChange?.Invoke();
-            _toasts.Show($"Deleted {_noun} “{r.Name}” — {removed} image(s) sent to the recycle bin.");
+            _toasts.Show($"Deleted {_noun} “{r.Name}” — {removed} image(s) {Services.RecycleWording.SentFate}.");
         }
         catch (Exception ex) { _toasts.Show($"Couldn't delete {_noun}: {ex.Message}", isError: true); }
     }

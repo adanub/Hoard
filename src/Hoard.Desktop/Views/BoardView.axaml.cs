@@ -248,7 +248,7 @@ public partial class BoardView : UserControl
         if (Vm is not { FolderEditor.EditTarget: { } folder }) return;
         FolderConfirmContent.Title = "Delete folder?";
         FolderConfirmContent.Message =
-            $"Delete the folder “{folder.Name}” and its images — files go to your recycle bin (any also in another board are removed there too).";
+            $"Delete the folder “{folder.Name}” and its images — {Hoard.Desktop.Services.RecycleWording.FilesFate} (any also in another board are removed there too).";
         FolderConfirmContent.ConfirmLabel = "Delete";
         FolderConfirmContent.ConfirmCommand = new RelayCommand(() =>
         {

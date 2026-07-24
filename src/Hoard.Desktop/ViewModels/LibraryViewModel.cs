@@ -303,7 +303,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
             r.Sources.Remove(source);
             r.ImportedText = ImportedSummary(r.Sources.Count);
             _toasts.Show(removed > 0
-                ? $"Removed source “{source.Name}” — {removed} image(s) sent to the recycle bin."
+                ? $"Removed source “{source.Name}” — {removed} image(s) {Services.RecycleWording.SentFate}."
                 : $"Removed source “{source.Name}”.");
             await RefreshAsync(); // counts/covers change as images were removed
         }
