@@ -1,0 +1,38 @@
+<!--
+  RemoteSheet — contents of the Backup popup (inside a SheetHost on the Library screen). Configure a
+  folder remote for this project's archive and run a sync; progress/result on the status line.
+  Self-bindings use #Root; data bindings come from the inherited LibraryViewModel context via the view.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.RemoteSheet"
+             x:Name="Root">
+
+    <StackPanel Margin="24" Spacing="14">
+        <TextBlock Classes="h2" Text="Backup"/>
+        <TextBlock Classes="muted" TextWrapping="Wrap"
+                   Text="Keep a copy of this project's archive in another folder — a backup drive, a NAS share, or a synced folder. Syncing first takes changes made elsewhere, then sends yours."/>
+
+        <!-- Remote folder + picker -->
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox Grid.Column="0" Theme="{StaticResource HoardInput}" IsReadOnly="True"
+                     Text="{Binding #Root.PathText}" PlaceholderText="No backup folder chosen yet"/>
+            <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary" Width="38" Height="38"
+                    Padding="0" Command="{Binding #Root.ChooseCommand}">
+                <ctrl:Icon Data="{StaticResource Icon.folder}" Width="18" Height="18"/>
+            </Button>
+        </Grid>
+
+        <!-- Status/progress; the BusyBar carries its own visibility gate (never a raw indeterminate bar) -->
+        <ctrl:BusyBar IsVisible="{Binding #Root.IsSyncing}"/>
+        <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding #Root.StatusText}"
+                   IsVisible="{Binding #Root.StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Content="Sync now" Command="{Binding #Root.SyncCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Remove backup"
+                    Command="{Binding #Root.RemoveCommand}" IsVisible="{Binding #Root.HasRemote}"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

@@ -125,6 +125,10 @@ public static class ArchiveSegments
         }
     }
 
+    /// <summary>The device a segment file belongs to, from its name alone (null for non-segment files) —
+    /// lets the replicator apply per-device rules to remote listings it can't ListChapters over.</summary>
+    public static string? SegmentDevice(string fileName) => ParseName(fileName)?.DeviceId;
+
     /// <summary>
     /// Split a segment filename into (deviceId, chapter). <c>dev.jsonl</c> → chapter 0;
     /// <c>dev.00017.jsonl</c> → chapter 17. Null for non-segment files. A dot + exactly five digits is

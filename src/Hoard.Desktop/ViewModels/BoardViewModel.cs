@@ -527,6 +527,12 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
             _toasts.Show("An import is already running — wait for it to finish before syncing.");
             return;
         }
+        // And a background remote (Backup) sync copies the very files this sync would write — refuse that too.
+        if (_importStatus.IsRemoteSyncing)
+        {
+            _toasts.Show("A backup sync is running — wait for it to finish before syncing.");
+            return;
+        }
 
         var cookies = BrowserCookies.Resolve(SyncCookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }

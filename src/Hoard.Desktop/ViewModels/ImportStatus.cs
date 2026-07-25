@@ -12,6 +12,15 @@ public partial class ImportStatus : ObservableObject
 {
     [ObservableProperty] private bool _isImporting;
 
+    /// <summary>
+    /// True while a background remote (Backup) sync is replicating the archive's files. Shared here so
+    /// EVERY archive-writing entry point can refuse to overlap it — the replicator copies the very files
+    /// (store blobs, the active op chapter) that an import/board-sync writes, and the interlock must be
+    /// two-way: the Backup sheet already refuses while an import runs; this flag lets imports refuse
+    /// while a sync runs, even from a different screen after the sheet was dismissed.
+    /// </summary>
+    [ObservableProperty] private bool _isRemoteSyncing;
+
     /// <summary>The board (collection) being imported into.</summary>
     [ObservableProperty] private int? _collectionId;
 

@@ -106,5 +106,16 @@
         <ctrl:SheetHost x:Name="BoardConfirmHost">
             <ctrl:ConfirmSheet x:Name="BoardConfirmContent"/>
         </ctrl:SheetHost>
+
+        <!-- Backup popup (the ＋ menu's Backup): configure the project's remote folder + sync. -->
+        <ctrl:SheetHost IsOpen="{Binding IsRemoteSheetOpen}" DismissCommand="{Binding CloseRemoteSheetCommand}">
+            <ctrl:RemoteSheet x:Name="RemoteSheetContent"
+                              PathText="{Binding RemotePathText}"
+                              StatusText="{Binding RemoteStatusText}"
+                              HasRemote="{Binding HasRemote}"
+                              IsSyncing="{Binding IsRemoteSyncing}"
+                              SyncCommand="{Binding SyncRemoteCommand}"
+                              RemoveCommand="{Binding RemoveRemoteCommand}"/>
+        </ctrl:SheetHost>
     </Panel>
 </UserControl>

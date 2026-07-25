@@ -20,6 +20,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly ProjectManager _projects;
     private readonly ProjectDbContextFactory _dbFactory;
     private readonly UiSettingsStore? _uiSettings;
+    private readonly Hoard.Core.Sync.ArchiveLog? _archive;
 
     // One thumbnail cache per opened project, shared by the Library (board covers) and Board (tiles) screens.
     private ThumbnailCache? _thumbnails;
@@ -42,7 +43,8 @@ public partial class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel(
         IngestService ingest, LibraryService library, CurationService curation,
         ProjectManager projects, ProjectDbContextFactory dbFactory,
-        UiSettingsStore? uiSettings = null, AppPaths? appPaths = null)
+        UiSettingsStore? uiSettings = null, AppPaths? appPaths = null,
+        Hoard.Core.Sync.ArchiveLog? archive = null)
     {
         _ingest = ingest;
         _library = library;
@@ -50,6 +52,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _projects = projects;
         _dbFactory = dbFactory;
         _uiSettings = uiSettings;
+        _archive = archive;
         Settings = new SettingsViewModel(uiSettings, projects, appPaths);
         Chrome = new ShellChromeViewModel(Navigation, openSettings: Settings.Open);
         if (projects is not null) ShowLauncher(); // skip in the design-time (null) ctor
@@ -74,7 +77,7 @@ public partial class MainWindowViewModel : ViewModelBase
             _thumbnails = _projects.Current is { } p ? new ThumbnailCache(_projects.ThumbnailsRootFor(p)) : null;
             return new LibraryViewModel(
                 _ingest, _library, _curation, _projects, _thumbnails, ToastService, ImportStatus,
-                openBoard: ShowBoard, uiSettings: _uiSettings);
+                openBoard: ShowBoard, uiSettings: _uiSettings, dbFactory: _dbFactory, archive: _archive);
         }
         // The forward-rebuild thunk returns null if the project was closed/deleted while backed out, so GoForward
         // drops the dead entry instead of rebuilding a blank Library for a project that no longer exists.

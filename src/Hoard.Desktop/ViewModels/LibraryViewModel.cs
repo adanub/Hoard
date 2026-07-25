@@ -13,10 +13,13 @@ using CommunityToolkit.Mvvm.Input;
 using Hoard.Core.Connectors;
 using Hoard.Core.Ingest;
 using Hoard.Core.Library;
+using Hoard.Core.Metadata;
 using Hoard.Core.Projects;
+using Hoard.Core.Sync;
 using Hoard.Desktop.Navigation;
 using Hoard.Desktop.Services;
 using Hoard.Ingest.GalleryDl;
+using Microsoft.EntityFrameworkCore;
 
 namespace Hoard.Desktop.ViewModels;
 
@@ -110,6 +113,8 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     private readonly ImportStatus _importStatus;
     private readonly Action<BoardTarget> _openBoard;
     private readonly UiSettingsStore? _uiSettings;
+    private readonly IDbContextFactory<HoardDbContext>? _dbFactory;
+    private readonly ArchiveLog? _archive;
     // Cancelled when the Library is navigated away from (disposed), so an in-flight import doesn't keep running
     // and toast / rebuild the grid on this dead VM after the user has left.
     private readonly CancellationTokenSource _disposeCts = new();
@@ -121,7 +126,8 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     public LibraryViewModel(
         IngestService ingest, LibraryService library, CurationService curation, ProjectManager projects,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus,
-        Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null)
+        Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null,
+        IDbContextFactory<HoardDbContext>? dbFactory = null, ArchiveLog? archive = null)
     {
         _ingest = ingest;
         _library = library;
@@ -132,10 +138,16 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         _importStatus = importStatus;
         _openBoard = openBoard;
         _uiSettings = uiSettings;
+        _dbFactory = dbFactory;
+        _archive = archive;
         BoardEditor = new BoardCardEditor(
             library, curation, thumbnails, toasts, "board",
             removeCard: r => { Tiles.Remove(r); r.Dispose(); }, loadExtraDetail: LoadBoardSourcesAsync);
-        PlusActions = new[] { new PlusAction("Import board", OpenImportSheetCommand) };
+        PlusActions = new[]
+        {
+            new PlusAction("Import board", OpenImportSheetCommand),
+            new PlusAction("Backup", OpenRemoteSheetCommand),
+        };
         // Watch the shared import state so a board card lights up whoever started the import — this grid's own
         // import sheet OR a board's Sync button (which drives only ImportStatus, not this grid directly).
         _importStatus.PropertyChanged += OnImportStatusChanged;
@@ -164,6 +176,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
                 // Any in-flight import/sync (even one started from a Board screen) blocks a new Library import, so
                 // re-evaluate the Import button against the shared status.
                 ImportCommand.NotifyCanExecuteChanged();
+                SyncRemoteCommand.NotifyCanExecuteChanged(); // the backup sync is import-gated too
                 // An external sync just finished → reload counts/covers. A Library-initiated import refreshes
                 // itself afterwards (and owns the empty-board discard), so don't double-refresh for that case.
                 if (!_importStatus.IsImporting && !_selfImporting) _ = RefreshAsync();
@@ -385,6 +398,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         // clobber its live count + streamed pins. CanImport also gates the button, but a sync can start after the
         // sheet was opened.
         if (_importStatus.IsImporting) { _toasts.Show("An import is already running — wait for it to finish."); return; }
+        if (_importStatus.IsRemoteSyncing) { _toasts.Show("A backup sync is running — wait for it to finish."); return; }
         var token = _disposeCts.Token; // captured before any await — safe to read even after the CTS is disposed
         var url = NormalizeUrl(BoardUrl);
 
@@ -513,8 +527,10 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
 
     // Block while THIS grid is importing, and also while any other import/sync owns the single shared ImportStatus
     // (a board Sync sets only the shared flag, not this VM's IsImporting) — overlapping runs clobber its state.
+    // A running remote (Backup) sync blocks too: an import writes the very files the replicator is copying.
     private bool CanImport() =>
-        !IsImporting && !_importStatus.IsImporting && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);
+        !IsImporting && !_importStatus.IsImporting && !_importStatus.IsRemoteSyncing
+        && Uri.IsWellFormedUriString(NormalizeUrl(BoardUrl), UriKind.Absolute);
 
     /// <summary>Derive a default board name from a board URL's last path segment.</summary>
     private static string DeriveBoardName(string url)
@@ -535,6 +551,120 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         if (url.Length == 0) return url;
         if (!url.Contains("://", StringComparison.Ordinal)) url = "https://" + url;
         return url;
+    }
+
+    // ── Backup remote (SYNC-DESIGN P5/R2) ────────────────────────────────────
+    // One remote per project, per machine (app-data project state). The sheet configures a folder
+    // remote and runs RemoteSync (pull → apply → push); progress + result land on the status line.
+
+    [ObservableProperty] private bool _isRemoteSheetOpen;
+    [ObservableProperty] private string _remotePathText = "";
+    [ObservableProperty] private string _remoteStatusText = "";
+    [ObservableProperty] private bool _hasRemote;
+    [ObservableProperty] private bool _isRemoteSyncing;
+
+    private RemoteConfig? _remoteConfig;
+
+    [RelayCommand]
+    private void OpenRemoteSheet()
+    {
+        if (_projects?.Current is not { } project) return;
+        _remoteConfig = RemoteConfig.Load(_projects.AppPaths, project.Id);
+        HasRemote = _remoteConfig is not null;
+        RemotePathText = _remoteConfig?.Target ?? "";
+        RemoteStatusText = "";
+        IsRemoteSheetOpen = true;
+        SyncRemoteCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand] private void CloseRemoteSheet() => IsRemoteSheetOpen = false;
+
+    /// <summary>The view's folder picker landed on a path — configure (or re-point) the remote.</summary>
+    public void SetRemoteFolder(string path)
+    {
+        if (_projects?.Current is not { } project) return;
+        var full = Path.GetFullPath(path);
+        // Trailing-separator compare: plain StartsWith would also reject a SIBLING whose name merely
+        // extends the project's ("Hoard" vs "Hoard-backup" — a natural backup-folder name).
+        if (WithSeparator(full).StartsWith(WithSeparator(Path.GetFullPath(project.Root)), StringComparison.OrdinalIgnoreCase))
+        {
+            RemoteStatusText = "Choose a folder outside the project — an archive can't back up into itself.";
+            return;
+        }
+
+        static string WithSeparator(string p) =>
+            p.EndsWith(Path.DirectorySeparatorChar) ? p : p + Path.DirectorySeparatorChar;
+        _remoteConfig = new RemoteConfig(RemoteConfig.FolderType, full);
+        _remoteConfig.Save(_projects.AppPaths, project.Id);
+        HasRemote = true;
+        RemotePathText = full;
+        RemoteStatusText = "";
+        SyncRemoteCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand]
+    private void RemoveRemote()
+    {
+        if (_projects?.Current is not { } project) return;
+        RemoteConfig.Remove(_projects.AppPaths, project.Id);
+        _remoteConfig = null;
+        HasRemote = false;
+        RemotePathText = "";
+        RemoteStatusText = "";
+        SyncRemoteCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanSyncRemote() =>
+        _remoteConfig is not null && !IsRemoteSyncing && !_importStatus.IsImporting
+        && _dbFactory is not null && _archive is not null;
+
+    [RelayCommand(CanExecute = nameof(CanSyncRemote))]
+    private async Task SyncRemoteAsync()
+    {
+        if (_projects?.Current is not { } project || _remoteConfig is null
+            || _dbFactory is null || _archive is null || _importStatus.IsImporting) return;
+        var token = _disposeCts.Token; // captured before any await — safe to read even after the CTS is disposed
+        IsRemoteSyncing = true;
+        _importStatus.IsRemoteSyncing = true; // published app-wide: imports/board-syncs refuse to overlap
+        SyncRemoteCommand.NotifyCanExecuteChanged();
+        try
+        {
+            RemoteStatusText = "Checking the backup…";
+            var progress = new Progress<string>(text => RemoteStatusText = text);
+            var remote = _remoteConfig.CreateStore();
+            var report = await Task.Run(
+                () => RemoteSync.SyncAsync(project, remote, _dbFactory, _archive, progress: progress, ct: token),
+                token);
+            RemoteStatusText = Summarise(report);
+            if (report.ChaptersPulled > 0 && !_disposed) _ = RefreshAsync(); // changes arrived — reload the grid
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away mid-sync; every replicator step is idempotent, the next sync resumes.
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Backup sync failed for project at {Root}", _projects.Current?.Root);
+            RemoteStatusText = "Sync failed: " + ex.Message;
+        }
+        finally
+        {
+            IsRemoteSyncing = false;
+            _importStatus.IsRemoteSyncing = false;
+            SyncRemoteCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private static string Summarise(ReplicationReport report)
+    {
+        if (!report.AnythingMoved) return "Already in sync — nothing to move.";
+        var legs = new List<string>();
+        if (report.BlobsPushed > 0 || report.ChaptersPushed > 0) legs.Add(Leg("sent", report.BlobsPushed));
+        if (report.BlobsPulled > 0 || report.ChaptersPulled > 0) legs.Add(Leg("received", report.BlobsPulled));
+        return "Done — " + string.Join(" · ", legs) + ".";
+
+        static string Leg(string verb, int blobs) =>
+            blobs > 0 ? $"{verb} {blobs} {(blobs == 1 ? "image" : "images")}" : $"{verb} history changes";
     }
 
     private string? WriteImportLog(StringBuilder transcript)

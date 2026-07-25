@@ -41,6 +41,10 @@ public sealed class AppPaths
     /// before every import, so it's pure derived state — never part of the archive folder.</summary>
     public string ProjectDownloadArchivePath(Guid projectId) => Path.Combine(ProjectStateRoot(projectId), "download-archive.db");
 
+    /// <summary>This machine's remote configuration for one project (P5/R2) — where its archive
+    /// replicates to/from. Per-machine by design: a remote is a machine's relationship to the archive.</summary>
+    public string ProjectRemoteConfigPath(Guid projectId) => Path.Combine(ProjectStateRoot(projectId), "remote.json");
+
     // ── Resolution for a project that ISN'T open (launcher cards, verify) ────
     // The one v1/v2 rule, via a side-effect-free marker peek: v2 with a readable id → this machine's
     // app-data state; legacy v1 — or an unreadable marker, which leaves no id to key app data by — →

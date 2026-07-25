@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.Controls;
 using Hoard.Desktop.ViewModels;
@@ -18,9 +19,25 @@ public partial class LibraryView : UserControl
     {
         InitializeComponent();
         WireBoardEditSheet();
+        // The picker needs the visual tree's TopLevel, so it lives here; everything else on the Backup
+        // sheet binds straight to the view model in XAML.
+        RemoteSheetContent.ChooseCommand = new RelayCommand(() => _ = PickRemoteFolderAsync());
     }
 
     private LibraryViewModel? Vm => DataContext as LibraryViewModel;
+
+    private async Task PickRemoteFolderAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top is null) return;
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+        {
+            Title = "Choose a backup folder",
+            AllowMultiple = false,
+        });
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path && Vm is { } vm)
+            vm.SetRemoteFolder(path);
+    }
 
     private void WireBoardEditSheet()
     {

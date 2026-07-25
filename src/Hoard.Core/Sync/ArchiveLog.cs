@@ -44,6 +44,17 @@ public sealed class ArchiveLog
     public void Observe(string hlc) => _clock.Observe(hlc);
 
     /// <summary>
+    /// Forget the cached flushed-seq watermark so the next flush re-derives it from the segment files —
+    /// call after anything OUTSIDE this log writes the ops directory (a remote pull downloading this
+    /// device's lost chapters). A stale-low cached watermark would make the next flush re-append ops the
+    /// file already holds — duplicates baked into the append-only segment forever.
+    /// </summary>
+    public void InvalidateFlushWatermark()
+    {
+        lock (_gate) _lastFlushedSeq = -1;
+    }
+
+    /// <summary>
     /// Advance the per-device sequence past an op of OUR OWN device applied from the segment file —
     /// catch-up replaying our own history into a fresh/rebuilt index. Without this the next local op
     /// would re-mint an already-used seq and hit the unique (DeviceId, Seq) index.
