@@ -151,7 +151,7 @@ public sealed class ArchiveLog
     public void RecordAssetAdded(HoardDbContext db, Asset asset, IReadOnlyList<string>? tags = null) =>
         Append(db, ArchiveOpKinds.AssetAdded, sha256: asset.Sha256, payload: ArchiveOpJson.Serialize(
             new AssetAddedPayload(
-                asset.RelativePath, asset.MimeType, asset.Kind, asset.Width, asset.Height, asset.Bytes,
+                CanonicalPath(asset.RelativePath), asset.MimeType, asset.Kind, asset.Width, asset.Height, asset.Bytes,
                 asset.SourceConnector, asset.SourceId, asset.SourceUrl, asset.OriginalUrl,
                 asset.Title, asset.Description, asset.MetadataJson,
                 asset.CreatedAt, asset.ImportedAt, tags is { Count: > 0 } ? tags : null)));
@@ -162,11 +162,18 @@ public sealed class ArchiveLog
 
     public void RecordAssetRestored(HoardDbContext db, string oldSha256, Asset asset) =>
         Append(db, ArchiveOpKinds.AssetRestored, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
-            new AssetContentChangedPayload(asset.Sha256, asset.RelativePath, asset.Bytes)));
+            new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes)));
 
     public void RecordAssetRefetched(HoardDbContext db, string oldSha256, Asset asset) =>
         Append(db, ArchiveOpKinds.AssetRefetched, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
-            new AssetContentChangedPayload(asset.Sha256, asset.RelativePath, asset.Bytes)));
+            new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes)));
+
+    /// <summary>
+    /// Op payloads carry store paths in canonical forward-slash form: a Windows-written row (or one
+    /// synthesised from a pre-v2 database) may hold backslashes, and while the store's reader tolerates
+    /// either, the segments are shared archive files — they must not leak a device's separator.
+    /// </summary>
+    private static string CanonicalPath(string relativePath) => relativePath.Replace('\\', '/');
 
     public void RecordAssetRetagged(HoardDbContext db, string sha256, IReadOnlyList<string> fullTagSet) =>
         Append(db, ArchiveOpKinds.AssetRetagged, sha256: sha256,

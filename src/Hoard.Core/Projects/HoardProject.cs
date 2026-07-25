@@ -40,7 +40,10 @@ public sealed class HoardProject
     /// without the field reads as 1 (legacy). Upgraded by <c>Sync/ArchiveMigration</c>, never silently.</summary>
     public int FormatVersion { get; private set; } = 1;
 
-    public string StoreRoot => Path.Combine(Root, "store");
+    public string StoreRoot => StoreDir(Root);
+
+    /// <summary>The content-addressed store directory for a project at <paramref name="projectRoot"/>.</summary>
+    public static string StoreDir(string projectRoot) => Path.Combine(projectRoot, "store");
     public string DatabasePath => Path.Combine(Root, "hoard.db");
     public string LogsRoot => Path.Combine(Root, "logs");
     public string MarkerPath => Path.Combine(Root, MarkerFileName);
@@ -75,7 +78,7 @@ public sealed class HoardProject
         => IsProject(folder)
            || File.Exists(Path.Combine(folder, "hoard.db"))
            || File.Exists(Path.Combine(folder, "download-archive.db"))
-           || Directory.Exists(Path.Combine(folder, "store"));
+           || Directory.Exists(StoreDir(folder));
 
     // Windows reserves these device names regardless of extension.
     private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
@@ -128,11 +131,7 @@ public sealed class HoardProject
             FormatVersion = CurrentFormatVersion, // new projects are born in the immutable-archive format
         };
         project.EnsureSubdirectories();
-        project.WriteMarker(new ProjectMarker
-        {
-            Name = project.Name, Id = project.Id.ToString("N"),
-            SchemaVersion = CurrentMarkerVersion, Format = project.FormatVersion,
-        });
+        project.WriteMarker();
         return project;
     }
 
@@ -171,11 +170,7 @@ public sealed class HoardProject
             FormatVersion = existingFormat > 0 ? existingFormat : InferFormatFromFolder(full),
         };
         project.EnsureSubdirectories();
-        project.WriteMarker(new ProjectMarker
-        {
-            Name = project.Name, Id = project.Id.ToString("N"),
-            SchemaVersion = CurrentMarkerVersion, Format = project.FormatVersion,
-        });
+        project.WriteMarker();
         return project;
     }
 
@@ -209,16 +204,9 @@ public sealed class HoardProject
             // opens this archive from now on agrees on its identity. Best-effort — a read-only mount
             // still opens, with a session-scoped id until a writable open lands one.
             project.Id = Guid.NewGuid();
-            try
-            {
-                project.WriteMarker(new ProjectMarker
-                {
-                    Name = marker?.Name ?? project.Name,
-                    Id = project.Id.ToString("N"),
-                    SchemaVersion = marker?.SchemaVersion is > 0 and int v ? v : CurrentMarkerVersion,
-                    Format = project.FormatVersion, // preserved — a rewrite must never downgrade a v2 marker
-                });
-            }
+            // The rewrite serialises the project's own state, so the (inferred, never-downgraded)
+            // FormatVersion carries through — a v2 marker can't be persisted back to v1 here.
+            try { project.WriteMarker(); }
             catch { /* tolerated: the open itself must not fail */ }
         }
         project.EnsureSubdirectories();
@@ -262,22 +250,34 @@ public sealed class HoardProject
     public void StampFormatVersion(int version)
     {
         FormatVersion = version;
-        WriteMarker(new ProjectMarker
-        {
-            Name = Name, Id = Id.ToString("N"),
-            SchemaVersion = CurrentMarkerVersion, Format = version,
-        });
+        WriteMarker();
     }
 
     private void EnsureSubdirectories()
     {
         Directory.CreateDirectory(StoreRoot);
-        Directory.CreateDirectory(LogsRoot);
-        Directory.CreateDirectory(ThumbnailsRoot);
+        // A v2 archive folder holds static content only — derived caches (thumbnails, logs, the
+        // download archive) live in per-machine app data (P4); legacy v1 keeps its in-folder layout.
+        if (FormatVersion < CurrentFormatVersion)
+        {
+            Directory.CreateDirectory(LogsRoot);
+            Directory.CreateDirectory(ThumbnailsRoot);
+        }
     }
 
-    private void WriteMarker(ProjectMarker marker)
-        => File.WriteAllText(MarkerPath, JsonSerializer.Serialize(marker, MarkerJson));
+    /// <summary>
+    /// The ONE marker writer: serialises the project's current state, so every rewrite site agrees on
+    /// the field list (hand-copied per-site initialisers drifted). Anything the marker should carry must
+    /// be project state first.
+    /// </summary>
+    private void WriteMarker()
+        => File.WriteAllText(MarkerPath, JsonSerializer.Serialize(new ProjectMarker
+        {
+            Name = Name,
+            Id = Id.ToString("N"),
+            SchemaVersion = CurrentMarkerVersion,
+            Format = FormatVersion,
+        }, MarkerJson));
 
     /// <summary>Update the stored project name in a folder's marker (used when renaming), preserving the
     /// schema version. Safe if the marker is missing/partial.</summary>

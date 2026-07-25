@@ -48,6 +48,12 @@ public partial class ProjectEditSheet : UserControl
     public static readonly StyledProperty<ICommand?> RenameCommandProperty =
         AvaloniaProperty.Register<ProjectEditSheet, ICommand?>(nameof(RenameCommand));
 
+    public static readonly StyledProperty<string?> VerifyTextProperty =
+        AvaloniaProperty.Register<ProjectEditSheet, string?>(nameof(VerifyText));
+
+    public static readonly StyledProperty<ICommand?> VerifyCommandProperty =
+        AvaloniaProperty.Register<ProjectEditSheet, ICommand?>(nameof(VerifyCommand));
+
     public static readonly StyledProperty<ICommand?> ClearCacheCommandProperty =
         AvaloniaProperty.Register<ProjectEditSheet, ICommand?>(nameof(ClearCacheCommand));
 
@@ -68,6 +74,8 @@ public partial class ProjectEditSheet : UserControl
     public bool IsEditing { get => GetValue(IsEditingProperty); set => SetValue(IsEditingProperty, value); }
     public ICommand? OpenFolderCommand { get => GetValue(OpenFolderCommandProperty); set => SetValue(OpenFolderCommandProperty, value); }
     public ICommand? RenameCommand { get => GetValue(RenameCommandProperty); set => SetValue(RenameCommandProperty, value); }
+    public string? VerifyText { get => GetValue(VerifyTextProperty); set => SetValue(VerifyTextProperty, value); }
+    public ICommand? VerifyCommand { get => GetValue(VerifyCommandProperty); set => SetValue(VerifyCommandProperty, value); }
     public ICommand? ClearCacheCommand { get => GetValue(ClearCacheCommandProperty); set => SetValue(ClearCacheCommandProperty, value); }
     public ICommand? RemoveCommand { get => GetValue(RemoveCommandProperty); set => SetValue(RemoveCommandProperty, value); }
     public ICommand? DeleteCommand { get => GetValue(DeleteCommandProperty); set => SetValue(DeleteCommandProperty, value); }

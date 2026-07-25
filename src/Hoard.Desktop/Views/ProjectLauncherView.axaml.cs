@@ -66,6 +66,10 @@ public partial class ProjectLauncherView : UserControl
             if (Vm?.EditTarget is { } r) _ = OpenFolderAsync(r.Path);
         });
         EditSheet.RenameCommand = new RelayCommand<object?>(name => Vm?.RenameEditTarget(name as string));
+        EditSheet.VerifyCommand = new RelayCommand(() =>
+        {
+            if (Vm?.EditTarget is { } r) _ = Vm.VerifyProjectAsync(r);
+        });
         EditSheet.ClearCacheCommand = new RelayCommand(() =>
         {
             if (Vm?.EditTarget is { } r) _ = Vm.ClearCacheAsync(r);

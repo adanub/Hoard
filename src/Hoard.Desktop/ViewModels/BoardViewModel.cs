@@ -537,7 +537,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
         var options = new ConnectorOptions
         {
             CookiesFromBrowser = cookies.Spec,
-            DownloadArchivePath = _projects?.Current?.DownloadArchivePath,
+            DownloadArchivePath = _projects?.Current is { } project ? _projects.DownloadArchivePathFor(project) : null,
         };
         var processed = 0;
         var progress = new Progress<IngestProgress>(p =>

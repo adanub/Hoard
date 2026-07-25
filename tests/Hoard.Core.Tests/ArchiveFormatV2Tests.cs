@@ -38,8 +38,42 @@ public class ArchiveFormatV2Tests : IDisposable
         Assert.True(File.Exists(machine.Projects.AppPaths.IndexDbPath(project.Id)));
         Assert.True(File.Exists(ArchiveSegments.SegmentPath(project.OpsRoot, "device-1")));
 
-        var stats = await ProjectStatsReader.ReadAsync(folder, machine.Projects.AppPaths);
+        var stats = Assert.IsType<ProjectStats>(await ProjectStatsReader.ReadAsync(folder, machine.Projects.AppPaths));
         Assert.Equal(3, stats.Images); // the stats reader resolves the app-data index
+    }
+
+    [Fact]
+    public async Task Open_sweeps_derived_data_an_older_build_left_in_a_v2_folder()
+    {
+        var machine = Machine("appdata-1", "device-1");
+        var folder = Path.Combine(_dir, "Sweep Me");
+        var project = machine.Projects.Create(folder);
+        await machine.Factory.EnsureCreatedAsync();
+
+        // What a pre-P4 build kept in the archive folder: thumbnails, a skip-archive, import transcripts.
+        Directory.CreateDirectory(project.ThumbnailsRoot);
+        File.WriteAllText(Path.Combine(project.ThumbnailsRoot, "abc_256.png"), "png");
+        File.WriteAllText(project.DownloadArchivePath, "archive");
+        Directory.CreateDirectory(project.LogsRoot);
+        File.WriteAllText(Path.Combine(project.LogsRoot, "import-1.log"), "transcript");
+
+        // FRESH caches are spared: a sibling machine on a pre-P4 build could still be writing them
+        // (deleting its download archive mid-import would lose its progress).
+        await machine.Factory.EnsureCreatedAsync();
+        Assert.True(Directory.Exists(project.ThumbnailsRoot));
+        Assert.True(File.Exists(project.DownloadArchivePath));
+
+        // Once quiescent (nothing has touched them for long enough), the next open sweeps them.
+        var old = DateTime.UtcNow.AddHours(-2);
+        Directory.SetLastWriteTimeUtc(project.ThumbnailsRoot, old);
+        File.SetLastWriteTimeUtc(project.DownloadArchivePath, old);
+        await machine.Factory.EnsureCreatedAsync();
+
+        Assert.False(Directory.Exists(project.ThumbnailsRoot));            // regenerable — deleted
+        Assert.False(File.Exists(project.DownloadArchivePath));            // rebuilt per import — deleted
+        Assert.False(Directory.Exists(project.LogsRoot));                  // transcripts moved…
+        Assert.True(File.Exists(Path.Combine(                              // …to this machine's app data
+            machine.Projects.AppPaths.ProjectLogsRoot(project.Id), "import-1.log")));
     }
 
     [Fact]
@@ -152,7 +186,7 @@ public class ArchiveFormatV2Tests : IDisposable
 
         Assert.True(File.Exists(Path.Combine(folder, "hoard.db"))); // still the in-folder database
         Assert.Equal(1, HoardProject.Peek(folder).FormatVersion);
-        var stats = await ProjectStatsReader.ReadAsync(folder, machine.Projects.AppPaths);
+        var stats = Assert.IsType<ProjectStats>(await ProjectStatsReader.ReadAsync(folder, machine.Projects.AppPaths));
         Assert.Equal(2, stats.Images);
     }
 

@@ -56,12 +56,16 @@
                 <TextBlock Grid.Column="0" Classes="muted" Text="{Binding #Root.AddedText}"/>
                 <TextBlock Grid.Column="1" Classes="muted" Text="{Binding #Root.ModifiedText}"/>
             </Grid>
+            <TextBlock Classes="muted" Text="{Binding #Root.VerifyText}" TextWrapping="Wrap"
+                       IsVisible="{Binding #Root.VerifyText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
         </StackPanel>
 
         <Border Height="1" Background="{DynamicResource LineBrush}"/>
 
         <!-- Actions: one group that fills the row, wrapping one button at a time when space runs out. -->
         <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Verify files"
+                    Command="{Binding #Root.VerifyCommand}"/>
             <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Clear cache"
                     Command="{Binding #Root.ClearCacheCommand}"/>
             <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Remove from list"

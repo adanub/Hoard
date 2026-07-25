@@ -74,8 +74,9 @@ public sealed class ProjectDbContextFactory : IDbContextFactory<HoardDbContext>
             await ArchiveMigration.MigrateAsync(legacy, _projects.AppPaths, _archive, ct);
 
         // A v2 folder can hold a leftover legacy DB (crash between the migration's stamp and rename, or
-        // a stray from an old build) — rename it out of the way so nothing ever mistakes it for data.
-        if (_projects.Current is { } current) ArchiveMigration.TidyMigratedFolder(current);
+        // a stray from an old build) — rename it out of the way so nothing ever mistakes it for data —
+        // plus derived caches older builds kept in the folder, swept/relocated to app data (P4).
+        if (_projects.Current is { } current) ArchiveMigration.TidyMigratedFolder(current, _projects.AppPaths);
 
         await using var db = CreateDbContext();
         await SchemaInitializer.InitializeAsync(db, ct);
@@ -87,7 +88,7 @@ public sealed class ProjectDbContextFactory : IDbContextFactory<HoardDbContext>
             // same way (watermarks resume exactly where they stopped).
             try
             {
-                await ArchiveSync.SyncAtOpenAsync(db, project.OpsRoot, _archive, ct);
+                await ArchiveSync.SyncAtOpenAsync(db, project.OpsRoot, _archive, _logger, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

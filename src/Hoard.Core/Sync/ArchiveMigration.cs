@@ -68,11 +68,13 @@ public static class ArchiveMigration
     }
 
     /// <summary>
-    /// Best-effort repair for a v2 project whose legacy DB never got renamed — a crash between the
-    /// migration's stamp and rename, or an old (pre-format) build having created a stray empty
-    /// <c>hoard.db</c> in the folder. Never touches an existing backup and never throws.
+    /// Best-effort tidy of a v2 archive folder, run at every open. Repairs a legacy DB that never got
+    /// renamed (a crash between the migration's stamp and rename, or an old build's stray empty
+    /// <c>hoard.db</c>), and sweeps the derived data older builds kept in the folder (P4 relocated it
+    /// to per-machine app data): the thumbnail cache and skip-archive are regenerable and deleted;
+    /// import transcripts are moved to this machine's project logs. Never throws.
     /// </summary>
-    public static void TidyMigratedFolder(HoardProject project)
+    public static void TidyMigratedFolder(HoardProject project, AppPaths? appPaths = null)
     {
         if (project.FormatVersion < HoardProject.CurrentFormatVersion) return;
         try
@@ -81,5 +83,43 @@ public static class ArchiveMigration
                 File.Move(project.DatabasePath, project.DatabasePath + BackupSuffix);
         }
         catch { /* the stray file is inert either way — v2 never reads it */ }
+
+        // Only sweep QUIESCENT caches: on a shared (NAS) archive a sibling machine still on a pre-P4
+        // build keeps using the in-folder caches — deleting its download archive mid-import (POSIX
+        // happily unlinks an open file) would silently lose its progress. A recently-touched cache is
+        // presumed live and left for a later open; once every machine is on this build nothing writes
+        // in-folder caches again, so they age past the threshold and the sweep completes.
+        try
+        {
+            if (Directory.Exists(project.ThumbnailsRoot)
+                && IsQuiescent(Directory.GetLastWriteTimeUtc(project.ThumbnailsRoot)))
+                Directory.Delete(project.ThumbnailsRoot, recursive: true);
+        }
+        catch { /* another machine may be mid-write on a share; next open retries */ }
+        try
+        {
+            if (File.Exists(project.DownloadArchivePath)
+                && IsQuiescent(File.GetLastWriteTimeUtc(project.DownloadArchivePath)))
+                File.Delete(project.DownloadArchivePath);
+        }
+        catch { /* regenerated before every import anyway */ }
+
+        if (appPaths is null || !Directory.Exists(project.LogsRoot)) return;
+        try
+        {
+            var target = appPaths.ProjectLogsRoot(project.Id);
+            Directory.CreateDirectory(target);
+            foreach (var file in Directory.EnumerateFiles(project.LogsRoot))
+            {
+                var destination = Path.Combine(target, Path.GetFileName(file));
+                if (!File.Exists(destination)) File.Move(file, destination);
+            }
+            if (!Directory.EnumerateFileSystemEntries(project.LogsRoot).Any())
+                Directory.Delete(project.LogsRoot);
+        }
+        catch { /* transcripts are diagnostics; leftovers are inert and retried next open */ }
     }
+
+    /// <summary>Untouched for long enough that no machine is plausibly still writing to it.</summary>
+    private static bool IsQuiescent(DateTime lastWriteUtc) => DateTime.UtcNow - lastWriteUtc > TimeSpan.FromMinutes(30);
 }

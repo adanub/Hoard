@@ -102,6 +102,28 @@ public class ArchiveRoundTripTests : IDisposable
         await AssertRebuildMatchesAsync(factory, "rebuilt-live.db");
     }
 
+    [Fact]
+    public async Task Synthesised_ops_canonicalise_backslashed_store_paths()
+    {
+        // A Windows-written pre-v2 row can carry backslashes; the shared segment files must not.
+        var source = CreateDb("backslash.db");
+        await using (var db = source.CreateDbContext())
+        {
+            var asset = MakeAsset("sha-9", DateTimeOffset.UtcNow);
+            asset.RelativePath = @"sh\a9\sha-9.jpg";
+            db.Assets.Add(asset);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = source.CreateDbContext())
+        {
+            await ArchiveOpSynthesiser.SynthesiseAsync(db, deviceId: "migrator");
+            await db.SaveChangesAsync();
+            var op = await db.ArchiveOps.SingleAsync(o => o.Kind == ArchiveOpKinds.AssetAdded);
+            Assert.Contains("sh/a9/sha-9.jpg", op.PayloadJson);
+        }
+    }
+
     // ---- harness ---------------------------------------------------------------------------------
 
     private TestDbContextFactory CreateDb(string name)
@@ -117,8 +139,14 @@ public class ArchiveRoundTripTests : IDisposable
         List<ArchiveOp> ops;
         await using (var db = source.CreateDbContext())
             ops = await db.ArchiveOps.AsNoTracking().ToListAsync();
+
+        // Rebuild through the production path: write the ops out as per-device segments, then let the
+        // one apply semantics (ArchiveSync.CatchUpAsync) replay them into the fresh index.
+        var opsRoot = Path.Combine(_dir, targetName + "-ops");
+        foreach (var group in ops.GroupBy(o => o.DeviceId))
+            ArchiveSegments.Append(opsRoot, group.Key, group.OrderBy(o => o.Seq));
         await using (var db = target.CreateDbContext())
-            await ArchiveRebuilder.RebuildAsync(db, ops);
+            await ArchiveSync.CatchUpAsync(db, opsRoot, new ArchiveLog("rebuild-host"));
 
         var expected = await ArchiveTestProjection.ProjectAsync(source);
         var actual = await ArchiveTestProjection.ProjectAsync(target);

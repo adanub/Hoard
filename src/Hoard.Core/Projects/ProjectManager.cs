@@ -32,6 +32,33 @@ public sealed class ProjectManager
     /// <summary>The app-level paths (per-machine derived state lives under them — the v2 index DBs).</summary>
     public AppPaths AppPaths => _appPaths;
 
+    // ── Derived-data locations (P4) ──────────────────────────────────────────
+    // A v2 archive folder is static content only (marker + store + ops), so every derived cache lives
+    // in this machine's app-data project state; a legacy v1 project keeps the in-folder locations it
+    // was born with until the user migrates. Resolve through these, never HoardProject's raw paths.
+
+    /// <summary>Where this machine caches thumbnails for <paramref name="project"/>.</summary>
+    public string ThumbnailsRootFor(HoardProject project) =>
+        project.FormatVersion >= HoardProject.CurrentFormatVersion
+            ? _appPaths.ProjectThumbnailsRoot(project.Id)
+            : project.ThumbnailsRoot;
+
+    /// <summary>Where per-import transcripts for <paramref name="project"/> are written.</summary>
+    public string LogsRootFor(HoardProject project) =>
+        project.FormatVersion >= HoardProject.CurrentFormatVersion
+            ? _appPaths.ProjectLogsRoot(project.Id)
+            : project.LogsRoot;
+
+    /// <summary>The connector skip-archive for <paramref name="project"/> (rebuilt before every import).</summary>
+    public string DownloadArchivePathFor(HoardProject project) =>
+        project.FormatVersion >= HoardProject.CurrentFormatVersion
+            ? _appPaths.ProjectDownloadArchivePath(project.Id)
+            : project.DownloadArchivePath;
+
+    /// <summary>The thumbnail cache location for a project that may not be open (launcher cards).
+    /// Peeks the marker — involves file IO, so call it off the UI thread.</summary>
+    public string ThumbnailsDirFor(string projectFolder) => _appPaths.LocalThumbnailsDir(projectFolder);
+
     /// <summary>Recently opened project folders, most-recent first.</summary>
     public IReadOnlyList<string> RecentProjects => _recent;
 

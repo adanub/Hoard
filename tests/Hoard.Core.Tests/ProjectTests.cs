@@ -18,7 +18,9 @@ public class ProjectTests : IDisposable
         Assert.True(HoardProject.IsProject(folder));
         Assert.True(File.Exists(project.MarkerPath));
         Assert.True(Directory.Exists(project.StoreRoot));
-        Assert.True(Directory.Exists(project.LogsRoot));
+        // A v2 archive folder is static content only — derived caches live in per-machine app data (P4).
+        Assert.False(Directory.Exists(project.LogsRoot));
+        Assert.False(Directory.Exists(project.ThumbnailsRoot));
         Assert.Equal("My Archive", project.Name);          // derived from folder name
         Assert.Equal(Path.Combine(folder, "hoard.db"), project.DatabasePath);
     }

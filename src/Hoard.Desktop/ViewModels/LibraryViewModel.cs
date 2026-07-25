@@ -405,7 +405,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         var options = new ConnectorOptions
         {
             CookiesFromBrowser = cookies.Spec,
-            DownloadArchivePath = _projects.Current.DownloadArchivePath,
+            DownloadArchivePath = _projects.DownloadArchivePathFor(_projects.Current),
         };
 
         var transcript = new StringBuilder();
@@ -541,8 +541,9 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     {
         try
         {
-            var logsRoot = _projects.Current?.LogsRoot;
-            if (logsRoot is null) return null;
+            if (_projects.Current is not { } project) return null;
+            var logsRoot = _projects.LogsRootFor(project);
+            Directory.CreateDirectory(logsRoot); // the app-data location isn't pre-created like the v1 folder was
             var path = Path.Combine(logsRoot, $"import-{DateTime.Now:yyyyMMdd-HHmmss}.log");
             File.WriteAllText(path, transcript.ToString());
             return path;

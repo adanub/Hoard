@@ -110,7 +110,8 @@
                                    CacheText="{Binding EditTarget.CacheSizeText}"
                                    OnDiskText="{Binding EditTarget.OnDiskText}"
                                    AddedText="{Binding EditTarget.AddedText}"
-                                   ModifiedText="{Binding EditTarget.ModifiedText}"/>
+                                   ModifiedText="{Binding EditTarget.ModifiedText}"
+                                   VerifyText="{Binding EditTarget.VerifyText}"/>
         </ctrl:SheetHost>
 
         <!-- Shared confirm popup (the project delete), layered on top of the Edit popup. -->

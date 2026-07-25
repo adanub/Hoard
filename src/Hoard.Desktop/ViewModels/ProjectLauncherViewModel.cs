@@ -71,6 +71,9 @@ public partial class RecentProjectRef : ViewModelBase, IDisposable
     [ObservableProperty] private string _addedText = "";
     [ObservableProperty] private string _modifiedText = "";
 
+    /// <summary>Progress/result of the on-demand verify (empty until run — the row hides itself).</summary>
+    [ObservableProperty] private string _verifyText = "";
+
     /// <summary>Open this project (the card's Open button).</summary>
     public IRelayCommand OpenCommand { get; }
     /// <summary>Open this project's Edit popup (the card's Edit pencil).</summary>
@@ -96,14 +99,17 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
     private readonly ProjectDbContextFactory _dbFactory;
     private readonly ToastService _toasts;
     private readonly Action _onProjectOpened;
+    private readonly ImportStatus? _importStatus;
 
     public ProjectLauncherViewModel(
-        ProjectManager projects, ProjectDbContextFactory dbFactory, ToastService toasts, Action onProjectOpened)
+        ProjectManager projects, ProjectDbContextFactory dbFactory, ToastService toasts, Action onProjectOpened,
+        ImportStatus? importStatus = null)
     {
         _projects = projects;
         _dbFactory = dbFactory;
         _toasts = toasts;
         _onProjectOpened = onProjectOpened;
+        _importStatus = importStatus;
         PlusActions = new[] { new PlusAction("New project", OpenNewProjectSheetCommand) };
 
         Tiles.Add(NewProjectTile.Instance);
@@ -255,6 +261,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
         }
         catch (Exception ex)
         {
+            Serilog.Log.Warning(ex, "Couldn't create project in {Folder}", NewProjectLocation);
             SheetError = "Couldn't create project: " + ex.Message;
         }
     }
@@ -310,18 +317,18 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
     {
         try
         {
-            await OpenOffUiThreadAsync("Adopting project…", () =>
-            {
-                _projects.Adopt(folder);
-                return _dbFactory.EnsureCreatedAsync();
-            });
-            IsNewProjectSheetOpen = false;
-            _onProjectOpened();
+            // Rewrite the marker first, so the folder is a normal project again — then the regular open
+            // path runs, INCLUDING the one-time storage-upgrade offer a legacy (v1) adoptee used to
+            // skip until its next open.
+            await Task.Run(() => HoardProject.Adopt(folder));
         }
         catch (Exception ex)
         {
+            Serilog.Log.Warning(ex, "Couldn't adopt project at {Folder}", folder);
             SheetError = "Couldn't adopt project: " + ex.Message;
+            return;
         }
+        await OpenExistingAsync(folder);
     }
 
     /// <summary>Surface a message in the new-project sheet (e.g. a folder that isn't a project at all).</summary>
@@ -351,6 +358,9 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
         }
         catch (Exception ex)
         {
+            // The message reaches the user as a toast, but the toast is gone in seconds — the log is
+            // where a failed open must be diagnosable from (repo convention).
+            Serilog.Log.Warning(ex, "Couldn't open project at {Folder}", folder);
             return ex.Message;
         }
     }
@@ -401,6 +411,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
         r.ModifiedText = "Updated " + (exists ? info.LastWriteTime.ToString("d MMM yyyy") : "—");
         r.CountsText = "Counting…";
         r.BoardsText = "";
+        if (!_verifying.Contains(r)) r.VerifyText = ""; // stale result cleared — but never a live run's progress
 
         var onDisk = await Task.Run(() => DirectorySize(r.Path));
         r.OnDiskText = ByteFormat.Format(onDisk) + " on disk";
@@ -408,6 +419,19 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
         try
         {
             var stats = await ProjectStatsReader.ReadAsync(r.Path, _projects.AppPaths);
+            if (stats is null)
+            {
+                // No local database. For a v2 archive that's benign (this machine hasn't indexed it
+                // yet); for legacy v1 the folder's hoard.db is GONE — opening would silently create an
+                // empty one, so the wording must not promise indexing where there's nothing to replay.
+                var isV2 = await Task.Run(() =>
+                    HoardProject.Peek(r.Path).FormatVersion >= HoardProject.CurrentFormatVersion);
+                r.CountsText = isV2
+                    ? "Not opened on this computer yet — open to index it."
+                    : "The project's database is missing from its folder.";
+                r.BoardsText = "";
+                return;
+            }
             r.CountsText = $"{stats.Images} images · {stats.Gifs} GIFs · {stats.Videos} videos";
             r.BoardsText = stats.Boards == 1 ? "1 board" : $"{stats.Boards} boards";
         }
@@ -439,9 +463,11 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
     /// <summary>Clear a project's thumbnail cache (regenerated on demand, so this is safe).</summary>
     public async Task ClearCacheAsync(RecentProjectRef r)
     {
-        var dir = HoardProject.ThumbnailsDir(r.Path);
         var freed = await Task.Run(() =>
         {
+            // Resolving the dir peeks the marker file — IO that must not run on the UI thread (a cold
+            // NAS share can block for seconds).
+            var dir = _projects.ThumbnailsDirFor(r.Path);
             var size = DirectorySize(dir);
             ClearDirectory(dir);
             return size;
@@ -449,6 +475,46 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
         r.CacheSizeText = ByteFormat.Format(0) + " cache";
         r.ClearThumbs(); // the collage came from those thumbnails (the card itself stays on the grid)
         _toasts.Show($"Cleared {ByteFormat.Format(freed)} of thumbnails for “{r.Name}” (they rebuild as you browse).");
+    }
+
+    private readonly HashSet<RecentProjectRef> _verifying = new();
+
+    /// <summary>
+    /// On-demand deep check (P4): re-hash every live blob against its recorded SHA-256 and sweep the
+    /// store for unreferenced files. Report-only — nothing is deleted; the result lands on the card's
+    /// edit-sheet row (and stays valid if the sheet is closed mid-run).
+    /// </summary>
+    public async Task VerifyProjectAsync(RecentProjectRef r)
+    {
+        if (_importStatus is { IsImporting: true })
+        {
+            // In-flight blobs land in the store before their rows commit — a mid-import verify would
+            // report them as "unreferenced" (or a half-copied one as "altered"). Refuse honestly.
+            r.VerifyText = "An import is running — verify after it finishes.";
+            return;
+        }
+        if (!_verifying.Add(r)) return; // per-card: a long verify on one project must not deaden another's button
+        try
+        {
+            r.VerifyText = "Verifying…";
+            var progress = new Progress<(int Done, int Total)>(p => r.VerifyText = $"Verifying… {p.Done} of {p.Total}");
+            var report = await Task.Run(() => ProjectVerifier.VerifyAsync(r.Path, _projects.AppPaths, progress));
+            r.VerifyText = report switch
+            {
+                null => "Nothing to verify against — open the project on this computer first.",
+                { IsClean: true } => $"All good — {report.BlobsHashed} {(report.BlobsHashed == 1 ? "file" : "files")} verified.",
+                _ => $"{report.BlobsHashed} verified — {report.Missing} missing · {report.Altered} altered · {report.Orphans} unreferenced.",
+            };
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Verify failed for project at {Folder}", r.Path);
+            r.VerifyText = "Couldn't verify: " + ex.Message;
+        }
+        finally
+        {
+            _verifying.Remove(r);
+        }
     }
 
     /// <summary>Remove a project from the list without deleting any files.</summary>
@@ -484,7 +550,7 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
         {
             var (size, thumbs) = await Task.Run(() =>
             {
-                var dir = HoardProject.ThumbnailsDir(r.Path);
+                var dir = _projects.ThumbnailsDirFor(r.Path);
                 var sz = DirectorySize(dir);
                 var files = PickSpreadThumbnails(dir, 3);
                 return (sz, files.Select(LoadThumbnail).ToList());

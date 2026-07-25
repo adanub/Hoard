@@ -16,15 +16,13 @@ public sealed record ProjectStats(int Images, int Gifs, int Videos, int Boards);
 /// </summary>
 public static class ProjectStatsReader
 {
-    public static async Task<ProjectStats> ReadAsync(string projectFolder, AppPaths appPaths, CancellationToken ct = default)
+    /// <summary>Returns null when there's no local database to read — for a v2 project that's a machine
+    /// that hasn't opened (and therefore indexed) it yet, which is not the same thing as "0 images";
+    /// callers should say so rather than show zeros.</summary>
+    public static async Task<ProjectStats?> ReadAsync(string projectFolder, AppPaths appPaths, CancellationToken ct = default)
     {
-        // Format v2 keeps the metadata in this machine's derived index; legacy v1 in the folder itself.
-        // Peek (side-effect-free) rather than Open — this runs for every recents card.
-        var (format, id) = HoardProject.Peek(projectFolder);
-        var dbPath = format >= HoardProject.CurrentFormatVersion && id != default
-            ? appPaths.IndexDbPath(id)
-            : Path.Combine(projectFolder, "hoard.db");
-        if (!File.Exists(dbPath)) return new ProjectStats(0, 0, 0, 0);
+        var dbPath = appPaths.LocalDatabasePath(projectFolder);
+        if (!File.Exists(dbPath)) return null;
 
         await using var db = ProjectDbContextFactory.CreateForPath(dbPath);
 

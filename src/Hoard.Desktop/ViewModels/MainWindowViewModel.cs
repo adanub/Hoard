@@ -61,7 +61,7 @@ public partial class MainWindowViewModel : ViewModelBase
     // The launcher is always the root, so opening/switching a project resets the stack to a fresh launcher
     // (reloading the recents list). Opening a project pushes the library above it.
     private void ShowLauncher()
-        => Navigation.Reset(new ProjectLauncherViewModel(_projects, _dbFactory, ToastService, onProjectOpened: ShowLibrary));
+        => Navigation.Reset(new ProjectLauncherViewModel(_projects, _dbFactory, ToastService, onProjectOpened: ShowLibrary, ImportStatus));
 
     // Opening a project pushes the Library (board grid) above the launcher; opening a board pushes the Board
     // screen above the Library; the back chevrons pop back down the stack. The Library is part of the normal
@@ -71,7 +71,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         LibraryViewModel Create()
         {
-            _thumbnails = _projects.Current is { } p ? new ThumbnailCache(p.ThumbnailsRoot) : null;
+            _thumbnails = _projects.Current is { } p ? new ThumbnailCache(_projects.ThumbnailsRootFor(p)) : null;
             return new LibraryViewModel(
                 _ingest, _library, _curation, _projects, _thumbnails, ToastService, ImportStatus,
                 openBoard: ShowBoard, uiSettings: _uiSettings);

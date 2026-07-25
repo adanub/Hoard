@@ -30,6 +30,41 @@ public sealed class AppPaths
     /// <summary>The derived index database for one project — rebuildable, never the source of truth.</summary>
     public string IndexDbPath(Guid projectId) => Path.Combine(ProjectStateRoot(projectId), "index.db");
 
+    /// <summary>This machine's thumbnail cache for one project (P4: derived data lives beside the index,
+    /// not in the archive folder). Regenerable; removed with the rest of the project state.</summary>
+    public string ProjectThumbnailsRoot(Guid projectId) => Path.Combine(ProjectStateRoot(projectId), "thumbnails");
+
+    /// <summary>Per-import transcripts for one project — diagnostics, machine-local.</summary>
+    public string ProjectLogsRoot(Guid projectId) => Path.Combine(ProjectStateRoot(projectId), "logs");
+
+    /// <summary>The connector's "already fetched" skip-archive for one project. Rebuilt from the index
+    /// before every import, so it's pure derived state — never part of the archive folder.</summary>
+    public string ProjectDownloadArchivePath(Guid projectId) => Path.Combine(ProjectStateRoot(projectId), "download-archive.db");
+
+    // ── Resolution for a project that ISN'T open (launcher cards, verify) ────
+    // The one v1/v2 rule, via a side-effect-free marker peek: v2 with a readable id → this machine's
+    // app-data state; legacy v1 — or an unreadable marker, which leaves no id to key app data by — →
+    // the in-folder layout. ProjectManager's *For methods are the open-project equivalents (their
+    // HoardProject always carries a minted id, so they branch on format alone).
+
+    /// <summary>Where this machine's database for the project at <paramref name="projectFolder"/> lives.</summary>
+    public string LocalDatabasePath(string projectFolder)
+    {
+        var (format, id) = HoardProject.Peek(projectFolder);
+        return format >= HoardProject.CurrentFormatVersion && id != default
+            ? IndexDbPath(id)
+            : Path.Combine(projectFolder, "hoard.db");
+    }
+
+    /// <summary>This machine's thumbnail cache for the project at <paramref name="projectFolder"/>.</summary>
+    public string LocalThumbnailsDir(string projectFolder)
+    {
+        var (format, id) = HoardProject.Peek(projectFolder);
+        return format >= HoardProject.CurrentFormatVersion && id != default
+            ? ProjectThumbnailsRoot(id)
+            : HoardProject.ThumbnailsDir(projectFolder);
+    }
+
     /// <summary>Default per-user app data directory, e.g. %APPDATA%/Hoard.</summary>
     public static AppPaths Default()
         => new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Hoard"));

@@ -1,6 +1,7 @@
 using Hoard.Core.Domain;
 using Hoard.Core.Metadata;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Hoard.Core.Sync;
 
@@ -8,64 +9,121 @@ namespace Hoard.Core.Sync;
 /// P2 reconciliation (<c>SYNC-DESIGN.md</c>): bring this machine's database and the project's op
 /// segments into agreement. Our own segment is backfilled from the authoritative table
 /// (<see cref="ArchiveLog.FlushSegmentAsync"/>); FOREIGN segments — another device's ops on a shared
-/// project folder — are caught up here: everything beyond the per-device watermark (the highest seq of
-/// that device already in our <c>ArchiveOps</c> table) is applied to the live database and recorded in
-/// the table in the same save, so the watermark advances atomically with the effects. Foreign ops are
+/// project folder — are caught up here: every segment op we don't yet hold (a per-device set difference
+/// against our <c>ArchiveOps</c> table — hole-tolerant, see <see cref="CatchUpAsync"/>) is applied to
+/// the live database and recorded in the table in the same save, atomically. Foreign ops are
 /// applied in their device's seq order; the catalogue's ops are shaped to converge under any
 /// cross-device interleaving (adds/links upsert, removals are idempotent, LWW fields overwrite).
 /// </summary>
 public static class ArchiveSync
 {
     /// <summary>Open-time reconcile: seed the log, backfill our own segment, catch up foreign ones.</summary>
-    public static async Task SyncAtOpenAsync(HoardDbContext db, string opsRoot, ArchiveLog archive, CancellationToken ct = default)
+    public static async Task SyncAtOpenAsync(HoardDbContext db, string opsRoot, ArchiveLog archive, ILogger? logger = null, CancellationToken ct = default)
     {
         await archive.EnsureReadyAsync(db, ct).ConfigureAwait(false);
         await archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
-        await CatchUpAsync(db, opsRoot, archive, ct).ConfigureAwait(false);
+        await CatchUpAsync(db, opsRoot, archive, logger, ct).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Apply segments' new ops to the live database. This deliberately includes OUR OWN segment: in
-    /// steady state its watermark makes that a no-op, but on a fresh or deleted index (a new machine, or
-    /// per-machine state wiped) it's what replays this device's own history back in — the index is fully
-    /// derivable from the archive alone. All segments' pending ops are merged into ONE stream ordered by
-    /// (HLC, device, seq) before applying: a device only references entities it has already observed, so
-    /// HLC order is causally consistent — whereas applying segment-by-segment would silently drop an op
-    /// whose target lives in a not-yet-applied device's segment (and advance its watermark past it,
-    /// permanently). Returns how many ops were applied.
+    /// steady state it's a no-op (every own op is already in the table), but on a fresh or deleted index
+    /// (a new machine, or per-machine state wiped) it's what replays this device's own history back in —
+    /// the index is fully derivable from the archive alone. All segments' pending ops are merged into
+    /// ONE stream ordered by (HLC, device, seq) before applying: a device only references entities it
+    /// has already observed, so HLC order is causally consistent — whereas applying segment-by-segment
+    /// would silently drop an op whose target lives in a not-yet-applied device's segment. Returns how
+    /// many ops were applied.
     /// </summary>
-    public static async Task<int> CatchUpAsync(HoardDbContext db, string opsRoot, ArchiveLog archive, CancellationToken ct = default)
+    public static async Task<int> CatchUpAsync(
+        HoardDbContext db, string opsRoot, ArchiveLog archive, ILogger? logger = null, CancellationToken ct = default)
     {
         var pending = new List<ArchiveOp>();
         foreach (var (deviceId, path) in ArchiveSegments.ListSegments(opsRoot))
         {
-            var watermark = await db.ArchiveOps.Where(o => o.DeviceId == deviceId)
-                .MaxAsync(o => (long?)o.Seq, ct).ConfigureAwait(false) ?? 0;
-            pending.AddRange(ArchiveSegments.Read(path, deviceId).Where(o => o.Seq > watermark));
+            // Pending = set difference against the rows we hold, NOT a MAX(Seq) high-water mark: a
+            // batch rollback (crash/cancel mid-catch-up) can leave a committed seq BEYOND a hole — the
+            // in-memory counter deliberately mints past the whole segment history, so a local op can
+            // commit at seq 1000 while rolled-back segment ops 501–749 are absent — and a high-water
+            // mark would bury the hole forever. The difference re-pends exactly the missing rows.
+            var have = (await db.ArchiveOps.Where(o => o.DeviceId == deviceId)
+                .Select(o => o.Seq).ToListAsync(ct).ConfigureAwait(false)).ToHashSet();
+            pending.AddRange(ArchiveSegments.Read(path, deviceId).Where(o => !have.Contains(o.Seq)));
         }
         if (pending.Count == 0) return 0;
 
-        foreach (var op in pending
-                     .OrderBy(o => o.Hlc, StringComparer.Ordinal)
-                     .ThenBy(o => o.DeviceId, StringComparer.Ordinal)
-                     .ThenBy(o => o.Seq))
+        // Each op's row and its effect share a SaveChanges (later ops' lookups query the database, so
+        // they must see earlier ops' rows), but the saves are grouped into batched transactions: a
+        // per-op commit is an fsync each, which made a big archive's first index build IO-bound. An
+        // interrupted batch rolls back whole and the set difference above re-pends it next open; the
+        // clock/seq observations running ahead of a rolled-back batch is harmless (both only need to
+        // stay ahead). The tracker is cleared at every commit — without that, the tracked set grows
+        // with the whole archive and per-save DetectChanges turns a big first build O(N²).
+        const int batchSize = 500;
+        var applied = 0;
+        var tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            await ApplyAsync(db, op, ct).ConfigureAwait(false);
-            db.ArchiveOps.Add(op);      // the watermark advances with the effect…
-            archive.Observe(op.Hlc);    // …and our next local op orders after everything we've seen
-            if (op.DeviceId == archive.DeviceId) archive.ObserveOwnSeq(op.Seq); // no seq reuse after a rebuild
-            // One save per op: the op row and its effect commit atomically, later ops' lookups see
-            // earlier ops' rows, and an interrupted catch-up resumes exactly at the watermarks.
-            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            foreach (var op in pending
+                         .OrderBy(o => o.Hlc, StringComparer.Ordinal)
+                         .ThenBy(o => o.DeviceId, StringComparer.Ordinal)
+                         .ThenBy(o => o.Seq))
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    await ApplyAsync(db, op, ct).ConfigureAwait(false);
+                    db.ArchiveOps.Add(op); // the op row commits atomically with its effect
+                    await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // One bad op (garbled-but-parsable payload, an unexpected constraint) must not
+                    // wedge the catch-up or poison its batch — the same stance as unknown kinds: skip
+                    // it, permanently. SaveChanges rolls back to its own savepoint on failure, so the
+                    // transaction and every earlier op in it survive; drop this op's partial effects
+                    // and record the op row alone so the skip is remembered instead of retried forever.
+                    db.ChangeTracker.Clear();
+                    logger?.LogWarning(ex, "Skipped archive op {Device}#{Seq} ({Kind}): it could not be applied.",
+                        op.DeviceId, op.Seq, op.Kind);
+                    try
+                    {
+                        db.ArchiveOps.Add(op);
+                        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                    }
+                    catch (Exception recordEx) when (recordEx is not OperationCanceledException)
+                    {
+                        db.ChangeTracker.Clear();
+                        logger?.LogWarning(recordEx, "Couldn't record skipped op {Device}#{Seq}; it will re-pend next open.",
+                            op.DeviceId, op.Seq);
+                        continue;
+                    }
+                }
+                archive.Observe(op.Hlc);    // our next local op orders after everything we've seen…
+                if (op.DeviceId == archive.DeviceId) archive.ObserveOwnSeq(op.Seq); // …and never re-mints a replayed seq
+                if (++applied % batchSize == 0)
+                {
+                    await tx.CommitAsync(ct).ConfigureAwait(false);
+                    await tx.DisposeAsync().ConfigureAwait(false);
+                    db.ChangeTracker.Clear();
+                    tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+                }
+            }
+            await tx.CommitAsync(ct).ConfigureAwait(false);
+            db.ChangeTracker.Clear();
+        }
+        finally
+        {
+            await tx.DisposeAsync().ConfigureAwait(false);
         }
         return pending.Count;
     }
 
     /// <summary>
-    /// Apply one foreign op against the live database — the populated-DB counterpart of
-    /// <see cref="ArchiveRebuilder"/>'s empty-DB apply. Idempotent per op; an op whose target is absent
-    /// (already removed locally) or whose kind is unknown (a newer device) is skipped, never an error.
+    /// Apply one op against the index database — the ONE apply semantics, shared by foreign catch-up
+    /// and full rebuilds (a fresh index replays every segment through here). Idempotent per op; an op
+    /// whose target is absent (already removed locally) or whose kind is unknown (a newer device) is
+    /// skipped, never an error.
     /// </summary>
     private static async Task ApplyAsync(HoardDbContext db, ArchiveOp op, CancellationToken ct)
     {
