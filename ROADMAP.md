@@ -34,8 +34,57 @@ clean local v2 folder). **Segment rotation landed next session (2026-07-26, unco
 stream cuts into chapters at 4 MB — `<deviceId>.jsonl` is chapter zero, continuations
 `<deviceId>.00001.jsonl`… — the writer appends only to the highest chapter and **nothing is ever
 renamed**, so a closed chapter is an immutable object (the S3/B2-shaped prerequisite); readers/flush
-span the chain (`ArchiveRotationTests`, 5 tests). **Remaining in P4:** compaction only (deferred —
-single-user, revisit when log size hurts). **Next:** **P5** (S3/B2 remotes, mobile).
+span the chain (`ArchiveRotationTests`, 5 tests); committed `65ca5da`/`3318b15` (push pending — no git
+credentials in the session). **Remaining in P4:** compaction only (deferred — single-user, revisit when
+log size hurts).
+
+**P5 started — R0+R1 built (UNCOMMITTED, no production caller yet):** the remote plan is now specced as
+increments **R0–R4 in `SYNC-DESIGN.md`** (read that first). Landed here: **R0** `Sync/IRemoteStore` (a
+dumb object store: list/download/upload-atomic/text — nothing archive-aware) with
+`FileSystemRemoteStore` (any mounted path: backup drive, rclone/Syncthing folder — the test harness AND
+a real target), and **R1** `Sync/ArchiveReplicator` — push/pull as pure file-set reconciliation: **blobs
+before segments both ways** (op-implies-blob holds on the receiving side mid-crash), **chapters converge
+by length** (append-only ⇒ longer wins, equal ⇒ identical; sealed chapters never re-upload), the remote
+marker must carry the **same ProjectId** (empty remote seeded on push, refused on pull, unreadable
+marker refused), pull **never deletes** local state (removals travel as ops via catch-up), and only the
+archive proper moves (marker + store/ + ops/ — never `.bak`s/strays). `ArchiveReplicatorTests` (6):
+seed-empty-remote, delta-only re-push, fresh-machine clone pull → working index via catch-up,
+two-machine convergence through the remote, different-archive refusal, lagging-remote pull moves
+nothing. **R2 (UI) is built too:** the Library's ＋ menu gains **Backup** — a sheet (`Controls/
+RemoteSheet`, `SheetHost`-hosted) that configures a per-project **folder remote** (stored per-machine at
+`appData/projects/<id>/remote.json` via `Sync/RemoteConfig`; guarded against picking a folder inside
+the project) and runs **Sync now** → `Sync/RemoteSync.SyncAsync` = pull → **apply to this machine's
+index immediately** (the same catch-up an open runs, so the grid refreshes without re-opening) → push;
+live progress + result on the sheet's status line, gated while an import runs (and vice-versa aware),
+cancelled by navigation via the Library's dispose token. `LibraryViewModel` gets `IDbContextFactory` +
+`ArchiveLog` (DI-threaded through `MainWindowViewModel`). Tests: `RemoteSyncTests` (config round-trip +
+garbled-reads-as-none; seed-empty-remote → second machine joins by marker clone and its index gains the
+asset with no re-open → changes flow back → all-quiet convergence). **139 Core / 84 Desktop** green.
+**Needs runtime verification** (sheet, picker, real backup folder), then commit. **Also fixed (user-hit,
+same session): board Sync now repairs missing files** — `GetKnownItemsAsync` excludes a held LIVE pin
+whose blob is absent from the store (per-pin `File.Exists`), so the crawl re-downloads it and the
+content-addressed upsert restores the row's blob in place; previously the DB-only skip-archive
+pre-skipped lost pins and a sync "completed" without repairing anything (tombstones still always skip —
+that's the blacklist). Covered by `BoardMergeTests.Sync_re_downloads_a_held_pin_whose_blob_went_missing`.
+
+**Code-review pass on the R2 batch (10 confirmed findings, all fixed):** the import/remote-sync interlock
+is now **two-way** — `ImportStatus.IsRemoteSyncing` is published app-wide, so imports and board Syncs
+refuse while a background backup sync runs (the replicator copies the very files they write); **pull
+never replaces this device's own existing chapters** (the local writer is authoritative; a longer remote
+copy can be a stale pushed torn-tail — it still bootstraps a wiped folder, and `ArchiveLog.
+InvalidateFlushWatermark` re-derives the flush watermark after any pull so duplicates can't bake into
+the append-only file); push **re-stats each chapter just before upload** (`IRemoteStore.GetLengthAsync`)
+instead of trusting a start-of-run snapshot, so concurrent pushers can't regress a chapter; remote
+**staging temps (`.tmp-`) are invisible to listings** (never pulled as junk, never abort a racing sync);
+the replicator **tolerates files vanishing mid-run** (a delete during sync skips that file instead of
+aborting the whole push); `ContentAddressedStore.PutAsync` finally honours the **temp+rename blob rule**
+AND **length-verifies a resident blob** (a crash-torn short file at a content address is repaired, not
+trusted — and the skip-archive's intact check now compares length from ONE store walk, not a stat per
+pin over SMB); the backup-folder guard no longer rejects a sibling named `<project>-backup`; the sync
+token is captured before the awaits (no `ObjectDisposedException` on back-out); a non-object remote
+marker gets the honest refusal. Tests: **143 Core / 84 Desktop** green. **Next: R3** (S3/B2
+`IRemoteStore` over SigV4 HTTP), **R4** (fetch-on-demand replicas — pull segments, defer blobs, extend
+the file-missing tile's re-download with a fetch-from-remote source).
 
 **Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
 detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch

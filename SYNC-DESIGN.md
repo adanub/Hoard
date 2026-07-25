@@ -229,8 +229,33 @@ ignore it).
   higher chapter exists — the S3-shaped prerequisite). **Remaining: compaction** (a compacted snapshot
   segment, safe once every known device has applied the retired chapters — single-user, so deferred
   until log size hurts).
-- **P5 — remotes (Phase 3 proper).** The same format over S3/B2 (segments + blobs are already
-  object-storage-shaped); replicated local stores with fetch-on-demand; the mobile head reuses all of it.
+- **P5 — remotes (Phase 3 proper).** The same format over object storage; replicated local stores with
+  fetch-on-demand; the mobile head reuses all of it. The archive is already remote-shaped — immutable
+  sha-named blobs, per-device append-only chapters that are sealed once a higher one exists — so a
+  remote is just *another copy of the archive files*, and sync is file-set reconciliation, not a
+  protocol. Sub-increments:
+  - **R0 — the remote abstraction.** ✅ Done: `Sync/IRemoteStore`: list (path+length), download, upload
+    (atomic replace), read/write text — nothing archive-specific. First implementation is a
+    **filesystem remote** (any mounted path: a backup drive, an rclone/Syncthing mount), which is both
+    the test harness for the engine and a real feature (push a replica to a dumb folder).
+  - **R1 — the replication engine.** ✅ Done: `Sync/ArchiveReplicator`: push/pull between the local archive
+    folder and an `IRemoteStore`, replicating exactly the archive proper (marker + `store/` + `ops/`,
+    never `.bak`s or strays). Rules: **blobs before segments** on push (op-implies-blob must hold
+    remotely), segments converge by **length-max** (append-only files: whichever copy is longer wins —
+    closed chapters are equal-or-absent, only the active chapter grows), the remote marker's ProjectId
+    is verified before any transfer (refuse to mix two archives), and pull never deletes local state
+    (deletion propagates through ops at catch-up, not through file sync). After a pull, the normal
+    open-time catch-up applies whatever arrived.
+  - **R2 — UI.** ✅ Done: the Library ＋ menu's **Backup** sheet — per-project remote configuration
+    (`Sync/RemoteConfig`, stored per-machine in app-data project state — a remote is a machine's
+    relationship to the archive, not archive state), and **Sync now** → `Sync/RemoteSync.SyncAsync`
+    (pull → apply to the index via the normal catch-up, so the UI refreshes immediately → push), with
+    live progress, import-gating, and an inside-the-project folder guard.
+  - **R3 — S3/B2.** An S3-compatible `IRemoteStore` (SigV4 over HttpClient, no SDK dependency; B2/R2/
+    MinIO all speak it), credentials in app-data (OS keychain later).
+  - **R4 — fetch-on-demand replicas.** A pull that takes segments but defers blobs; the existing
+    per-tile "file missing → re-download" path grows a "fetch from remote" source, so a phone-sized
+    replica holds the index + thumbnails and streams originals on view.
 
 ## Risks & accepted trade-offs
 
