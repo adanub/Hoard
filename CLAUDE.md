@@ -80,7 +80,29 @@ Concepts that span multiple files:
   `ThumbnailsRootFor`/`LogsRootFor`/`DownloadArchivePathFor` (format-aware: a legacy v1 project keeps its
   in-folder layout until migrated), never `HoardProject`'s raw paths; the open-time tidy
   (`ArchiveMigration.TidyMigratedFolder`) sweeps/relocates what older builds left in a v2 folder. **Never
-  mutate or delete ops** — the log is append-only; blob writes stay temp-file + rename.
+  mutate or delete ops** — the log is append-only; blob writes stay temp-file + rename (`PutAsync` stages
+  `.tmp-` + atomic rename, and **length-verifies a resident blob** — a crash-torn short file at a content
+  address is replaced, never trusted).
+- **Backup/replication (SYNC-DESIGN P5 R0–R2): the archive replicates to a remote by file-set
+  reconciliation — no protocol.** The Library ＋ menu's **Backup** sheet (`Controls/RemoteSheet` +
+  the remote region in `LibraryViewModel`) configures ONE per-machine remote per project
+  (`Sync/RemoteConfig` at `appData/projects/<id>/remote.json`) and runs `Sync/RemoteSync.SyncAsync` =
+  pull → apply-to-index (the same catch-up an open runs, so the grid refreshes immediately) → push.
+  `Sync/ArchiveReplicator` moves only the archive proper (marker + `store/` + `ops/`) against a dumb
+  `Sync/IRemoteStore` (today `FileSystemRemoteStore` over any mounted path; S3/B2 is R3). The
+  load-bearing rules: **blobs before segments both ways** (op-implies-blob must hold on the receiving
+  side mid-crash); **chapters converge by length** with a just-before-upload re-stat
+  (`GetLengthAsync` — a start-of-run snapshot lets concurrent pushers regress a chapter); **a pull never
+  replaces this device's own EXISTING chapters** (the local writer is authoritative — a longer remote
+  copy can be a stale pushed torn-tail; it still bootstraps a wiped folder) and `ArchiveLog.
+  InvalidateFlushWatermark()` runs after any pull (a stale cached watermark would bake duplicate ops into
+  the append-only segment); the remote marker must carry the **same ProjectId** before a byte moves
+  (empty remote seeded on push, refused on pull); `.tmp-` staging names are **invisible to listings**;
+  pull never deletes local state (removals travel as ops). **The import interlock is two-way via
+  `ImportStatus.IsRemoteSyncing`** — imports/board-syncs refuse while a backup sync runs and vice versa
+  (the replicator copies the very files an import writes); keep any NEW archive-writing entry point
+  gated on both flags. Two folder copies with the same marker id are **replicas of one archive** (they
+  share this machine's index); syncing them against each other is the intended workflow, not a conflict.
 - **Schema versioning is additive, via `PRAGMA user_version` — not EF migrations.** `EnsureCreated` builds a
   fresh project DB from the full current model; an existing DB (maybe from an older app version) is patched by
   `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.
@@ -179,7 +201,8 @@ Concepts that span multiple files:
   notification.
   **The bar's search state always mirrors the current page's query** (arriving on a page with a query opens the
   field; ✕/Esc-in-field clears the page's filter as it collapses) — a collapsed bar can never hide an active
-  filter. **＋ menu per page:** Projects → New project; Library → Import board; Board → Sync (hidden until the
+  filter. **＋ menu per page:** Projects → New project; Library → Import board + Backup (the remote-sync
+  sheet — see the Backup/replication bullet); Board → Sync (hidden until the
   async source load proves ≥1 source, disabled while importing) + New folder; the virtual "All images"/results
   board contributes nothing, which hides ＋ entirely. **The whole bar hides while any sheet is open or the
   lightbox is up:** `SheetHost` raises a bubbling `IsOpenChangedEvent` that `MainWindow` folds into

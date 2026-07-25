@@ -13,7 +13,7 @@ derives a rebuildable SQLite index under app data (schema **v8**: uids + `Archiv
 migrate behind a launcher confirm; two machines converge through the segments — **NAS multi-machine
 works**. User-verified on real projects: Windows-migrated NAS project opens on the Mac.
 
-**This session — SYNC-DESIGN P4, UNCOMMITTED (needs runtime verification):** everything but compaction.
+**SYNC-DESIGN P4 — committed `1840a50`, user-verified on the real project:** everything but compaction.
 (1) `ArchiveRebuilder` **deleted** — rebuilds run through `ArchiveSync.CatchUpAsync`, the ONE apply
 semantics (the round-trip tests now write real segments and catch up into a fresh index — the production
 path). (2) The catch-up loop commits in **batched transactions** (~500 ops per fsync; per-op SaveChanges
@@ -34,11 +34,10 @@ clean local v2 folder). **Segment rotation landed next session (2026-07-26, unco
 stream cuts into chapters at 4 MB — `<deviceId>.jsonl` is chapter zero, continuations
 `<deviceId>.00001.jsonl`… — the writer appends only to the highest chapter and **nothing is ever
 renamed**, so a closed chapter is an immutable object (the S3/B2-shaped prerequisite); readers/flush
-span the chain (`ArchiveRotationTests`, 5 tests); committed `65ca5da`/`3318b15` (push pending — no git
-credentials in the session). **Remaining in P4:** compaction only (deferred — single-user, revisit when
-log size hurts).
+span the chain (`ArchiveRotationTests`, 5 tests); committed `65ca5da`/`3318b15`, pushed. **Remaining in
+P4:** compaction only (deferred — single-user, revisit when log size hurts).
 
-**P5 started — R0+R1 built (UNCOMMITTED, no production caller yet):** the remote plan is now specced as
+**P5 R0–R2 — committed `a60d3b5` (+`2708632` fix), user-verified:** the remote plan is specced as
 increments **R0–R4 in `SYNC-DESIGN.md`** (read that first). Landed here: **R0** `Sync/IRemoteStore` (a
 dumb object store: list/download/upload-atomic/text — nothing archive-aware) with
 `FileSystemRemoteStore` (any mounted path: backup drive, rclone/Syncthing folder — the test harness AND
@@ -60,7 +59,7 @@ cancelled by navigation via the Library's dispose token. `LibraryViewModel` gets
 `ArchiveLog` (DI-threaded through `MainWindowViewModel`). Tests: `RemoteSyncTests` (config round-trip +
 garbled-reads-as-none; seed-empty-remote → second machine joins by marker clone and its index gains the
 asset with no re-open → changes flow back → all-quiet convergence). **139 Core / 84 Desktop** green.
-**Needs runtime verification** (sheet, picker, real backup folder), then commit. **Also fixed (user-hit,
+**User-verified in the running app** (sheet, picker, real backup folder). **Also fixed (user-hit,
 same session): board Sync now repairs missing files** — `GetKnownItemsAsync` excludes a held LIVE pin
 whose blob is absent from the store (per-pin `File.Exists`), so the crawl re-downloads it and the
 content-addressed upsert restores the row's blob in place; previously the DB-only skip-archive

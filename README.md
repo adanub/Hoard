@@ -61,6 +61,13 @@ the archive, which is why the same project folder can sit on a NAS or synced dri
 several computers. Projects created by older versions still hold a `hoard.db` inside the folder;
 opening one offers a one-time storage upgrade (a `hoard.db.pre-v2.bak` backup stays in the folder).
 
+**Backing up / syncing between computers:** inside a project, ＋ → **Backup** points the archive at
+another folder (a backup drive, a NAS share, a synced folder) and **Sync now** reconciles the two —
+it first takes changes made elsewhere, then sends yours, moving only what's missing. Two folders
+carrying the same project marker are copies of the *same* archive, so this is also how a local working
+copy and a NAS copy stay in step (and how a machine repairs images whose files went missing — they're
+fetched from the backup rather than re-downloaded).
+
 On launch you get a **project launcher**: pick a recent project, **Open existing folder…**, or create
 a **New project** (just type a name + choose a parent location — Hoard creates the folder for you).
 Select a recent project to **Remove from list** (forget it, files untouched) or **Delete from disk…**
