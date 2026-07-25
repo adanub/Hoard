@@ -116,7 +116,7 @@ public sealed class IngestService
         // Hand the connector what to pre-skip, rebuilt from the DB so its archive never drifts. For a targeted
         // import this is what's already in THAT board (+ blacklisted tombstones) — NOT pins merely held in some
         // other board — so a re-import/sync re-links pins the target is missing instead of skipping them.
-        var effectiveOptions = options with { KnownItems = await GetKnownItemsAsync(db, targetCollectionId, ct).ConfigureAwait(false) };
+        var effectiveOptions = options with { KnownItems = await GetKnownItemsAsync(db, _store, targetCollectionId, ct).ConfigureAwait(false) };
 
         // Each item is ingested the moment the connector finishes downloading it, and the freshly
         // imported asset is reported so the UI can show it immediately (not after the whole batch).
@@ -377,25 +377,49 @@ public sealed class IngestService
     ///   • every <b>tombstoned (blacklisted)</b> pin, globally (so deleted content is never re-fetched).
     /// It does <b>not</b> skip a live pin just because it sits in some <i>other</i> board — that pin must still be
     /// linked into the target, so it's left for download → dedup-by-hash → link (this is what lets a re-import or
-    /// Sync repopulate a board that's missing items it holds elsewhere). The blacklist correctness is also
+    /// Sync repopulate a board that's missing items it holds elsewhere) — and it does <b>not</b> skip a held live
+    /// pin whose <b>blob is missing from the store</b> (checked per pin against the disk), so a Sync repairs
+    /// lost/never-replicated files by re-downloading them. The blacklist correctness is also
     /// belt-and-braces: <see cref="ImportAsync"/> re-checks <c>DeletedAt</c> after download. A null target keeps
     /// the legacy whole-project behaviour for the auto-folder path. Flat join (not a SelectMany over the nav,
     /// which SQLite can't APPLY); over-claiming a pin under a sibling source board is safe (only skips content we
     /// already hold for that board).
     /// </summary>
     private static async Task<IReadOnlyCollection<KnownSourceItem>> GetKnownItemsAsync(
-        HoardDbContext db, int? targetCollectionId, CancellationToken ct)
+        HoardDbContext db, IMediaStore store, int? targetCollectionId, CancellationToken ct)
     {
+        // A LIVE pin whose blob is gone from the store — or truncated by a crash-torn write from an old
+        // build — must NOT pre-skip: leaving it out of the skip-archive is what makes a Sync re-download
+        // it (the "items lost" half of the sync promise; this was the gap where a sync "completed"
+        // without repairing a single missing file). Tombstones always skip: that's the blacklist, and
+        // their blobs are freed by design. Presence + length come from ONE store walk, not a stat per
+        // pin — the store may live on a network share where per-file round-trips cost milliseconds each.
+        Dictionary<string, long>? blobLengths = null;
+        bool HasIntactBlob(string relativePath, long bytes)
+        {
+            blobLengths ??= Directory.Exists(store.Root)
+                ? Directory.EnumerateFiles(store.Root, "*", SearchOption.AllDirectories)
+                    .ToDictionary(Path.GetFullPath, f => new FileInfo(f).Length, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            return blobLengths.TryGetValue(Path.GetFullPath(store.GetAbsolutePath(relativePath)), out var length)
+                   && length == bytes;
+        }
+
         var rows = await (
             from ci in db.CollectionItems
             where ci.Asset.SourceId != null
                   && (targetCollectionId == null || ci.CollectionId == targetCollectionId || ci.Asset.DeletedAt != null)
             join s in db.CollectionSources on ci.CollectionId equals s.CollectionId
             where s.SourceBoardId != null
-            select new { Board = s.SourceBoardId!, Source = ci.Asset.SourceId! })
+            select new { Board = s.SourceBoardId!, Source = ci.Asset.SourceId!, ci.Asset.RelativePath, ci.Asset.Bytes, Deleted = ci.Asset.DeletedAt != null })
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
-        var known = new HashSet<KnownSourceItem>(rows.Select(r => new KnownSourceItem(r.Board, r.Source)));
+        var known = new HashSet<KnownSourceItem>();
+        foreach (var row in rows)
+        {
+            if (!row.Deleted && !HasIntactBlob(row.RelativePath, row.Bytes)) continue;
+            known.Add(new KnownSourceItem(row.Board, row.Source));
+        }
 
         // Section pins sit in child folders whose CollectionId carries no CollectionSource of its own (sources
         // live on the root board), so the join above misses them and a re-sync would re-download every sectioned
@@ -415,11 +439,15 @@ public sealed class IngestService
                 {
                     var sectionPins = await db.CollectionItems
                         .Where(ci => descendants.Contains(ci.CollectionId) && ci.Asset.SourceId != null)
-                        .Select(ci => ci.Asset.SourceId!)
+                        .Select(ci => new { Source = ci.Asset.SourceId!, ci.Asset.RelativePath, ci.Asset.Bytes, Deleted = ci.Asset.DeletedAt != null })
                         .Distinct().ToListAsync(ct).ConfigureAwait(false);
-                    foreach (var board in rootBoards)
-                        foreach (var pin in sectionPins)
-                            known.Add(new KnownSourceItem(board, pin));
+                    foreach (var pin in sectionPins)
+                    {
+                        // Same lost-blob rule as above: a foldered pin missing its file re-downloads.
+                        if (!pin.Deleted && !HasIntactBlob(pin.RelativePath, pin.Bytes)) continue;
+                        foreach (var board in rootBoards)
+                            known.Add(new KnownSourceItem(board, pin.Source));
+                    }
                 }
             }
         }

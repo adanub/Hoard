@@ -285,6 +285,56 @@ public class BoardMergeTests : IDisposable
     }
 
     [Fact]
+    public async Task Sync_re_downloads_a_held_pin_whose_blob_went_missing()
+    {
+        var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });
+        var boardId = await ingest.CreateBoardAsync("My board", "https://pinterest.com/jane/animals/");
+        await ingest.ImportAsync("https://pinterest.com/jane/animals/", new ConnectorOptions(), null, boardId);
+
+        // The blob vanishes outside the app (drive damage, or a replica that never received the file).
+        string relativePath;
+        await using (var db = _dbFactory.CreateDbContext())
+            relativePath = (await db.Assets.SingleAsync()).RelativePath;
+        File.Delete(_store.GetAbsolutePath(relativePath));
+
+        var spy = Connector("board-A", "Animals", "a1");
+        await new IngestService(_dbFactory, _store, new[] { spy })
+            .ImportAsync("https://pinterest.com/jane/animals/", new ConnectorOptions(), null, boardId);
+
+        // The lost pin was NOT pre-skipped, so the sync re-delivered it and the blob is back on disk.
+        Assert.DoesNotContain(spy.LastOptions!.KnownItems!, k => k.SourceId == "a1");
+        Assert.True(File.Exists(_store.GetAbsolutePath(relativePath)));
+        await using (var db2 = _dbFactory.CreateDbContext())
+            Assert.Equal(1, await db2.Assets.CountAsync()); // repaired in place, not duplicated
+    }
+
+    [Fact]
+    public async Task Sync_re_downloads_a_held_pin_whose_blob_is_truncated()
+    {
+        var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });
+        var boardId = await ingest.CreateBoardAsync("My board", "https://pinterest.com/jane/animals/");
+        await ingest.ImportAsync("https://pinterest.com/jane/animals/", new ConnectorOptions(), null, boardId);
+
+        // A crash-torn write from an old build left a short blob at the content address — existence
+        // alone would trust it; the recorded byte length says otherwise.
+        string relativePath;
+        await using (var db = _dbFactory.CreateDbContext())
+            relativePath = (await db.Assets.SingleAsync()).RelativePath;
+        File.WriteAllText(_store.GetAbsolutePath(relativePath), "x");
+
+        var spy = Connector("board-A", "Animals", "a1");
+        await new IngestService(_dbFactory, _store, new[] { spy })
+            .ImportAsync("https://pinterest.com/jane/animals/", new ConnectorOptions(), null, boardId);
+
+        Assert.DoesNotContain(spy.LastOptions!.KnownItems!, k => k.SourceId == "a1");
+        await using (var db2 = _dbFactory.CreateDbContext())
+        {
+            var asset = await db2.Assets.SingleAsync();
+            Assert.Equal(new FileInfo(_store.GetAbsolutePath(asset.RelativePath)).Length, asset.Bytes); // intact again
+        }
+    }
+
+    [Fact]
     public async Task Reimport_fills_in_a_sources_missing_url_so_it_becomes_syncable()
     {
         var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });

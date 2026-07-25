@@ -28,15 +28,32 @@ public sealed class ContentAddressedStore : IMediaStore
         var relativePath = BuildRelativePath(sha, ext);
         var absolutePath = Path.Combine(_root, relativePath);
 
-        if (File.Exists(absolutePath))
+        // Dedupe hit — but only when the resident file is the SIZE the content demands: a torn write
+        // from a crash (or an old build's non-atomic copy) can leave a short file at this content
+        // address, and trusting bare existence would preserve the corruption forever. A wrong-length
+        // resident is replaced below with the intact bytes (same sha ⇒ same content by construction).
+        var incomingLength = new FileInfo(sourcePath).Length;
+        if (File.Exists(absolutePath) && new FileInfo(absolutePath).Length == incomingLength)
         {
-            return new StoredBlob(sha, relativePath, new FileInfo(absolutePath).Length, AlreadyExisted: true);
+            return new StoredBlob(sha, relativePath, incomingLength, AlreadyExisted: true);
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-        // Copy (not move): the caller owns the temp download dir and cleans it up itself.
-        File.Copy(sourcePath, absolutePath, overwrite: false);
-        return new StoredBlob(sha, relativePath, new FileInfo(absolutePath).Length, AlreadyExisted: false);
+        // Copy (not move): the caller owns the temp download dir and cleans it up itself. Staged as
+        // temp + atomic rename — the archive's blob-write rule — so a crash mid-copy leaves an inert
+        // `.tmp-` stray, never a torn blob at its content address. Overwrite is safe: anything already
+        // there is either the torn file being repaired or a concurrent writer's identical bytes.
+        var staging = absolutePath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.Copy(sourcePath, staging);
+            File.Move(staging, absolutePath, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(staging)) File.Delete(staging); } catch { }
+        }
+        return new StoredBlob(sha, relativePath, incomingLength, AlreadyExisted: false);
     }
 
     public string GetAbsolutePath(string relativePath) => Path.Combine(_root, Normalise(relativePath));

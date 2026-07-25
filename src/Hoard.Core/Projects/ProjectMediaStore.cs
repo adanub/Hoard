@@ -30,6 +30,8 @@ public sealed class ProjectMediaStore : IMediaStore
         }
     }
 
+    public string Root => Store.Root;
+
     public Task<StoredBlob> PutAsync(string sourcePath, CancellationToken ct = default)
         => Store.PutAsync(sourcePath, ct);
 

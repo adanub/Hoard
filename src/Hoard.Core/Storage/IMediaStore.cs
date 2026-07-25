@@ -9,6 +9,10 @@ public readonly record struct StoredBlob(string Sha256, string RelativePath, lon
 
 public interface IMediaStore
 {
+    /// <summary>The store's root directory — for whole-store sweeps (a single walk beats per-blob stats
+    /// when the store may live on a network share).</summary>
+    string Root { get; }
+
     /// <summary>Copy a source file into the store, addressed by the SHA-256 of its contents.</summary>
     Task<StoredBlob> PutAsync(string sourcePath, CancellationToken ct = default);
 
