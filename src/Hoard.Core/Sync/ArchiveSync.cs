@@ -39,7 +39,7 @@ public static class ArchiveSync
         HoardDbContext db, string opsRoot, ArchiveLog archive, ILogger? logger = null, CancellationToken ct = default)
     {
         var pending = new List<ArchiveOp>();
-        foreach (var (deviceId, path) in ArchiveSegments.ListSegments(opsRoot))
+        foreach (var deviceId in ArchiveSegments.ListDevices(opsRoot))
         {
             // Pending = set difference against the rows we hold, NOT a MAX(Seq) high-water mark: a
             // batch rollback (crash/cancel mid-catch-up) can leave a committed seq BEYOND a hole — the
@@ -48,7 +48,7 @@ public static class ArchiveSync
             // mark would bury the hole forever. The difference re-pends exactly the missing rows.
             var have = (await db.ArchiveOps.Where(o => o.DeviceId == deviceId)
                 .Select(o => o.Seq).ToListAsync(ct).ConfigureAwait(false)).ToHashSet();
-            pending.AddRange(ArchiveSegments.Read(path, deviceId).Where(o => !have.Contains(o.Seq)));
+            pending.AddRange(ArchiveSegments.ReadAll(opsRoot, deviceId).Where(o => !have.Contains(o.Seq)));
         }
         if (pending.Count == 0) return 0;
 

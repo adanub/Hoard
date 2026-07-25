@@ -79,7 +79,7 @@ public sealed class ArchiveLog
         // or they'd collide with the segment's history and silently never flush.
         if (_opsRoot?.Invoke() is { } opsRoot)
         {
-            var segment = ArchiveSegments.Read(ArchiveSegments.SegmentPath(opsRoot, _deviceId), _deviceId);
+            var segment = ArchiveSegments.ReadAll(opsRoot, _deviceId);
             if (segment.Count > 0)
             {
                 lastSeq = Math.Max(lastSeq, segment[^1].Seq);
@@ -118,7 +118,7 @@ public sealed class ArchiveLog
             lock (_gate)
             {
                 if (_lastFlushedSeq < 0)
-                    _lastFlushedSeq = ArchiveSegments.LastSeq(ArchiveSegments.SegmentPath(opsRoot, _deviceId), _deviceId);
+                    _lastFlushedSeq = ArchiveSegments.LastSeq(opsRoot, _deviceId);
                 from = _lastFlushedSeq;
             }
 

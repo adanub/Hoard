@@ -5,12 +5,17 @@ using Hoard.Core.Domain;
 namespace Hoard.Core.Sync;
 
 /// <summary>
-/// The on-disk op segment format (<c>SYNC-DESIGN.md</c> P2): per device, one append-only JSON Lines file
-/// <c>ops/&lt;deviceId&gt;.jsonl</c> holding that device's ops in seq order. The device id lives in the
-/// FILENAME (one writer per file is the whole concurrency model), so lines carry only seq/hlc/kind/keys/
-/// payload. Appends are open→append→flush→close per batch — no held handles, which plays nicest with SMB
-/// client caching. Reads tolerate a torn trailing line (a crash mid-append): the reader stops at the
-/// first unparsable line, and because the writer re-derives what to append from the authoritative table
+/// The on-disk op segment format (<c>SYNC-DESIGN.md</c> P2): per device, an append-only JSON Lines
+/// stream holding that device's ops in seq order. The device id lives in the FILENAME (one writer per
+/// device is the whole concurrency model), so lines carry only seq/hlc/kind/keys/payload. The stream is
+/// cut into <b>chapters</b> at a size threshold (P4 rotation): <c>&lt;deviceId&gt;.jsonl</c> is chapter
+/// zero, rotated continuations are <c>&lt;deviceId&gt;.00001.jsonl</c>, … — the writer appends only to
+/// the highest-numbered chapter, so a chapter is CLOSED (name and content final, forever) merely by a
+/// higher one existing. No file is ever renamed: a closed chapter is exactly what object storage and
+/// third-party sync want — an immutable blob — and compaction can later retire whole closed chapters.
+/// Appends are open→append→flush→close per batch — no held handles, which plays nicest with SMB client
+/// caching. Reads tolerate a torn trailing line (a crash mid-append): the reader stops at the first
+/// unparsable line, and because the writer re-derives what to append from the authoritative table
 /// (everything beyond the last <i>valid</i> seq), the torn op is simply re-landed by the next flush.
 /// </summary>
 public static class ArchiveSegments
@@ -18,38 +23,121 @@ public static class ArchiveSegments
     public const string DirectoryName = "ops";
     private const string Extension = ".jsonl";
 
+    /// <summary>Rotate the active chapter once it reaches this size. A chapter may exceed it by at most
+    /// one line (the check runs before each write, so a line never splits across chapters).</summary>
+    public const long DefaultRotateBytes = 4 * 1024 * 1024;
+
+    /// <summary>Chapter zero of a device's stream — the original single-segment path, unchanged so
+    /// pre-rotation archives need no migration.</summary>
     public static string SegmentPath(string opsRoot, string deviceId) =>
         Path.Combine(opsRoot, deviceId + Extension);
 
-    /// <summary>Every segment in an ops directory, as (deviceId, path). Missing directory = no segments.</summary>
-    public static IReadOnlyList<(string DeviceId, string Path)> ListSegments(string opsRoot)
+    private static string ChapterPath(string opsRoot, string deviceId, int chapter) =>
+        chapter == 0 ? SegmentPath(opsRoot, deviceId) : Path.Combine(opsRoot, $"{deviceId}.{chapter:D5}{Extension}");
+
+    /// <summary>Every device with at least one chapter in an ops directory. Missing directory = none.</summary>
+    public static IReadOnlyList<string> ListDevices(string opsRoot)
     {
         if (!Directory.Exists(opsRoot)) return [];
         return Directory.EnumerateFiles(opsRoot, "*" + Extension)
-            .Select(p => (Path.GetFileNameWithoutExtension(p), p))
-            .Where(s => s.Item1.Length > 0)
-            .OrderBy(s => s.Item1, StringComparer.Ordinal)
+            .Select(p => ParseName(p)?.DeviceId)
+            .Where(d => d is not null)
+            .Select(d => d!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(d => d, StringComparer.Ordinal)
             .ToList();
     }
 
-    /// <summary>Append ops (already in seq order) to a device's segment. Creates the directory/file on
+    /// <summary>A device's existing chapters in stream order (chapter zero first). Empty when none.</summary>
+    public static IReadOnlyList<(string Path, int Chapter)> ListChapters(string opsRoot, string deviceId)
+    {
+        if (!Directory.Exists(opsRoot)) return [];
+        return Directory.EnumerateFiles(opsRoot, "*" + Extension)
+            .Select(p => (Path: p, Parsed: ParseName(p)))
+            .Where(x => x.Parsed is { } parsed && parsed.DeviceId == deviceId)
+            .Select(x => (x.Path, x.Parsed!.Value.Chapter))
+            .OrderBy(x => x.Chapter)
+            .ToList();
+    }
+
+    /// <summary>A device's whole op stream — every chapter, concatenated in order (= seq order, since
+    /// the one writer appends monotonically).</summary>
+    public static IReadOnlyList<ArchiveOp> ReadAll(string opsRoot, string deviceId)
+    {
+        var ops = new List<ArchiveOp>();
+        foreach (var (path, _) in ListChapters(opsRoot, deviceId))
+            ops.AddRange(Read(path, deviceId));
+        return ops;
+    }
+
+    /// <summary>The last valid seq across a device's whole chain (0 when it has none) — the flush watermark.
+    /// Walks chapters from the newest so a fresh chain doesn't read the entire history.</summary>
+    public static long LastSeq(string opsRoot, string deviceId)
+    {
+        foreach (var (path, _) in ListChapters(opsRoot, deviceId).Reverse())
+        {
+            var ops = Read(path, deviceId);
+            if (ops.Count > 0) return ops[^1].Seq;
+        }
+        return 0;
+    }
+
+    /// <summary>Append ops (already in seq order) to a device's stream, rotating into a new chapter
+    /// whenever the active one reaches <paramref name="rotateBytes"/>. Creates the directory/chapter on
     /// first write, and repairs a torn tail first — a crashed append leaves a partial line (our lines
     /// contain no embedded newline, so torn = bytes after the last '\n'); appending blindly would weld
-    /// the next line onto that garbage and poison the file mid-stream. The caller guarantees the ops
-    /// belong to the segment's device.</summary>
-    public static void Append(string opsRoot, string deviceId, IEnumerable<ArchiveOp> ops)
+    /// the next line onto that garbage and poison the file mid-stream. Only the ACTIVE (highest) chapter
+    /// is ever opened for writing — closed chapters are immutable. The caller guarantees the ops belong
+    /// to this device.</summary>
+    public static void Append(string opsRoot, string deviceId, IEnumerable<ArchiveOp> ops, long rotateBytes = DefaultRotateBytes)
     {
         Directory.CreateDirectory(opsRoot);
-        using var stream = new FileStream(
-            SegmentPath(opsRoot, deviceId), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
-        TruncateTornTail(stream);
-        stream.Seek(0, SeekOrigin.End);
-        foreach (var op in ops)
+        var chapters = ListChapters(opsRoot, deviceId);
+        var (activePath, activeChapter) = chapters.Count > 0 ? chapters[^1] : (SegmentPath(opsRoot, deviceId), 0);
+
+        var stream = new FileStream(activePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+        try
         {
-            var line = Serialise(op);
-            stream.Write(line, 0, line.Length);
+            TruncateTornTail(stream);
+            stream.Seek(0, SeekOrigin.End);
+            foreach (var op in ops)
+            {
+                if (stream.Length >= rotateBytes)
+                {
+                    stream.Flush(flushToDisk: true);
+                    stream.Dispose();
+                    activeChapter++;
+                    activePath = ChapterPath(opsRoot, deviceId, activeChapter);
+                    // OpenOrCreate + tail repair: a crash between creating this chapter and finishing
+                    // its first line leaves a torn stub the next rotation would otherwise weld onto.
+                    stream = new FileStream(activePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+                    TruncateTornTail(stream);
+                    stream.Seek(0, SeekOrigin.End);
+                }
+                var line = Serialise(op);
+                stream.Write(line, 0, line.Length);
+            }
+            stream.Flush(flushToDisk: true);
         }
-        stream.Flush(flushToDisk: true);
+        finally
+        {
+            stream.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Split a segment filename into (deviceId, chapter). <c>dev.jsonl</c> → chapter 0;
+    /// <c>dev.00017.jsonl</c> → chapter 17. Null for non-segment files. A dot + exactly five digits is
+    /// always a chapter suffix — production device ids are 32-hex GUIDs, which can't end that way.
+    /// </summary>
+    private static (string DeviceId, int Chapter)? ParseName(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (!name.EndsWith(Extension, StringComparison.Ordinal)) return null;
+        var stem = name[..^Extension.Length];
+        if (stem.Length > 6 && stem[^6] == '.' && stem[^5..].All(char.IsAsciiDigit))
+            return (stem[..^6], int.Parse(stem[^5..]));
+        return stem.Length > 0 ? (stem, 0) : null;
     }
 
     /// <summary>Cut the file back to just after its last newline (every complete line is '\n'-terminated).
@@ -105,13 +193,6 @@ public static class ArchiveSegments
             ops.Add(op);
         }
         return ops;
-    }
-
-    /// <summary>The last valid seq in a segment (0 for a missing/empty file) — the flush watermark.</summary>
-    public static long LastSeq(string path, string deviceId)
-    {
-        var ops = Read(path, deviceId);
-        return ops.Count == 0 ? 0 : ops[^1].Seq;
     }
 
     private static byte[] Serialise(ArchiveOp op)

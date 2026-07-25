@@ -43,8 +43,7 @@ public static class ArchiveMigration
 
             // The device's complete history goes to its segment explicitly (not FlushSegmentAsync, whose
             // ops root follows the *open* project — during migration that may not be this one yet).
-            var segmentPath = ArchiveSegments.SegmentPath(project.OpsRoot, archive.DeviceId);
-            var written = ArchiveSegments.LastSeq(segmentPath, archive.DeviceId);
+            var written = ArchiveSegments.LastSeq(project.OpsRoot, archive.DeviceId);
             var pending = await db.ArchiveOps
                 .Where(o => o.DeviceId == archive.DeviceId && o.Seq > written)
                 .OrderBy(o => o.Seq)
