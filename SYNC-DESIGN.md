@@ -7,9 +7,11 @@ round-trip equivalence proven by `ArchiveRoundTripTests` (synthesised history AN
 rebuild an equivalent DB). **P2 implemented**: per-device segment files with dual-write (two-device convergence proven by
 `ArchiveConvergenceTests`). **P3 implemented**: format v2 — new projects are born v2, the index lives per
 machine under app data, legacy projects migrate behind a launcher confirm, and a machine's index is fully
-derivable from the archive alone (`ArchiveFormatV2Tests`). **NAS multi-machine works from here.** Next:
-P4 (compaction, relocating the remaining derived caches out of the folder, verify-project). When
-increments land, track them in `ROADMAP.md` and fold the settled architecture into `CLAUDE.md`.
+derivable from the archive alone (`ArchiveFormatV2Tests`). **NAS multi-machine works from here.**
+**P4 implemented except compaction** (see the P4 bullet): derived caches relocated to per-machine app
+data, on-demand verify-project, one apply semantics (`ArchiveRebuilder` deleted), batched index builds.
+Next: segment compaction (deferred), then P5 remotes. When increments land, track them in `ROADMAP.md`
+and fold the settled architecture into `CLAUDE.md`.
 
 ## Why
 
@@ -204,15 +206,22 @@ ignore it).
   with `ArchiveLog.ObserveOwnSeq` keeping the seq counter ahead of the replayed history. New projects are
   born v2. Deleting a project also removes its per-machine derived state; renames/moves are free (state
   keyed by ProjectId). **NAS multi-machine works from here.** Proven by `ArchiveFormatV2Tests`.
-- **P4 — hygiene + scale.** Segment rotation + compaction (a compacted snapshot segment, safe once every
-  known device's watermark has passed the retired segments — single-user, so deferrable); an on-demand
-  "verify project" (orphan blob sweep, hash check); relocate the remaining derived data out of the folder
-  (`thumbnails/`, `logs/`, retire `download-archive.db` to a per-run temp). Plus the review-deferred
-  items (also listed in `ROADMAP.md`): batch a first index build in one transaction (per-op saves make a
-  huge archive's first open slow), unify `ArchiveRebuilder` with `ArchiveSync`'s live applier (one apply
-  semantics — the rebuilder currently has no production caller and can resurrect a deleted parent),
-  canonicalise synthesised `relativePath`s, a "not opened here" state for launcher cards of unindexed v2
-  projects, offer the migration on the Adopt path, centralise the marker writer.
+- **P4 — hygiene + scale.** ✅ Done except compaction: derived data relocated out of the folder —
+  `thumbnails/` and `logs/` live under this machine's `appData/projects/<projectId>/` and
+  `download-archive.db` beside them (rebuilt before every import; the open-time tidy sweeps/moves what
+  older builds left in a v2 folder, so the archive folder is truly marker + store + ops); an on-demand
+  **verify project** (`Library/ProjectVerifier` — re-hash every live blob + sweep unreferenced files;
+  **report-only**, because on a shared archive a blob can precede this machine's catch-up of its op, so
+  an automatic orphan delete could destroy a sibling device's fresh import); the review-deferred items
+  all landed — the first index build commits in batched transactions (per-op SaveChanges kept inside so
+  later ops' lookups see earlier rows; ~500 ops per fsync instead of one each), `ArchiveRebuilder` is
+  DELETED and rebuilds go through `ArchiveSync.CatchUpAsync` (one apply semantics; the round-trip tests
+  now exercise the real segments→catch-up path), op payload `relativePath`s are canonicalised to forward
+  slashes at emission, launcher cards say "not opened on this computer yet" instead of zero counts for
+  an unindexed v2 project, the Adopt path re-routes through the normal open (so it now gets the
+  migration offer), and `HoardProject` has exactly one marker writer serialising project state.
+  **Remaining: segment rotation + compaction** (a compacted snapshot segment, safe once every known
+  device's watermark has passed the retired segments — single-user, so deferred until log size hurts).
 - **P5 — remotes (Phase 3 proper).** The same format over S3/B2 (segments + blobs are already
   object-storage-shaped); replicated local stores with fetch-on-demand; the mobile head reuses all of it.
 

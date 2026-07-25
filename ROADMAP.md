@@ -11,12 +11,45 @@ release-please + win/macOS build matrix — see CLAUDE.md "CI & releases"; first
 project folder is now static-only (marker + store + append-only per-device op segments); each machine
 derives a rebuildable SQLite index under app data (schema **v8**: uids + `ArchiveOps`); legacy projects
 migrate behind a launcher confirm; two machines converge through the segments — **NAS multi-machine
-works**. A 21-candidate adversarial review ran pre-commit; all 10 surviving confirmed findings fixed (the
-verified-but-minor remainder is under "Deferred / known tech-debt"). Tests: **120 Core / 84 Desktop**,
-green. **Next:** SYNC-DESIGN **P4** (segment compaction, batch the first index build in a transaction,
-relocate `thumbnails/`/`logs/`/`download-archive.db` out of the folder, on-demand "verify project",
-unify `ArchiveRebuilder` with `ArchiveSync`'s applier) → **P5** (S3/B2 remotes, mobile). User-verified on
-real projects: Windows-migrated NAS project opens on the Mac.
+works**. User-verified on real projects: Windows-migrated NAS project opens on the Mac.
+
+**This session — SYNC-DESIGN P4, UNCOMMITTED (needs runtime verification):** everything but compaction.
+(1) `ArchiveRebuilder` **deleted** — rebuilds run through `ArchiveSync.CatchUpAsync`, the ONE apply
+semantics (the round-trip tests now write real segments and catch up into a fresh index — the production
+path). (2) The catch-up loop commits in **batched transactions** (~500 ops per fsync; per-op SaveChanges
+kept inside so later ops' lookups see earlier rows — that part is load-bearing, don't "optimise" it away).
+(3) Op payload `relativePath`s canonicalised to `/` at emission (`ArchiveLog.CanonicalPath`). (4) One
+marker writer (`HoardProject.WriteMarker` serialises project state; the four hand-copied initialisers are
+gone). (5) Adopt rewrites the marker then re-routes through the normal open → a v1 adoptee now gets the
+migration offer. (6) Launcher cards show "Not opened on this computer yet" instead of zeros
+(`ProjectStatsReader` returns null when there's no local DB). (7) **Derived data relocated**: thumbnails/
+logs/download-archive live under `%APPDATA%/Hoard/projects/<id>/`, resolved via `ProjectManager.
+ThumbnailsRootFor`/`LogsRootFor`/`DownloadArchivePathFor` (v1 keeps its in-folder layout);
+`TidyMigratedFolder` sweeps/relocates what older builds left in a v2 folder (thumbnails + skip-archive
+deleted, transcripts moved); `DeleteProject`'s existing state-root removal now covers them. (8) **Verify
+files** in the launcher's project edit sheet → `Library/ProjectVerifier` (re-hash live blobs, sweep
+unreferenced files; **report-only** — an orphan can be another device's not-yet-caught-up import, so no
+auto-delete). **Remaining in P4:** segment rotation/compaction (deferred — single-user, revisit when log
+size hurts). **User-verified on the real project** (migration tidy, verify, NAS replacement with the
+clean local v2 folder). **Next:** **P5** (S3/B2 remotes, mobile).
+
+**Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
+detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch
+rollback behind a later-committed seq re-pends and heals instead of being buried forever; an unappliable
+op is **skipped-and-recorded** (EF's per-SaveChanges savepoint keeps the batch intact) instead of
+poisoning its whole batch on every open (+`ArchiveCatchUpTests` for both); the tracker is cleared at
+every batch commit (a big first build was heading O(N²) DetectChanges); the v2 tidy sweep only removes
+**quiescent** caches (untouched >30 min — a pre-P4 sibling machine mid-import on a shared archive keeps
+its live skip-archive/thumbnails); **verify catches the index up from the segments first** (a stale
+index reported another machine's deletions/imports as phantom corruption) and **refuses while an import
+runs** (in-flight blobs read as unreferenced); the verify guard is per-card (one long verify no longer
+deadens other cards' buttons, and a recents refresh can't clear a live run's progress); the stats-null
+card wording distinguishes an unindexed v2 ("not opened here") from a v1 whose `hoard.db` is gone
+(opening would create an empty DB — data loss, not indexing); Clear cache's marker peek moved off the
+UI thread; the five hand-copied v1/v2 path resolutions centralised (`AppPaths.LocalDatabasePath`/
+`LocalThumbnailsDir` + `HoardProject.StoreDir`); and open/create/adopt/verify failures now log to
+`hoard.log` (they were toast-only — a real NAS open failure left no trace to diagnose from). Tests:
+**126 Core / 84 Desktop**, green; build clean.
 
 **Earlier session — nested folders (Pinterest sections):** a section/sub-folder is a **child `Collection`** (via the
 long-present `ParentId`); schema bumped to **v7** (additive `Collection.SourceSectionId`, guarded add).
@@ -454,6 +487,12 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
   images + folder names, the Library filters board cards, the launcher filters recents; see the shell-chrome
   session below).
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
+- **Human-readable export/mirror** (candidate, from user feedback 2026-07-25): an on-demand "Export
+  board…" (or maintained read-only mirror) that materialises `Board/Folder/image` trees from the index —
+  the browsable-in-Finder view people expect. The archive's `store/` itself stays content-addressed:
+  sha-addressing is what gives cross-board dedup, immutable files (ops reference blobs by hash forever;
+  renames are metadata ops, not mass file moves), and OS-portable paths (no invalid-name/length/case
+  collisions from board titles).
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
 - ~~**Tag filtering**~~ — **deprioritised**: confirmed against real data (78 pins) that the Pinterest
@@ -496,13 +535,12 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 
 ## Later phases
 
-- **Phase 3 — multi-device archive + sync: `SYNC-DESIGN.md` is the plan of record, and increments
-  P0–P3 are DONE** (committed `9c1aeb1` — see the Status block). The project folder is 100% immutable
-  files (content-addressed blobs + per-device append-only op segments with project-scoped effects);
-  SQLite is a per-machine, rebuildable derived index in app-data; NAS multi-machine works. Remaining:
-  **P4** (compaction, batched first-build, relocate the derived caches out of the folder, verify-project,
-  applier unification) and **P5** (S3/B2 remotes as the same format over object storage; the mobile head
-  reuses all of it).
+- **Phase 3 — multi-device archive + sync: `SYNC-DESIGN.md` is the plan of record; increments
+  P0–P3 are DONE** (committed `9c1aeb1`) **and P4 is done except compaction** (this session,
+  uncommitted — see the Status block). The project folder is 100% immutable files (content-addressed
+  blobs + per-device append-only op segments); SQLite plus every derived cache is per-machine app-data
+  state; NAS multi-machine works. Remaining: segment compaction (deferred) and **P5** (S3/B2 remotes as
+  the same format over object storage; the mobile head reuses all of it).
 - **Phase 4 — mobile:** extract Core behind a `Hoard.Server` (ASP.NET Core minimal API, does ingestion
   server-side since mobile can't spawn gallery-dl); Avalonia mobile client with background sync.
 - **Phase 5 — capture + more connectors:** TS browser extension (in-page "save to Hoard"); more sources
@@ -510,16 +548,15 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 
 ## Deferred / known tech-debt
 
-- **From the archive-format (P0–P3) code review** (10 confirmed findings fixed pre-commit; these
-  verified-but-lower-ranked ones remain): `ArchiveRebuilder` can resurrect a deleted parent via a later
-  child `collection.created` referencing it, and its apply semantics have drifted from `ArchiveSync`'s
-  live applier (unify them — the rebuilder currently has no production caller, which caps the blast
-  radius); the per-op-SaveChanges catch-up makes a first index build of a big archive slow (batch in a
-  transaction at P4); op payloads synthesised from a Windows-written DB carry backslashed `relativePath`s
-  (harmless — the store's reader normalises — but canonicalise at synthesis); launcher recents cards show
-  zero counts for a v2 project this machine hasn't opened yet (no index to read — show "not opened here"
-  instead); the Adopt path never offers the storage upgrade (v1 adoptees only get it on their next open);
-  the marker is rewritten from four sites with hand-copied field lists (centralise one writer).
+- ~~**From the archive-format (P0–P3) code review**~~ — **all six deferred findings fixed in the P4
+  session** (rebuilder unified/deleted, batched catch-up, canonical paths, "not opened here" cards,
+  Adopt migration offer, one marker writer — see the Status block).
+- **Segment rotation + compaction** (the one P4 item deliberately not built): a compacted snapshot
+  segment is safe once every known device's watermark has passed the retired segments — single-user, so
+  deferred until op-log size actually hurts.
+- **`ProjectVerifier` is report-only**: orphaned store files are listed, never deleted (an "orphan" can
+  be another device's blob whose ops this machine hasn't caught up yet). If a safe sweep is ever wanted,
+  it needs an "all devices caught up" proof first.
 
 - `GifDecoder.Snapshot` double-encodes (full-res PNG → `DecodeToWidth`) per frame; a direct Skia resize
   would avoid the round-trip. Kept the safe path (off-thread, not a render hot path).

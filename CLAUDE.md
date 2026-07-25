@@ -73,9 +73,13 @@ Concepts that span multiple files:
   folder until the user accepts the one-time migration (`Sync/ArchiveMigration`, offered by the launcher;
   keeps a `hoard.db.pre-v2.bak`). `ProjectManager.Current` is the single source of truth;
   `ProjectDbContextFactory` and `ProjectMediaStore` read it, so opening/switching a project re-points all
-  storage with no other wiring. SQLite uses **WAL** and **`Pooling=False`**. `thumbnails/`, `logs/`,
-  `download-archive.db` are derived data still in the folder (P4 relocates them). **Never mutate or delete
-  ops** — the log is append-only; blob writes stay temp-file + rename.
+  storage with no other wiring. SQLite uses **WAL** and **`Pooling=False`**. **All derived data is
+  per-machine (P4):** `thumbnails/`, `logs/`, and `download-archive.db` live beside the index under
+  `%APPDATA%/Hoard/projects/<projectId>/` — resolve them through `ProjectManager`'s
+  `ThumbnailsRootFor`/`LogsRootFor`/`DownloadArchivePathFor` (format-aware: a legacy v1 project keeps its
+  in-folder layout until migrated), never `HoardProject`'s raw paths; the open-time tidy
+  (`ArchiveMigration.TidyMigratedFolder`) sweeps/relocates what older builds left in a v2 folder. **Never
+  mutate or delete ops** — the log is append-only; blob writes stay temp-file + rename.
 - **Schema versioning is additive, via `PRAGMA user_version` — not EF migrations.** `EnsureCreated` builds a
   fresh project DB from the full current model; an existing DB (maybe from an older app version) is patched by
   `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.
@@ -305,8 +309,11 @@ Concepts that span multiple files:
   whose folder vanished. **(missing blobs)** a *live* asset whose blob was deleted/moved/altered outside the app
   doesn't crash — the tile detects it lazily (per-tile `File.Exists`, not a bulk scan) and shows a **"file
   missing"** state with a one-click **re-download** (`IngestService.RefetchAsync` → re-fetch from the saved
-  source URL; shares `ReDownloadAsync` with restore). No full content-hash verification on open (deferred to a
-  future on-demand "verify project" action). Keep open cheap: schema + marker + recents only.
+  source URL; shares `ReDownloadAsync` with restore). Full content-hash verification is **on demand, never on
+  open** — the launcher edit sheet's **Verify files** runs `Library/ProjectVerifier` (re-hash every live blob
+  + sweep unreferenced store files; **report-only** — on a shared archive a blob can precede this machine's
+  catch-up of its op, so an automatic orphan delete could destroy another device's fresh import). Keep open
+  cheap: schema + marker + recents only.
 - **Recycle, don't delete (Windows only).** `IFileRecycler` (Core, platform-neutral interface) →
   `WindowsFileRecycler` (Desktop, `SHFileOperation` + `FOF_ALLOWUNDO` P/Invoke — platform code stays out of
   Core), **registered in DI only when `OperatingSystem.IsWindows()`** (the P/Invoke throws elsewhere) and
