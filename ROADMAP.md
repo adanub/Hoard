@@ -29,9 +29,13 @@ ThumbnailsRootFor`/`LogsRootFor`/`DownloadArchivePathFor` (v1 keeps its in-folde
 deleted, transcripts moved); `DeleteProject`'s existing state-root removal now covers them. (8) **Verify
 files** in the launcher's project edit sheet → `Library/ProjectVerifier` (re-hash live blobs, sweep
 unreferenced files; **report-only** — an orphan can be another device's not-yet-caught-up import, so no
-auto-delete). **Remaining in P4:** segment rotation/compaction (deferred — single-user, revisit when log
-size hurts). **User-verified on the real project** (migration tidy, verify, NAS replacement with the
-clean local v2 folder). **Next:** **P5** (S3/B2 remotes, mobile).
+auto-delete). **User-verified on the real project** (migration tidy, verify, NAS replacement with the
+clean local v2 folder). **Segment rotation landed next session (2026-07-26, uncommitted):** a device's
+stream cuts into chapters at 4 MB — `<deviceId>.jsonl` is chapter zero, continuations
+`<deviceId>.00001.jsonl`… — the writer appends only to the highest chapter and **nothing is ever
+renamed**, so a closed chapter is an immutable object (the S3/B2-shaped prerequisite); readers/flush
+span the chain (`ArchiveRotationTests`, 5 tests). **Remaining in P4:** compaction only (deferred —
+single-user, revisit when log size hurts). **Next:** **P5** (S3/B2 remotes, mobile).
 
 **Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
 detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch
@@ -551,9 +555,9 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 - ~~**From the archive-format (P0–P3) code review**~~ — **all six deferred findings fixed in the P4
   session** (rebuilder unified/deleted, batched catch-up, canonical paths, "not opened here" cards,
   Adopt migration offer, one marker writer — see the Status block).
-- **Segment rotation + compaction** (the one P4 item deliberately not built): a compacted snapshot
-  segment is safe once every known device's watermark has passed the retired segments — single-user, so
-  deferred until op-log size actually hurts.
+- **Segment compaction** (the one P4 item deliberately not built; rotation itself landed 2026-07-26): a
+  compacted snapshot segment is safe once every known device has applied the retired chapters —
+  single-user, so deferred until op-log size actually hurts.
 - **`ProjectVerifier` is report-only**: orphaned store files are listed, never deleted (an "orphan" can
   be another device's blob whose ops this machine hasn't caught up yet). If a safe sweep is ever wanted,
   it needs an "all devices caught up" proof first.

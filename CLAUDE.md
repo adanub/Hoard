@@ -64,7 +64,8 @@ Concepts that span multiple files:
   (`SYNC-DESIGN.md` is the deep doc; read it before touching storage/sync).** A "project" is a user-chosen
   folder (`HoardProject`) whose durable contents are **static only**: the marker (`hoard.project.json`,
   carrying a stable `ProjectId` + the archive `format`), the content-addressed `store/`, and the
-  **append-only per-device op segments** `ops/<deviceId>.jsonl` — the replayable history of every change
+  **append-only per-device op segments** `ops/<deviceId>.jsonl` (rotating into closed, never-renamed
+  chapters `<deviceId>.00001.jsonl`… at a size threshold) — the replayable history of every change
   (`Sync/` — `ArchiveLog` emits ops in the same SaveChanges as each change; `ArchiveSync` catches up other
   devices' segments at open; `ArchiveSegments` owns the torn-tail-safe file format). The **metadata DB is a
   per-machine derived index** at `%APPDATA%/Hoard/projects/<projectId>/index.db` — rebuildable from the

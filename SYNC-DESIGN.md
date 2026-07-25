@@ -86,7 +86,12 @@ JSON Lines, one op per line:
   embedded newline: readers stop at the first unparsable line, and the writer **truncates the tail back to
   the last newline before appending** (else the next line would weld onto the garbage) — the torn op then
   re-lands from the authoritative table, which is where the flush derives "what's missing" from.
-- Segments rotate at a size threshold (`<deviceId>.00001.jsonl`, …) so compaction can retire old ones.
+- **Segments rotate at a size threshold** (implemented, P4): a device's stream is cut into chapters —
+  `<deviceId>.jsonl` is chapter zero (legacy archives need no migration), continuations are
+  `<deviceId>.00001.jsonl`, …. The writer appends only to the highest chapter, so a chapter is CLOSED
+  (name and content final, forever) merely by a higher one existing — **no file is ever renamed**, which
+  is exactly the immutable-object shape S3/B2 remotes want and what lets compaction retire whole closed
+  chapters. Readers concatenate a device's chapters in order; the flush watermark spans the chain.
 
 ### Op catalogue
 
@@ -220,8 +225,10 @@ ignore it).
   slashes at emission, launcher cards say "not opened on this computer yet" instead of zero counts for
   an unindexed v2 project, the Adopt path re-routes through the normal open (so it now gets the
   migration offer), and `HoardProject` has exactly one marker writer serialising project state.
-  **Remaining: segment rotation + compaction** (a compacted snapshot segment, safe once every known
-  device's watermark has passed the retired segments — single-user, so deferred until log size hurts).
+  **Segment rotation is in** (see the op-log section: size-cut chapters, never renamed, closed = a
+  higher chapter exists — the S3-shaped prerequisite). **Remaining: compaction** (a compacted snapshot
+  segment, safe once every known device has applied the retired chapters — single-user, so deferred
+  until log size hurts).
 - **P5 — remotes (Phase 3 proper).** The same format over S3/B2 (segments + blobs are already
   object-storage-shaped); replicated local stores with fetch-on-demand; the mobile head reuses all of it.
 
