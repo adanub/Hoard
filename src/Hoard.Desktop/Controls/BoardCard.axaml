@@ -29,14 +29,15 @@
         </Style>
     </UserControl.Styles>
 
-    <!-- Width matches the card so the name column is bounded and a long board name ellipsizes (rather than
+    <!-- Width comes from the host (FillWrapPanel stretches cards to fill the row; the gallery pins 240),
+         and the arranged width bounds the name column so a long board name still ellipsizes (rather than
          growing the layout). The full name is still readable in the Edit popup. -->
     <!-- Flush (no reserve margin) so the card lines up with other content; ClipToBounds=False (on the root)
          lets the drop shadow render into the surrounding gutter. In a grid, the grid's spacing/padding gives
          the shadow its room. -->
-    <StackPanel Width="240" Spacing="10">
+    <StackPanel Spacing="10">
         <!-- The collage IS the card. Outer Border carries the shadow (not clipped); inner clip rounds the collage. -->
-        <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+        <Border x:Name="CardRoot" CornerRadius="{DynamicResource RadiusLg}"
                 Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
                 BorderThickness="1" Cursor="Hand"
                 RenderTransformOrigin="50%,50%"

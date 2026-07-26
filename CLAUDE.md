@@ -314,7 +314,7 @@ Concepts that span multiple files:
   and **covers are picked spread** (most-recent · midpoint · oldest via `SpreadSelect`, across the subtree) so a
   board's 3-up — and the "All images"/project collage — pull from a variety of boards, not the latest import.
   Subtree walks share `CollectionTree.SubtreeIdsAsync` (delete/remove-source/known-items/shas) — the rollup is the
-  batch in-memory variant for the "all boards" case. **Folders are rendered exactly like top-level boards** — `BoardCard`s (collage + pencil edit) in a `WrapPanel` led by a "+ New folder"
+  batch in-memory variant for the "all boards" case. **Folders are rendered exactly like top-level boards** — `BoardCard`s (collage + pencil edit) in a `FillWrapPanel` led by a "+ New folder"
   `NewCard`, shown **before the image masonry in one `ScrollViewer`** (a `StackPanel` of [folder grid][masonry];
   the masonry stays virtualized because `MasonryLayout` realizes from `context.RealizationRect`, the effective
   viewport, not the measure height). **Drilling into a folder reuses the whole Board screen** — `ShowBoard(new BoardTarget(childId, …, ParentId: …))` pushes another

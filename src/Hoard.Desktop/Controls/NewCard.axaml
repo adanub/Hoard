@@ -28,9 +28,10 @@
         </Style>
     </UserControl.Styles>
 
-    <StackPanel Width="240" Spacing="10">
+    <!-- Width comes from the host (FillWrapPanel stretches cards to fill the row; the gallery pins 240). -->
+    <StackPanel Spacing="10">
         <!-- The cover well IS the card: a muted well with a centred + under a convex bevel, raised + clickable. -->
-        <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+        <Border x:Name="CardRoot" CornerRadius="{DynamicResource RadiusLg}"
                 Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
                 BorderThickness="1" Cursor="Hand"
                 RenderTransformOrigin="50%,50%"

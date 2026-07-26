@@ -16,7 +16,8 @@
     <Panel>
         <!-- No page heading — the shell's breadcrumb already says "Projects". -->
         <ScrollViewer>
-            <StackPanel Margin="36,28,36,96" Spacing="20" MaxWidth="1040" HorizontalAlignment="Left">
+            <!-- No MaxWidth cap: the card rows fill the window width (FillWrapPanel), like every other grid. -->
+            <StackPanel Margin="36,28,36,96" Spacing="20">
                 <!-- The “+ New project” tile + one card per recent project, reflowing by width. ClipToBounds
                      =False all the way down (incl. the item ContentPresenter) so the raised cards' drop shadow
                      and hover-scale aren't cropped to their cells — see the CLAUDE.md raised-card-in-grid rule. -->
@@ -28,7 +29,9 @@
                     </ItemsControl.Styles>
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <WrapPanel ClipToBounds="False"/>
+                            <!-- Rows fill the width (leftover < one card is absorbed by stretching); the
+                                 panel owns the 16px gutters, so items carry no spacing margins. -->
+                            <ctrl:FillWrapPanel ClipToBounds="False"/>
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.DataTemplates>
@@ -36,7 +39,7 @@
                         <!-- Leading action tile: the raised "+ New project" card (NewProjectCard), sized to the
                              project card's footprint. Its command opens the new-project sheet. -->
                         <DataTemplate DataType="vm:NewProjectTile">
-                            <ctrl:NewProjectCard Label="New project" Margin="0,0,16,16"
+                            <ctrl:NewProjectCard Label="New project"
                                                  Command="{Binding $parent[ItemsControl].((vm:ProjectLauncherViewModel)DataContext).OpenNewProjectSheetCommand}"/>
                         </DataTemplate>
 
@@ -44,7 +47,7 @@
                              Open/Edit are per-item commands on the ref; Edit opens the popup below. IsVisible
                              carries the floating bar's live filter (hidden, not removed — no bitmap churn). -->
                         <DataTemplate DataType="vm:RecentProjectRef">
-                            <ctrl:ProjectCard Margin="0,0,16,16" IsVisible="{Binding !IsFilteredOut}"
+                            <ctrl:ProjectCard IsVisible="{Binding !IsFilteredOut}"
                                               Title="{Binding Name}" MetaText="{Binding CacheSizeText}"
                                               Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
                                               OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>

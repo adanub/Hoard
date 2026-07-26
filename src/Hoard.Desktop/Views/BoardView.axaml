@@ -59,19 +59,20 @@
                         </ItemsControl.Styles>
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <WrapPanel ClipToBounds="False"/>
+                                <!-- Rows fill the width (like the masonry below); the panel owns the gutters. -->
+                                <ctrl:FillWrapPanel ClipToBounds="False"/>
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.DataTemplates>
                             <!-- "+ New folder" hides while a search is active (a result grid isn't a place to
                                  create); folder cards carry the bar's live NAME filter (hidden, not removed). -->
                             <DataTemplate DataType="vm:NewFolderTile">
-                                <ctrl:NewCard Label="New folder" Margin="0,0,16,16"
+                                <ctrl:NewCard Label="New folder"
                                               IsVisible="{Binding !$parent[ItemsControl].((vm:BoardViewModel)DataContext).IsSearchActive}"
                                               Command="{Binding $parent[ItemsControl].((vm:BoardViewModel)DataContext).OpenNewFolderSheetCommand}"/>
                             </DataTemplate>
                             <DataTemplate DataType="vm:BoardCardRef">
-                                <ctrl:BoardCard Margin="0,0,16,16" IsVisible="{Binding !IsFilteredOut}"
+                                <ctrl:BoardCard IsVisible="{Binding !IsFilteredOut}"
                                                 Title="{Binding Name}" MetaText="{Binding MetaText}"
                                                 Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
                                                 OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>

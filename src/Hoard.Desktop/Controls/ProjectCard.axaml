@@ -12,7 +12,8 @@
     <!-- The project card isn't clickable, so it reads as a CONCAVE INSET (recessed) panel rather than a
          floating card: no drop shadow, fill matching the page, and an inner dark-top + light-bottom bevel
          (ShadowInsetBevel) carving it in. Inner shadows need no outer room, so there's no reserve margin. -->
-    <Border Padding="10" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+    <!-- Width comes from the host (FillWrapPanel stretches cards to fill the row; the gallery pins 240). -->
+    <Border Padding="10" CornerRadius="{DynamicResource RadiusLg}"
             Background="{DynamicResource RecessedBrush}" BoxShadow="{DynamicResource ShadowInsetBevel}">
         <StackPanel Spacing="10">
             <!-- Collage sits INSIDE the well (padded) so the recessed beveled rim frames it; rounded all round.

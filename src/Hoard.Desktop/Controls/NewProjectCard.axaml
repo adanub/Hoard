@@ -30,9 +30,10 @@
         </Style>
     </UserControl.Styles>
 
-    <!-- Width fixed to the ProjectCard (240); height comes from the sizer below. Raised + clickable, so the
-         action stands out against the inset project cards. -->
-    <Border x:Name="CardRoot" Width="240" CornerRadius="{DynamicResource RadiusLg}"
+    <!-- Width comes from the host, matching the ProjectCards in the same grid (the gallery pins 240);
+         height comes from the sizer below. Raised + clickable, so the action stands out against the
+         inset project cards. -->
+    <Border x:Name="CardRoot" CornerRadius="{DynamicResource RadiusLg}"
             Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
             BorderThickness="1" Cursor="Hand"
             RenderTransformOrigin="50%,50%"
