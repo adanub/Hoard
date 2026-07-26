@@ -24,6 +24,12 @@ and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md
 
 ## Next (unordered, pick by need)
 
+- **Details panel: "Open on Pinterest"** — open the pin's page on Pinterest (the item's location on its
+  board, buildable as `pinterest.com/pin/<SourceId>/`), distinct from today's source-URL action (which
+  for Pinterest is the direct media CDN link).
+- **Details panel: "Show in Explorer/Finder"** — reveal the media file selected in the OS file manager
+  (`explorer /select,` on Windows, `open -R` on macOS), rather than only opening the media itself.
+
 - **FTS5 search** — scale-up from LIKE (additive aux table); premature while libraries are hundreds of
   pins.
 - **Video poster-frame thumbnails** — video tiles show a placeholder; needs an ffmpeg strategy (not
