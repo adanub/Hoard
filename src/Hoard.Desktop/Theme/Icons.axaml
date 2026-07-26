@@ -9,6 +9,7 @@
 
     <StreamGeometry x:Key="Icon.chevron-left">M15 18 L9 12 L15 6</StreamGeometry>
     <StreamGeometry x:Key="Icon.chevron-right">M9 18 L15 12 L9 6</StreamGeometry>
+    <StreamGeometry x:Key="Icon.chevron-down">M6 9 L12 15 L18 9</StreamGeometry>
     <StreamGeometry x:Key="Icon.plus">M5 12h14 M12 5v14</StreamGeometry>
     <StreamGeometry x:Key="Icon.x">M18 6 L6 18 M6 6 L18 18</StreamGeometry>
     <StreamGeometry x:Key="Icon.check">M20 6 9 17l-5-5</StreamGeometry>

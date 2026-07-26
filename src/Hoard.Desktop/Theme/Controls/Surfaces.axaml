@@ -27,12 +27,6 @@
         <Setter Property="BoxShadow" Value="{DynamicResource ButtonRestShadow}"/>
     </Style>
 
-    <!-- Progress bars use the accent (the Fluent default is a low-contrast grey that's unreadable on muted
-         surfaces like an importing board's empty collage). The indicator picks up Foreground. -->
-    <Style Selector="ProgressBar">
-        <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
-    </Style>
-
     <!-- Typography helpers. -->
     <Style Selector="TextBlock.h1">
         <Setter Property="FontSize" Value="{DynamicResource FontSize2Xl}"/>

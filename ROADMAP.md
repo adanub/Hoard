@@ -101,6 +101,22 @@ board's dispose token; **refuses to start while an import/backup sync runs** but
 (export never writes the archive, so nothing needs to gate on a reader). Tests: `ExportNamesTests` +
 `BoardExporterTests` (19 new). **162 Core / 84 Desktop green.**
 
+**FluentTheme RETIRED (2026-07-27, uncommitted, awaiting the user's visual verification):**
+`Theme/Theme.axaml` is now the app's entire theme — `<FluentTheme/>`, the `Avalonia.Themes.Fluent`
+package, and the placeholder `danger`/`overlay` App.axaml styles are gone, along with the dead
+`ConfirmDialog`/`MessageDialog` OS windows (unreferenced; the placeholders' only consumers). New
+token-driven stock-control themes under `Theme/Controls/`: **Chrome.axaml** (Window, PopupRoot,
+OverlayPopupHost, AdornerLayer focus ring, ToolTip, ItemsControl, ListBox — Window/PopupRoot seed the
+inherited `FontSizeBase`; raw Avalonia text default is 12), **Scroll.axaml** (ScrollViewer + slim
+buttonless pill ScrollBar), **ComboBox.axaml** (HoardInput-recessed field + chevron + popover-card
+dropdown; ComboBoxItem rows; new `Icon.chevron-down`), **ProgressBar.axaml** (accent bar, PART_*/
+TemplateSettings contracts kept; the infinite indeterminate animation stays leak-safe ONLY through
+BusyBar's visibility gate), **Implicit.axaml** (merged last: Button→HoardButton, TextBox→HoardInput,
+ListBoxItem→HoardListItem, ToggleButton→HoardSwitch as the by-type defaults, so an un-`Theme=`d
+control can't render blank). Rule recorded in CLAUDE.md/DESIGN.md: with no base theme, **a stock
+control the theme doesn't cover renders NOTHING** — theme it before first use. Build clean, **162
+Core / 84 Desktop green** (templates are runtime-verified only — needs the full visual pass).
+
 **Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
 detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch
 rollback behind a later-committed seq re-pends and heals instead of being buried forever; an unappliable
@@ -549,8 +565,8 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
   via the back-stack, auto-foldering on import — see Status above).
 - ~~**Image-detail as a pushed screen**~~ — **done, as an inline band instead** (the full-width masonry band +
   band/zoom as history steps; delete moved to an in-app note sheet, `DeleteDialog` deleted). Still open from
-  this bullet: **retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles** (the screens all use
-  the token theme now; the base theme is still layered over Fluent).
+  this bullet: ~~retire FluentTheme + the placeholder `accent`/`danger`/`overlay` styles~~ — **done 2026-07-27**
+  (see the Status block).
 - ~~**Restore project search**~~ — **done** (the floating bar's contextual search: a board live-filters its
   images + folder names, the Library filters board cards, the launcher filters recents; see the shell-chrome
   session below).

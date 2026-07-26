@@ -530,8 +530,20 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
 - **`Theme/Tokens.axaml` is the single source of truth** for colours (light/dark), radius, spacing, type, and
   shadow. **Never hardcode** a colour/radius/spacing in a view — bind a token via `{DynamicResource ...}`; add
   a token if one's missing. New components go under `Theme/Controls/` and into the dev component gallery.
-- The token layer exists but isn't wired into `App.axaml` yet (still `FluentTheme`); the existing
-  `accent`/`danger`/`overlay` button styles are placeholders the token-driven Button variants will replace.
+- **FluentTheme is RETIRED — `Theme/Theme.axaml` is the app's entire theme, with no base theme
+  underneath.** The stock-control templates Fluent used to supply live in `Theme/Controls/`:
+  `Chrome.axaml` (Window, PopupRoot, OverlayPopupHost, AdornerLayer, ToolTip, ItemsControl, ListBox),
+  `Scroll.axaml` (ScrollViewer + slim buttonless ScrollBar), `ComboBox.axaml`, `ProgressBar.axaml`
+  (BusyBar resolves this via `StyleKeyOverride`; its visibility-gated `IsIndeterminate` is what keeps
+  the infinite indeterminate animation leak-safe — the templates carry the PART_* contracts the
+  controls' code-behind expects, so keep structure when restyling). `Implicit.axaml` (merged LAST)
+  aliases the Hoard component themes as the keyed-by-type defaults (Button→HoardButton,
+  TextBox→HoardInput, ListBoxItem→HoardListItem, ToggleButton→HoardSwitch), so an un-`Theme=`d control
+  still renders. **A stock control with no theme renders NOTHING** — before using a control type new to
+  the app (CheckBox, Slider, Menu…), add a `Theme/Controls/` entry for it. The old placeholder
+  `danger`/`overlay` App.axaml styles and the Fluent-dependent `ConfirmDialog`/`MessageDialog` windows
+  (long dead code) are deleted; `Window`/`PopupRoot` themes seed the inherited `FontSizeBase` (raw
+  Avalonia default is 12, so dropping them would silently shrink all text).
 
 ## Working in this repo (environment realities)
 
@@ -540,10 +552,10 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
 - **The sandbox may block executing the bundled `gallery-dl.exe`** (third-party binary), including via the test
   runner. Direct diagnostic runs are sometimes allowed; don't tunnel execution through tests to get around a block.
 - **Avalonia 12 gotchas already hit:** `ItemsRepeater` is a separate NuGet package; the clipboard API changed to
-  `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); Fluent `Button`
-  backgrounds live on the template's `ContentPresenter`, so style `Button.<class> /template/ ContentPresenter#PART_ContentPresenter`
-  across states (`:pointerover`/`:pressed`/`:disabled`) rather than setting `Background` directly — see the
-  `overlay`/`danger` button styles. **In any custom interactive control template, make the inner
+  `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); a templated
+  control's visual state lives on its template parts, so restyle
+  `<class> /template/ <part>#<name>` across states (`:pointerover`/`:pressed`/`:disabled`) rather than
+  setting `Background` on the control — see the `ComboBoxItem` theme. **In any custom interactive control template, make the inner
   `ContentPresenter`/content `IsHitTestVisible="False"`** so the fill `Border` is the *single* hover/hit
   surface — otherwise the content (text/icon) is its own hit target and dragging across the content↔fill
   boundary fires enter/leave that flickers the control's `:pointerover`/`:pressed` (the fill `Border` must keep

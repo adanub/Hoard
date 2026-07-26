@@ -1,0 +1,83 @@
+<!--
+  ProgressBar — a slim accent bar on a recessed track. Implicit (keyed by type) because BusyBar (the
+  ONLY sanctioned indeterminate bar — see the CLAUDE.md memory rules) resolves its template via
+  StyleKeyOverride => typeof(ProgressBar). Contracts the code-behind expects: PART_Indicator (its
+  width/height is set from Value in code) and the TemplateSettings the indeterminate keyframes bind.
+  The infinite indeterminate animation is safe ONLY because BusyBar drops IsIndeterminate whenever
+  it's hidden or detached — the :indeterminate selector stops matching and the animation stops. That
+  gate is what made the Fluent-era compositor leak unrepresentable; never bypass BusyBar.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ControlTheme x:Key="{x:Type ProgressBar}" TargetType="ProgressBar">
+        <Setter Property="Background" Value="{DynamicResource MutedBrush}"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusFull}"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        ClipToBounds="True">
+                    <Panel>
+                        <Border Name="PART_Indicator"
+                                Background="{TemplateBinding Foreground}"
+                                CornerRadius="{TemplateBinding CornerRadius}"
+                                IsVisible="{Binding !IsIndeterminate, RelativeSource={RelativeSource TemplatedParent}}"/>
+                        <Border Name="PART_IndeterminateIndicator"
+                                Background="{TemplateBinding Foreground}"
+                                CornerRadius="{TemplateBinding CornerRadius}"
+                                IsVisible="{Binding IsIndeterminate, RelativeSource={RelativeSource TemplatedParent}}"/>
+                    </Panel>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+
+        <Style Selector="^:horizontal">
+            <Setter Property="MinHeight" Value="4"/>
+            <Setter Property="MinWidth" Value="80"/>
+        </Style>
+        <Style Selector="^:horizontal /template/ Border#PART_Indicator">
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="VerticalAlignment" Value="Stretch"/>
+        </Style>
+        <!-- Vertical bars are unused in the app; the minimal styles keep one honest if it ever appears. -->
+        <Style Selector="^:vertical">
+            <Setter Property="MinWidth" Value="4"/>
+            <Setter Property="MinHeight" Value="80"/>
+        </Style>
+        <Style Selector="^:vertical /template/ Border#PART_Indicator">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="VerticalAlignment" Value="Bottom"/>
+        </Style>
+
+        <Style Selector="^:horizontal:indeterminate /template/ Border#PART_IndeterminateIndicator">
+            <Style.Animations>
+                <Animation Easing="LinearEasing" IterationCount="Infinite" Duration="0:0:2">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="TranslateTransform.X" Value="{Binding $parent[ProgressBar].TemplateSettings.IndeterminateStartingOffset}"/>
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="TranslateTransform.X" Value="{Binding $parent[ProgressBar].TemplateSettings.IndeterminateEndingOffset}"/>
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+            <Setter Property="Width" Value="{Binding TemplateSettings.ContainerWidth, RelativeSource={RelativeSource TemplatedParent}}"/>
+        </Style>
+        <Style Selector="^:vertical:indeterminate /template/ Border#PART_IndeterminateIndicator">
+            <Style.Animations>
+                <Animation Easing="LinearEasing" IterationCount="Infinite" Duration="0:0:2">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="TranslateTransform.Y" Value="{Binding $parent[ProgressBar].TemplateSettings.IndeterminateStartingOffset}"/>
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="TranslateTransform.Y" Value="{Binding $parent[ProgressBar].TemplateSettings.IndeterminateEndingOffset}"/>
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+            <Setter Property="Height" Value="{Binding TemplateSettings.ContainerWidth, RelativeSource={RelativeSource TemplatedParent}}"/>
+        </Style>
+    </ControlTheme>
+</ResourceDictionary>

@@ -46,8 +46,10 @@ bevel can throw a highlight *and* a shadow.
 - `Theme/Controls/*.axaml` — component ControlThemes (`Button`, `Input`, `Switch`, `ListItem`), the shared
   `Pressable` template they reuse (one `Border#root` press-surface scaffold), and class-based `Surfaces`
   (Card / Badge / text helpers). Tappable controls reference `PressableSurfaceTemplate` rather than re-declaring it.
-- `Theme/Theme.axaml` — merges Tokens + Icons + Controls; referenced from `App.axaml` (replaces
-  `FluentTheme` when UI work begins).
+- `Theme/Theme.axaml` — merges Tokens + Icons + Controls; referenced from `App.axaml` and now the
+  **entire** theme (`FluentTheme` is retired): `Controls/Chrome|Scroll|ComboBox|ProgressBar.axaml`
+  supply the stock-control templates, `Controls/Implicit.axaml` makes the Hoard components the
+  by-type defaults. A stock control the theme doesn't cover renders nothing — theme it before use.
 - **Component gallery** — a dev-only view listing every component, variant, and icon. Our Storybook
   equivalent and the best guard against drift: build it alongside components and keep it current.
 
@@ -166,7 +168,8 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
 - **Toast** (`Services/ToastService.cs` + `Controls/ToastHost.axaml`) — transient, auto-dismissing status
   messages, bottom-right; the host is shell-mounted in `MainWindow` and hit-test-invisible. Error toasts edge
   in `DestructiveBrush`.
-- **Separator**, **Dialog window** (`ConfirmDialog`/`MessageDialog` — used for the destructive delete confirm).
+- **Separator** (not yet built). The old `ConfirmDialog`/`MessageDialog` OS windows are gone — every
+  confirm/notice is an in-app `SheetHost` (`ConfirmSheet`, note sheets) or a toast.
 
 ## Icons
 

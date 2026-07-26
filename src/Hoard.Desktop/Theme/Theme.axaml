@@ -1,6 +1,10 @@
 <!--
   Aggregates the Hoard design system: token + icon + component-theme resources, plus the surface/text styles.
-  Include this once from App.axaml (after FluentTheme during the migration). See DESIGN.md.
+  Include this once from App.axaml. This IS the app's whole theme (no Fluent underneath): Chrome/Scroll/
+  ComboBox/ProgressBar provide the stock-control templates Fluent used to, and Implicit (merged LAST, so
+  its StaticResource aliases resolve against the component dictionaries above it) makes the Hoard component
+  themes the keyed-by-type defaults. A stock control this file doesn't cover has NO template — add a
+  Theme/Controls entry for it before using it. See DESIGN.md.
 -->
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -15,6 +19,11 @@
                 <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/ListItem.axaml"/>
                 <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Switch.axaml"/>
                 <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Sheet.axaml"/>
+                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Chrome.axaml"/>
+                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Scroll.axaml"/>
+                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/ComboBox.axaml"/>
+                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/ProgressBar.axaml"/>
+                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Implicit.axaml"/>
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Styles.Resources>

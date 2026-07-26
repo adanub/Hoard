@@ -1,0 +1,17 @@
+<!--
+  Implicit fallbacks: with no base theme underneath, a stock control with no theme renders NOTHING —
+  a silent blank where a control should be. These alias the Hoard component themes as the implicit
+  (keyed-by-type) defaults so a Button/TextBox/row that forgets its Theme= still renders as a Hoard
+  control. Existing markup keeps the explicit opt-ins (`Theme="{StaticResource HoardButton}"` etc.);
+  both roads lead to the same theme. Merged LAST in Theme.axaml so the StaticResource references
+  resolve against the component dictionaries above it.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ControlTheme x:Key="{x:Type Button}" TargetType="Button" BasedOn="{StaticResource HoardButton}"/>
+    <ControlTheme x:Key="{x:Type TextBox}" TargetType="TextBox" BasedOn="{StaticResource HoardInput}"/>
+    <ControlTheme x:Key="{x:Type ListBoxItem}" TargetType="ListBoxItem" BasedOn="{StaticResource HoardListItem}"/>
+    <!-- Every ToggleButton in the app IS a switch; a future non-switch toggle should get its own theme. -->
+    <ControlTheme x:Key="{x:Type ToggleButton}" TargetType="ToggleButton" BasedOn="{StaticResource HoardSwitch}"/>
+</ResourceDictionary>
