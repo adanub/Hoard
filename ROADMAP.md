@@ -86,7 +86,7 @@ marker gets the honest refusal. Tests: **143 Core / 84 Desktop** green. **R3 (S3
 any mountable target (rclone/Syncthing cover object storage), so P5 is complete at R0–R2; don't
 resurrect without a new driving need.
 
-**Human-readable export — BUILT (2026-07-26, uncommitted, awaiting the user's runtime verification):**
+**Human-readable export — committed `b42a3e9`, user-verified in the running app:**
 the Board screen's ＋ menu gains **Export** — a sheet (`Controls/ExportSheet`, RemoteSheet-shaped; folder
 picker wired in `BoardView` code-behind) that materialises the board's subtree as a browsable
 `Board/Folder/image` tree at a chosen destination, via `Library/BoardExporter` + the pure, unit-tested
