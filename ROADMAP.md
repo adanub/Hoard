@@ -585,7 +585,8 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 - ~~**Restore project search**~~ — **done** (the floating bar's contextual search: a board live-filters its
   images + folder names, the Library filters board cards, the launcher filters recents; see the shell-chrome
   session below).
-- **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
+- ~~**Manual collections**~~ — **shelved (2026-07-27, user call: not important now).** Don't build
+  unprompted; if it returns, remember the last-source-sweep interaction (below).
 - ~~**Human-readable export/mirror**~~ — **built** as the on-demand Board ＋-menu **Export** (see the
   Status block; re-export is already an incremental refresh, so a "maintained mirror" mode is just
   re-running it — not built as an automatic watcher). The archive's `store/` itself stays
@@ -623,7 +624,8 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
 - ~~**`GetBoardDetailAsync` runs the per-source count query even for single-source boards**~~ — **done:** the
   per-source count query is skipped unless the board merges ≥2 sources (single-/zero-source boards never use it).
 - **Last-source sweep + manual collections:** `RemoveSourceAsync`'s last-source branch hard-deletes *every*
-  remaining live pin; once manual (non-source) collections land, exclude manually-added images from the sweep.
+  remaining live pin; IF manual (non-source) collections are ever built (shelved 2026-07-27), exclude
+  manually-added images from the sweep — moot until then.
 - ~~**Recycle path doesn't prune empty shard dirs**~~ — **done:** `IMediaStore.PruneEmptyShards` exposes the
   store's empty-parent pruning; `CurationService.FreeBlobsAsync` calls it after the batched recycle, so the
   recycle path tidies `ab/cd` dirs like `DeleteAsync` does (covered by a `NestedBoardTests` assertion).
