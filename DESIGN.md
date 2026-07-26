@@ -154,6 +154,16 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
 - **ConfirmSheet** (`Controls/ConfirmSheet.*`) — reusable confirm popup in a `SheetHost`, layered on top:
   title + message + Cancel/Confirm (`lg`), with an optional **N-second cooldown** (Confirm disabled, the
   countdown shown as a subscript under the centred label). Use for every destructive action.
+- **FillWrapPanel** (`Controls/FillWrapPanel.cs`, math in the unit-tested `Infrastructure/FillWrapMath`) —
+  the card-grid panel: wraps like a WrapPanel but rows FILL the width (column count = how many
+  nominal-width cards fit; every card stretches to the shared column width, so leftover smaller than one
+  more card is absorbed — the masonry's rule applied to cards). Owns the gutters (Column/RowSpacing);
+  items carry no spacing margins. Used by the launcher, Library, and Board-folder grids; the cards
+  themselves are width-flexible (no fixed 240 — a lone gallery demo pins its own width).
+- **Marquee** (`Controls/Marquee.cs`) — a clipping viewport inside `PressableSurfaceTemplate`: a button
+  label wider than its button crops at rest and pans end-to-end (slow ping-pong via the shared `Tween`,
+  never a code-built transform Animation) while `:pointerover`/`:pressed` set `IsActive`; snaps home on
+  leave. Inert whenever content fits.
 - **FlexWrapPanel** (`Controls/FlexWrapPanel.cs`) — flex-wrap-with-grow button group: items share the row
   equally and wrap one at a time when narrow. The standard container for any row of action buttons.
 - **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset`, thin border, accent focus

@@ -7,7 +7,8 @@
     Classes="secondary | outline | ghost | destructive"   and   Classes="sm | icon"
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ctrl="using:Hoard.Desktop.Controls">
 
     <ControlTheme x:Key="HoardButton" TargetType="Button">
         <Setter Property="Background" Value="{DynamicResource PrimaryGradientBrush}"/>
@@ -47,6 +48,15 @@
              text; reordering or weakening this selector silently reintroduces that regression. -->
         <Style Selector="^.secondary /template/ ContentPresenter#PART_ContentPresenter, ^.outline /template/ ContentPresenter#PART_ContentPresenter, ^.ghost /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Effect" Value="{x:Null}"/>
+        </Style>
+
+        <!-- A label wider than the button pans end-to-end (the template's Marquee) while hovered/pressed,
+             so a cropped caption becomes readable without growing the layout; it snaps home on leave. -->
+        <Style Selector="^:pointerover /template/ ctrl|Marquee#marquee">
+            <Setter Property="IsActive" Value="True"/>
+        </Style>
+        <Style Selector="^:pressed /template/ ctrl|Marquee#marquee">
+            <Setter Property="IsActive" Value="True"/>
         </Style>
 
         <!-- Press: the whole button face sinks down + shrinks (label rides along, staying centred) and the

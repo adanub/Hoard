@@ -42,6 +42,9 @@
                         <Button Theme="{StaticResource HoardButton}" Classes="ghost lg" Content="Ghost"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="destructive lg" Content="Destructive"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="lg" IsEnabled="False" Content="Disabled"/>
+                        <!-- Over-long label: crops at rest, pans (Marquee) while hovered/pressed. -->
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary lg" Width="150"
+                                Content="A label far too long for its button"/>
                     </WrapPanel>
 
                     <TextBlock Classes="muted" Text="Default"/>
@@ -110,17 +113,18 @@
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Project card"/>
                     <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Left">
-                        <ctrl:ProjectCard x:Name="DemoProjectCard" Title="HoardTest1"
+                        <!-- Width pinned: outside a FillWrapPanel the cards no longer size themselves. -->
+                        <ctrl:ProjectCard x:Name="DemoProjectCard" Width="240" Title="HoardTest1"
                                           MetaText="78 images · 12 MB cache"/>
                         <!-- Its "+ New project" companion: raised action tile, same footprint. -->
-                        <ctrl:NewProjectCard x:Name="DemoNewProjectCard" Label="New project"/>
+                        <ctrl:NewProjectCard x:Name="DemoNewProjectCard" Width="240" Label="New project"/>
                     </StackPanel>
                 </StackPanel>
 
                 <!-- Board card: collage + name + metadata, no Open button (card body opens), floating pencil -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Board card"/>
-                    <ctrl:BoardCard x:Name="DemoBoardCard"
+                    <ctrl:BoardCard x:Name="DemoBoardCard" Width="240"
                                     Title="animation-references-and-other-very-long-board-name"
                                     MetaText="37 images · 5 MB cache" HorizontalAlignment="Left"/>
                 </StackPanel>
@@ -128,7 +132,7 @@
                 <!-- New card: the leading "+ New …" action tile (new project / new board). Whole tile clickable. -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="New card"/>
-                    <ctrl:NewCard x:Name="DemoNewCard" Label="New board" HorizontalAlignment="Left"/>
+                    <ctrl:NewCard x:Name="DemoNewCard" Width="240" Label="New board" HorizontalAlignment="Left"/>
                 </StackPanel>
 
                 <!-- Item card: a masonry media tile — full-bleed image/GIF, convex bevel + border, hover lift,

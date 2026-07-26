@@ -10,7 +10,8 @@
   the press states set, so the TransformOperationsTransition interpolates rather than snaps.
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ctrl="using:Hoard.Desktop.Controls">
 
     <ControlTemplate x:Key="PressableSurfaceTemplate" TargetType="ContentControl">
         <Border Name="root" Background="{TemplateBinding Background}"
@@ -22,13 +23,18 @@
                     <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.08" Easing="CubicEaseOut"/>
                 </Transitions>
             </Border.Transitions>
-            <ContentPresenter Name="PART_ContentPresenter"
-                              Content="{TemplateBinding Content}"
-                              ContentTemplate="{TemplateBinding ContentTemplate}"
-                              Padding="{TemplateBinding Padding}"
-                              IsHitTestVisible="False"
-                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
-                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
+            <!-- The Marquee is inert while content fits; an over-wide label (a long board name on a sheet
+                 button) is clipped here and pans while the owner's states set IsActive. Hit-transparent
+                 like the presenter — the fill Border stays the SINGLE hover/press surface. -->
+            <ctrl:Marquee Name="marquee" IsHitTestVisible="False">
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Content="{TemplateBinding Content}"
+                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  Padding="{TemplateBinding Padding}"
+                                  IsHitTestVisible="False"
+                                  HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
+            </ctrl:Marquee>
         </Border>
     </ControlTemplate>
 </ResourceDictionary>

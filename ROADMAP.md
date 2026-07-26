@@ -114,8 +114,23 @@ TemplateSettings contracts kept; the infinite indeterminate animation stays leak
 BusyBar's visibility gate), **Implicit.axaml** (merged last: Button→HoardButton, TextBox→HoardInput,
 ListBoxItem→HoardListItem, ToggleButton→HoardSwitch as the by-type defaults, so an un-`Theme=`d
 control can't render blank). Rule recorded in CLAUDE.md/DESIGN.md: with no base theme, **a stock
-control the theme doesn't cover renders NOTHING** — theme it before first use. Build clean, **162
-Core / 84 Desktop green** (templates are runtime-verified only — needs the full visual pass).
+control the theme doesn't cover renders NOTHING** — theme it before first use. **User-verified
+visually and committed `63c9389`.**
+
+**Card grids fill the row + button-label marquee (2026-07-27, user-verified, landed as two feat
+commits):** (1) the launcher/Library/Board-folder card grids swap `WrapPanel`+item margins for
+**`Controls/FillWrapPanel`** (pure math in `Infrastructure/FillWrapMath`, 6 tests): column count = how
+many nominal-width (240) cards fit, every visible card stretches to the shared column width — leftover
+smaller than one more card is absorbed, the masonry's rule applied to cards; collapsed children
+(filtered cards, the searching-hidden "+ New" tile) give up their slot; panel owns the 16px gutters;
+launcher's `MaxWidth=1040` cap removed. The four card controls dropped their fixed `Width=240`
+(gallery demos pin their own). (2) **`Controls/Marquee`** now wraps the `ContentPresenter` inside
+`PressableSurfaceTemplate`: a button label wider than its button (previously cropped unreadably) pans
+end-to-end in a slow ping-pong while hovered/pressed (`HoardButton` styles set `IsActive`; the content
+is hit-transparent so it can't watch the pointer itself) and snaps home on leave — driven by the shared
+`Infrastructure/Tween` setting `TranslateTransform.X` directly (never a code-built transform Animation,
+per the crash gotcha), timers stopped on deactivate/detach. Inert when content fits, so rows (which
+share the template) just gain the clip. Gallery: long-label button demo. **162 Core / 90 Desktop green.**
 
 **Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
 detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch
