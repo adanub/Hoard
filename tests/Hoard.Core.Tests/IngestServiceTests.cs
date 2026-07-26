@@ -3,6 +3,7 @@ using Hoard.Core.Ingest;
 using Hoard.Core.Library;
 using Hoard.Core.Metadata;
 using Hoard.Core.Storage;
+using Hoard.Core.Sync;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -69,35 +70,36 @@ public class IngestServiceTests : IDisposable
 
         await using (var db = _dbFactory.CreateDbContext())
         {
-            var ops = await db.SyncOps.ToListAsync();
+            var ops = await db.ArchiveOps.Where(o => o.Kind == ArchiveOpKinds.AssetAdded).ToListAsync();
             Assert.Equal(2, ops.Count);
-            Assert.All(ops, o => Assert.Equal(Hoard.Core.Domain.SyncOpKind.Add, o.Op));
             var shas = await db.Assets.Select(a => a.Sha256).ToListAsync();
-            Assert.Equal(shas.OrderBy(s => s), ops.Select(o => o.EntityKey).OrderBy(s => s));
+            Assert.Equal(shas.OrderBy(s => s), ops.Select(o => o.Sha256).OrderBy(s => s));
         }
 
-        // Re-importing the same content adds no new assets and therefore logs no new ops.
+        // Re-importing unchanged pins adds no rows and re-emits no added ops (nothing changed to propagate).
         await new IngestService(_dbFactory, _store,
                 new[] { new FakeConnector(("AAA", "Nature"), ("BBB", "Nature")) })
             .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
 
         await using (var db = _dbFactory.CreateDbContext())
-            Assert.Equal(2, await db.SyncOps.CountAsync());
+            Assert.Equal(2, await db.ArchiveOps.CountAsync(o => o.Kind == ArchiveOpKinds.AssetAdded));
     }
 
     [Fact]
-    public async Task Same_image_in_two_boards_is_stored_once_linked_twice()
+    public async Task Same_image_as_two_pins_is_two_rows_sharing_one_blob()
     {
         var ingest = new IngestService(_dbFactory, _store,
             new[] { new FakeConnector(("SAME", "BoardA"), ("SAME", "BoardB")) });
 
         var result = await ingest.ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
 
-        Assert.Equal(1, result.NewAssets);     // one unique blob
-        Assert.Equal(1, result.DuplicateAssets);
+        Assert.Equal(2, result.NewAssets);     // identity is the PIN, not the content
+        Assert.Equal(0, result.DuplicateAssets);
 
         await using var db = _dbFactory.CreateDbContext();
-        Assert.Equal(1, await db.Assets.CountAsync());
+        var assets = await db.Assets.ToListAsync();
+        Assert.Equal(2, assets.Count);                                  // one row per pin…
+        Assert.Single(assets.Select(a => a.RelativePath).Distinct());   // …sharing ONE blob (the CAS dedups bytes)
         Assert.Equal(2, await db.Collections.CountAsync());
         Assert.Equal(2, await db.CollectionItems.CountAsync());
     }

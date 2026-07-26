@@ -95,10 +95,15 @@ JSON Lines, one op per line:
 
 ### Op catalogue
 
-Assets key on **SHA-256** (already content-addressed); collections get a minted **`CollectionUid` GUID**
-carried in ops, because local int ids mean nothing on another machine. Pin id (`SourceId`) rides along in
-payloads — this folds in the "pin-id-keyed link model" review follow-up, collapsing skip/dedup/orphan-
-reattach onto natural keys.
+**Asset ops key on the PIN — `(connector, sourceId)` in the payload — since the v9 pin-identity change**;
+the op's `sha` column holds the emission-time content sha as the legacy key (pre-v9 ops carry no payload
+identity; the dedup era guaranteed one row per sha, so sha resolution stays valid for them) and the
+fallback for pinless assets. The pin is a deterministic natural key every device derives identically, so
+concurrent saves of the same pin converge with **no uid minting and no aliasing**; collections/sources
+still get a minted **uid** carried in ops (they have no natural key), because local int ids mean nothing
+on another machine. `asset.added` replay is an **upsert-by-pin** (LWW by HLC) — a re-emitted added op is
+how a refreshed pin (new bytes, new metadata, moved board) propagates — and a legacy added op's replay
+derives board/section provenance from its payload sidecar via the ONE shared parser in Core.
 
 | op | payload (beyond keys) | emitted by today's path |
 |---|---|---|
@@ -127,11 +132,12 @@ interleaving:
 
 - Set memberships (links, sources) are an observed-remove set: for a given key, the op with the greatest
   HLC wins.
-- Asset lifecycle (`tombstoned` / `restored` / `removed`) is LWW by HLC on the same sha — a later restore
-  beats an earlier tombstone and vice versa. Project-wide, per the ownership rule above.
+- Asset lifecycle (`tombstoned` / `restored` / `removed`) is LWW by HLC on the same pin — a later restore
+  beats an earlier tombstone and vice versa. Per-pin, per the identity rule above.
 - Field updates (`collection.renamed`) are LWW per field.
-- Concurrent same-content import on two devices: both emit `asset.added` for the same sha (idempotent
-  upsert) and their own `item.linked`; the blob write is temp-file + rename of identical bytes — safe.
+- Concurrent same-pin import on two devices: both emit `asset.added` for the same pin (the replay
+  upsert converges them, even if the source re-encoded the bytes between the two crawls) and their own
+  `item.linked`; identical-bytes blob writes are temp-file + rename — safe.
 
 ### Blob lifecycle
 

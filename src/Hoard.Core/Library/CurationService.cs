@@ -31,9 +31,10 @@ public sealed class CurationService
     }
 
     /// <summary>
-    /// Curate an asset out by <b>tombstoning</b> it: keep the DB row (and its board links, so it still
-    /// appears in place) but mark it deleted with the supplied note, free its blob from disk, and log a
-    /// Remove op. The removal is therefore global (one row per unique content), recorded, and restorable.
+    /// Curate a pin out by <b>tombstoning</b> it: keep the DB row (and its board links, so it still
+    /// appears in place) but mark it deleted with the supplied note, free its blob from disk (unless
+    /// another live pin shares those bytes), and log a Remove op. The removal is per-pin — the same
+    /// content saved as a different pin elsewhere is its own row and stays — recorded, and restorable.
     /// Returns the asset's SHA-256 (so callers can evict cached thumbnails), or null if it no longer
     /// exists or was already deleted.
     /// </summary>
@@ -53,14 +54,15 @@ public sealed class CurationService
         // Tombstone the row + log the op atomically (board links and tags stay, so the tile remains).
         asset.DeletedAt = DateTimeOffset.UtcNow;
         asset.DeletionNote = note.Trim();
-        SyncLog.RecordRemove(db, sha);
-        _archive.RecordAssetTombstoned(db, sha, asset.DeletionNote, asset.DeletedAt.Value);
+        _archive.RecordAssetTombstoned(db, asset);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
 
         // Free the blob only after the commit, so a failure here leaves an orphan blob (harmless,
-        // reclaimable) rather than a live row pointing at a missing file.
-        await _store.DeleteAsync(relativePath, ct).ConfigureAwait(false);
+        // reclaimable) rather than a live row pointing at a missing file — and only when this pin was
+        // its last live referrer (rows aren't unique per content).
+        foreach (var freeable in await UnreferencedAsync(db, [relativePath], ct).ConfigureAwait(false))
+            await _store.DeleteAsync(freeable, ct).ConfigureAwait(false);
         return sha;
     }
 
@@ -137,7 +139,8 @@ public sealed class CurationService
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
-        await FreeBlobsAsync(freed, ct).ConfigureAwait(false);
+        // Post-commit: free only blobs whose last live referrer just went (shared-content pins survive).
+        await FreeBlobsAsync(await UnreferencedAsync(db, freed, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
         return freed.Count;
     }
 
@@ -172,7 +175,8 @@ public sealed class CurationService
         db.Collections.RemoveRange(collections); // cascade removes each one's CollectionItems
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
-        await FreeBlobsAsync(freed, ct).ConfigureAwait(false);
+        // Post-commit: free only blobs whose last live referrer just went (shared-content pins survive).
+        await FreeBlobsAsync(await UnreferencedAsync(db, freed, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
         return freed.Count;
     }
 
@@ -213,14 +217,14 @@ public sealed class CurationService
 
         // Ops: unlink from the old board, (re-)link into the new one with the attribution cleared — the
         // item.linked upsert models both branches (the survivor keeps its own note/added-at).
-        var sha = await db.Assets.Where(a => a.Id == assetId).Select(a => a.Sha256).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
         var from = await db.Collections.FirstOrDefaultAsync(c => c.Id == fromCollectionId, ct).ConfigureAwait(false);
         var to = await db.Collections.FirstOrDefaultAsync(c => c.Id == toCollectionId, ct).ConfigureAwait(false);
-        if (sha is not null && from is not null && to is not null)
+        if (asset is not null && from is not null && to is not null)
         {
             var survivor = destLink ?? link;
-            _archive.RecordItemUnlinked(db, sha, ArchiveLog.UidOf(from));
-            _archive.RecordItemLinked(db, sha, ArchiveLog.UidOf(to), sourceUid: null, survivor.Note, survivor.AddedAt);
+            _archive.RecordItemUnlinked(db, asset, ArchiveLog.UidOf(from));
+            _archive.RecordItemLinked(db, asset, ArchiveLog.UidOf(to), sourceUid: null, survivor.Note, survivor.AddedAt);
         }
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -228,22 +232,39 @@ public sealed class CurationService
     }
 
     /// <summary>
-    /// Stage a hard delete of <paramref name="assets"/>: log a Remove op per asset (keyed by content SHA, the
-    /// sync foundation) and remove its row — which cascades its board links + tags. Returns the blob paths to
-    /// free <i>after</i> the commit (so a mid-way failure orphans a blob harmlessly rather than stranding a row).
-    /// Does not call SaveChanges, so the caller can remove the owning source/board in the same transaction.
+    /// Stage a hard delete of <paramref name="assets"/>: log a Remove op per asset (carrying its pin
+    /// identity) and remove its row — which cascades its board links + tags. Returns the blob paths to
+    /// free <i>after</i> the commit (so a mid-way failure orphans a blob harmlessly rather than stranding a
+    /// row); run them through <see cref="UnreferencedAsync"/> first so a blob a surviving live pin still
+    /// shares is never freed. Does not call SaveChanges, so the caller can remove the owning source/board
+    /// in the same transaction.
     /// </summary>
     private List<string> StageAssetRemovals(HoardDbContext db, IReadOnlyList<Asset> assets)
     {
         var blobs = new List<string>(assets.Count);
         foreach (var asset in assets)
         {
-            SyncLog.RecordRemove(db, asset.Sha256);
-            _archive.RecordAssetRemoved(db, asset.Sha256);
+            _archive.RecordAssetRemoved(db, asset);
             blobs.Add(asset.RelativePath);
             db.Assets.Remove(asset);
         }
         return blobs;
+    }
+
+    /// <summary>Of <paramref name="relativePaths"/>, the (distinct) ones no LIVE row still references —
+    /// rows aren't unique per content, so a blob is freed only when its last live referrer goes. Call
+    /// after the commit that removed/tombstoned the referrers being deleted.</summary>
+    private static async Task<List<string>> UnreferencedAsync(
+        HoardDbContext db, IReadOnlyList<string> relativePaths, CancellationToken ct)
+    {
+        var distinct = relativePaths.Distinct().ToList();
+        if (distinct.Count == 0) return distinct;
+        var stillHeld = await db.Assets
+            .Where(a => a.DeletedAt == null && distinct.Contains(a.RelativePath))
+            .Select(a => a.RelativePath)
+            .Distinct()
+            .ToListAsync(ct).ConfigureAwait(false);
+        return distinct.Except(stillHeld).ToList();
     }
 
     /// <summary>

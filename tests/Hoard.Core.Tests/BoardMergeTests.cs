@@ -139,7 +139,7 @@ public class BoardMergeTests : IDisposable
             Assert.Equal(0, await db.Assets.CountAsync(a => a.SourceId == "a1" || a.SourceId == "a2")); // rows GONE
             Assert.Equal(1, await db.Assets.CountAsync());                                              // only b1 left
             Assert.Null(await db.Assets.Where(a => a.SourceId == "b1").Select(a => a.DeletedAt).SingleAsync()); // b1 live
-            Assert.Equal(2, await db.SyncOps.CountAsync(o => o.Op == Hoard.Core.Domain.SyncOpKind.Remove)); // one Remove per deleted asset
+            Assert.Equal(2, await db.ArchiveOps.CountAsync(o => o.Kind == Hoard.Core.Sync.ArchiveOpKinds.AssetRemoved)); // one removed op per deleted asset
         }
     }
 
@@ -223,7 +223,7 @@ public class BoardMergeTests : IDisposable
             Assert.Empty(await db.Collections.ToListAsync());             // board grouping gone
             Assert.Equal(0, await db.CollectionItems.CountAsync());       // links cascaded away
             Assert.Equal(0, await db.Assets.CountAsync());                // image rows GONE (not tombstoned)
-            Assert.Equal(2, await db.SyncOps.CountAsync(o => o.Op == Hoard.Core.Domain.SyncOpKind.Remove));
+            Assert.Equal(2, await db.ArchiveOps.CountAsync(o => o.Kind == Hoard.Core.Sync.ArchiveOpKinds.AssetRemoved));
         }
     }
 

@@ -4,21 +4,6 @@ What's planned, in rough priority order. **Forward-looking only** — completed 
 and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md` for storage/sync and
 `DESIGN.md` for UI). Keep entries short, and delete them when they land.
 
-## In progress
-
-- **Pin-id-keyed asset identity.** An `Asset` becomes one *saved pin* — identity `(SourceConnector,
-  SourceId)` — instead of one unique content hash; `Sha256` becomes just the blob pointer (the
-  content-addressed store still dedups bytes on disk; row-level dedup is dropped — duplication across
-  boards is acceptable, per user call 2026-07-27). Board/section provenance (`SourceBoardId`,
-  `SourceSectionId`) is stored first-class on the asset at import. This collapses the four cooperating
-  mechanisms (crawl+link, dedup-by-sha, target-aware skip-archive, sidecar-parsing orphan re-attach)
-  into one pin-id rule, and structurally fixes: the `SidecarBoardId` drift bomb (ONE Pinterest sidecar
-  parser, moved to Core), re-encoded-pin duplicates, the empty-board orphan floor, restored sectioned
-  orphans landing on the root, and the `RestoreAsync`/`RefetchAsync` unique-sha-collision wart.
-  Tombstones become per-pin. Archive ops gain pin identity in their payloads (sha stays the legacy
-  key; replay resolves new ops by pin, old ops by sha). The vestigial `SyncLog`/`SyncOps` writes are
-  removed (ArchiveLog is the source of truth; the table stays for schema stability).
-
 ## Next (unordered, pick by need)
 
 - **FTS5 search** — scale-up from LIKE (additive aux table); premature while libraries are hundreds of

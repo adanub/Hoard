@@ -1,3 +1,4 @@
+using Hoard.Core.Domain;
 using Hoard.Core.Connectors;
 using Hoard.Core.Ingest;
 using Hoard.Core.Library;
@@ -115,8 +116,8 @@ public class ArchiveConvergenceTests : IDisposable
         await using (var db = factory.CreateDbContext())
         {
             await first.EnsureReadyAsync(db);
-            first.RecordAssetRemoved(db, "sha-1");
-            first.RecordAssetRemoved(db, "sha-2");
+            first.RecordAssetRemoved(db, Doc("sha-1"));
+            first.RecordAssetRemoved(db, Doc("sha-2"));
             await db.SaveChangesAsync();
             await first.FlushSegmentAsync(db);
         }
@@ -127,7 +128,7 @@ public class ArchiveConvergenceTests : IDisposable
         await using (var db = wiped.CreateDbContext())
         {
             await restarted.EnsureReadyAsync(db);
-            restarted.RecordAssetRemoved(db, "sha-3");
+            restarted.RecordAssetRemoved(db, Doc("sha-3"));
             await db.SaveChangesAsync();
             Assert.Equal(3, (await db.ArchiveOps.SingleAsync()).Seq); // beyond the segment's 1..2
         }
@@ -143,8 +144,8 @@ public class ArchiveConvergenceTests : IDisposable
         await using (var db = factory.CreateDbContext())
         {
             await archive.EnsureReadyAsync(db);
-            archive.RecordAssetRemoved(db, "sha-1");
-            archive.RecordAssetRemoved(db, "sha-2");
+            archive.RecordAssetRemoved(db, Doc("sha-1"));
+            archive.RecordAssetRemoved(db, Doc("sha-2"));
             await db.SaveChangesAsync();
             await archive.FlushSegmentAsync(db);
         }
@@ -157,7 +158,7 @@ public class ArchiveConvergenceTests : IDisposable
         // The next flush repairs the tail and appends cleanly — no welded garbage line, nothing lost.
         await using (var db = factory.CreateDbContext())
         {
-            archive.RecordAssetRemoved(db, "sha-3");
+            archive.RecordAssetRemoved(db, Doc("sha-3"));
             await db.SaveChangesAsync();
             await archive.FlushSegmentAsync(db);
         }
@@ -175,7 +176,7 @@ public class ArchiveConvergenceTests : IDisposable
         await using (var db = factory.CreateDbContext())
         {
             await archive.EnsureReadyAsync(db);
-            archive.RecordAssetRemoved(db, "sha-1");
+            archive.RecordAssetRemoved(db, Doc("sha-1"));
             await db.SaveChangesAsync();
             await archive.FlushSegmentAsync(db);
             await archive.FlushSegmentAsync(db); // nothing new — nothing appended
@@ -265,4 +266,8 @@ public class ArchiveConvergenceTests : IDisposable
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch { }
     }
+
+    /// <summary>A minimal asset row for tests that only need SOME op to exercise segment mechanics
+    /// (pinless, so the op keys on its sha — the legacy fallback path).</summary>
+    private static Asset Doc(string sha) => new() { Sha256 = sha };
 }

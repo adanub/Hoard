@@ -146,7 +146,7 @@ public class NestedBoardTests : IDisposable
             Assert.Equal(0, await db.Collections.CountAsync());     // board + Kitchen + Sink all gone
             Assert.Equal(0, await db.CollectionItems.CountAsync()); // links cascaded away
             Assert.Equal(0, await db.Assets.CountAsync());          // image rows GONE (not tombstoned)
-            Assert.Equal(2, await db.SyncOps.CountAsync(o => o.Op == SyncOpKind.Remove));
+            Assert.Equal(2, await db.ArchiveOps.CountAsync(o => o.Kind == Hoard.Core.Sync.ArchiveOpKinds.AssetRemoved));
         }
     }
 

@@ -20,7 +20,11 @@ public class HoardDbContext : DbContext
     {
         b.Entity<Asset>(e =>
         {
-            e.HasIndex(a => a.Sha256).IsUnique();
+            // Identity is the PIN — (SourceConnector, SourceId) — not the content hash: rows may share a
+            // Sha256 (same bytes saved as two pins), so the sha index is a plain blob-pointer lookup.
+            // The pin index stays non-unique too (legacy dedup-era data can hold the same pin twice, once
+            // per content revision); uniqueness is the ingest upsert's job, not a constraint's.
+            e.HasIndex(a => a.Sha256);
             e.HasIndex(a => new { a.SourceConnector, a.SourceId });
             e.Property(a => a.Sha256).IsRequired();
             e.Property(a => a.RelativePath).IsRequired();

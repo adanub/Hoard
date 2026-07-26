@@ -94,7 +94,7 @@ public sealed class IngestService
             : null;
 
         // Local caches so repeated keys within a single import resolve before SaveChanges.
-        var assetsBySha = new Dictionary<string, Asset>();
+        var assetsByIdentity = new Dictionary<string, Asset>();
         var collections = new Dictionary<string, Collection>();
         var tags = new Dictionary<string, Tag>(StringComparer.OrdinalIgnoreCase);
         // The resolved CollectionSource per (connector, board id) this run — keyed like the uniqueness key —
@@ -134,13 +134,21 @@ public sealed class IngestService
 
             if (item.SourceId is not null) importedPins.Add(item.SourceId);
             var blob = await _store.PutAsync(item.FilePath, itemCt).ConfigureAwait(false);
-            var existing = await FindExistingAssetAsync(db, assetsBySha, blob.Sha256, committed).ConfigureAwait(false);
+            // Identity is the PIN — (connector, SourceId) — falling back to content for a pinless item
+            // (unparseable sidecar), so re-imports stay idempotent either way.
+            var existing = await FindExistingAssetAsync(
+                db, assetsByIdentity, item.Connector, item.SourceId, blob.Sha256, committed).ConfigureAwait(false);
 
-            // Honour a tombstone: this content was deliberately deleted, so don't resurrect it (and drop
-            // the blob we just re-stored). The DB is the authority even if the skip-archive missed it.
+            // Honour a tombstone: this pin was deliberately deleted, so don't resurrect it — and re-free
+            // the blob we just re-stored, unless another LIVE row shares those bytes (rows aren't unique
+            // per content, so a blob can have several referrers). The DB is the authority even if the
+            // skip-archive missed it.
             if (existing is { DeletedAt: not null })
             {
-                await _store.DeleteAsync(blob.RelativePath, committed).ConfigureAwait(false);
+                var shared = await db.Assets
+                    .AnyAsync(a => a.DeletedAt == null && a.RelativePath == blob.RelativePath, committed)
+                    .ConfigureAwait(false);
+                if (!shared) await _store.DeleteAsync(blob.RelativePath, committed).ConfigureAwait(false);
                 processed++;
                 skippedDeleted++;
                 progress?.Report(new IngestProgress(IngestPhase.Storing, processed, 0,
@@ -149,7 +157,8 @@ public sealed class IngestService
             }
 
             var isNew = existing is null;
-            var asset = existing ?? CreateAsset(db, assetsBySha, blob, item);
+            var asset = existing ?? CreateAsset(db, assetsByIdentity, blob, item);
+            if (!isNew) RefreshAsset(db, asset, blob, item);
 
             // Import into the one board the user chose/created (a merge can add several source boards), or
             // auto-folder by the pin's own source board.
@@ -224,11 +233,13 @@ public sealed class IngestService
     /// After a targeted import, re-attach <b>orphaned live</b> assets that belong to a board we just imported but
     /// weren't re-listed by the crawl (e.g. a restored image whose pin was removed from the source board, so
     /// gallery-dl never sees it again). Their content is already in the library — they only lost their board
-    /// link — so we link them back into the target by the board id in their stored sidecar. The set of "imported
-    /// boards" is the crawl's sources <i>plus</i> the target's already-recorded sources, so a re-sync of a board
-    /// that's now empty at the source (crawl emits nothing) still re-attaches its orphans. Tombstoned
-    /// (blacklisted) assets are excluded, and any pin the crawl actually handled is skipped (no double link).
-    /// Returns how many were re-attached.
+    /// link — matched by their first-class <see cref="Asset.SourceBoardId"/> (indexed provenance; never a
+    /// sidecar re-parse). The set of "imported boards" is the crawl's sources <i>plus</i> the target's
+    /// already-recorded sources, so a re-sync of a board that's now empty at the source (crawl emits nothing)
+    /// still re-attaches its orphans. A sectioned orphan re-files into its section folder when that folder
+    /// still exists (find-only — a re-attach doesn't mint folders the crawl didn't). Tombstoned (blacklisted)
+    /// assets are excluded, and any pin the crawl actually handled is skipped (no double link). Returns how
+    /// many were re-attached.
     /// </summary>
     private async Task<int> ReattachOrphansAsync(
         HoardDbContext db, Collection? targetCollection,
@@ -250,30 +261,39 @@ public sealed class IngestService
         if (sourceIdByBoard.Count == 0) return 0;
 
         // Un-tracked read (we only insert links, never modify the orphan rows).
+        var boardIds = sourceIdByBoard.Keys.ToList();
         var orphans = await db.Assets
             .AsNoTracking()
-            .Where(a => a.DeletedAt == null && a.SourceId != null && !a.CollectionItems.Any())
+            .Where(a => a.DeletedAt == null && a.SourceId != null && !a.CollectionItems.Any()
+                        && a.SourceBoardId != null && boardIds.Contains(a.SourceBoardId))
             .ToListAsync(ct).ConfigureAwait(false);
 
         var reattached = 0;
         foreach (var orphan in orphans)
         {
             if (importedPins.Contains(orphan.SourceId!)) continue; // the crawl already re-listed this pin
-            var boardId = SidecarBoardId.From(orphan.MetadataJson);
-            if (boardId is null || !sourceIdByBoard.TryGetValue(boardId, out var source)) continue;
+            var source = sourceIdByBoard[orphan.SourceBoardId!];
+
+            var linkTarget = targetCollection;
+            if (orphan.SourceSectionId is { } sectionId)
+            {
+                var folder = await db.Collections.FirstOrDefaultAsync(
+                    c => c.ParentId == targetCollection.Id && c.SourceSectionId == sectionId, ct).ConfigureAwait(false);
+                if (folder is not null) linkTarget = folder;
+            }
 
             var link = new CollectionItem
             {
-                CollectionId = targetCollection.Id,
+                CollectionId = linkTarget.Id,
                 AssetId = orphan.Id,
                 CollectionSourceId = source.Id,
                 AddedAt = DateTimeOffset.UtcNow,
             };
             db.CollectionItems.Add(link);
-            _archive.RecordItemLinked(db, orphan.Sha256, ArchiveLog.UidOf(targetCollection), source.Uid, link.Note, link.AddedAt);
+            _archive.RecordItemLinked(db, orphan, ArchiveLog.UidOf(linkTarget), source.Uid, link.Note, link.AddedAt);
             reattached++;
             progress?.Report(new IngestProgress(IngestPhase.Storing, 0, 0,
-                $"Re-attached {orphan.Title ?? orphan.SourceId}", ToView(orphan), targetCollection.Id));
+                $"Re-attached {orphan.Title ?? orphan.SourceId}", ToView(orphan), linkTarget.Id));
         }
         if (reattached > 0) await db.SaveChangesAsync(ct).ConfigureAwait(false);
         return reattached;
@@ -295,14 +315,15 @@ public sealed class IngestService
         var asset = await db.Assets.FirstOrDefaultAsync(a => a.Id == assetId, ct).ConfigureAwait(false);
         if (asset is null || asset.DeletedAt is null) return null;
 
-        var oldSha = asset.Sha256; // the re-download can yield different bytes; the op keys on the old identity
+        // The re-download can yield different bytes; the row IS the pin, so its blob pointer just moves
+        // (no unique-sha constraint to collide with — another pin may legitimately hold the same bytes).
+        var oldSha = asset.Sha256; // the op keys on the old identity so other machines can follow the transition
         var blob = await ReDownloadAsync(asset, ct).ConfigureAwait(false);
         asset.RelativePath = blob.RelativePath;
         asset.Sha256 = blob.Sha256;
         asset.Bytes = blob.Bytes;
         asset.DeletedAt = null;
         asset.DeletionNote = null;
-        SyncLog.RecordAdd(db, asset); // a restore is a genuine re-add to the library
         _archive.RecordAssetRestored(db, oldSha, asset);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
@@ -372,28 +393,25 @@ public sealed class IngestService
 
     /// <summary>
     /// The (board, pin) pairs the connector should pre-skip when filling <paramref name="targetCollectionId"/>,
-    /// rebuilt from the DB so the skip-archive can never drift. It deliberately covers only:
-    ///   • pins ALREADY IN the target board (so an incremental re-import skips what's there), and
-    ///   • every <b>tombstoned (blacklisted)</b> pin, globally (so deleted content is never re-fetched).
-    /// It does <b>not</b> skip a live pin just because it sits in some <i>other</i> board — that pin must still be
-    /// linked into the target, so it's left for download → dedup-by-hash → link (this is what lets a re-import or
-    /// Sync repopulate a board that's missing items it holds elsewhere) — and it does <b>not</b> skip a held live
-    /// pin whose <b>blob is missing from the store</b> (checked per pin against the disk), so a Sync repairs
-    /// lost/never-replicated files by re-downloading them. The blacklist correctness is also
-    /// belt-and-braces: <see cref="ImportAsync"/> re-checks <c>DeletedAt</c> after download. A null target keeps
-    /// the legacy whole-project behaviour for the auto-folder path. Flat join (not a SelectMany over the nav,
-    /// which SQLite can't APPLY); over-claiming a pin under a sibling source board is safe (only skips content we
-    /// already hold for that board).
+    /// rebuilt from the DB so the skip-archive can never drift. Each pin skips under its OWN
+    /// <see cref="Asset.SourceBoardId"/> — first-class provenance, no join through CollectionSources, no
+    /// over-claiming. It covers exactly:
+    ///   • live pins already held anywhere in the target board's subtree (so an incremental re-import
+    ///     skips what's there — but NOT pins merely held in some other board: those must still be linked
+    ///     into the target, which is what lets a re-import/Sync repopulate a board), and
+    ///   • every <b>tombstoned (blacklisted)</b> pin, globally and regardless of links (a deleted pin
+    ///     never re-fetches, even after its board went away).
+    /// A held live pin whose <b>blob is missing/torn on disk</b> is deliberately NOT emitted, so a Sync
+    /// repairs lost files by re-downloading them (belt-and-braces: <see cref="ImportAsync"/> re-checks
+    /// <c>DeletedAt</c> after download). A legacy row not yet carrying provenance can't pre-skip — its
+    /// pin re-downloads once and the pin-keyed upsert stamps it (self-heal). A null target keeps the
+    /// whole-project behaviour for the auto-folder path.
     /// </summary>
     private static async Task<IReadOnlyCollection<KnownSourceItem>> GetKnownItemsAsync(
         HoardDbContext db, IMediaStore store, int? targetCollectionId, CancellationToken ct)
     {
-        // A LIVE pin whose blob is gone from the store — or truncated by a crash-torn write from an old
-        // build — must NOT pre-skip: leaving it out of the skip-archive is what makes a Sync re-download
-        // it (the "items lost" half of the sync promise; this was the gap where a sync "completed"
-        // without repairing a single missing file). Tombstones always skip: that's the blacklist, and
-        // their blobs are freed by design. Presence + length come from ONE store walk, not a stat per
-        // pin — the store may live on a network share where per-file round-trips cost milliseconds each.
+        // Presence + length come from ONE store walk, not a stat per pin — the store may live on a
+        // network share where per-file round-trips cost milliseconds each.
         Dictionary<string, long>? blobLengths = null;
         bool HasIntactBlob(string relativePath, long bytes)
         {
@@ -405,52 +423,32 @@ public sealed class IngestService
                    && length == bytes;
         }
 
-        var rows = await (
-            from ci in db.CollectionItems
-            where ci.Asset.SourceId != null
-                  && (targetCollectionId == null || ci.CollectionId == targetCollectionId || ci.Asset.DeletedAt != null)
-            join s in db.CollectionSources on ci.CollectionId equals s.CollectionId
-            where s.SourceBoardId != null
-            select new { Board = s.SourceBoardId!, Source = ci.Asset.SourceId!, ci.Asset.RelativePath, ci.Asset.Bytes, Deleted = ci.Asset.DeletedAt != null })
+        var held = db.CollectionItems.AsQueryable();
+        if (targetCollectionId is int root)
+        {
+            var subtree = await CollectionTree.SubtreeIdsAsync(db, root, ct).ConfigureAwait(false);
+            held = held.Where(ci => subtree.Contains(ci.CollectionId));
+        }
+        var rows = await held
+            .Where(ci => ci.Asset.DeletedAt == null && ci.Asset.SourceId != null && ci.Asset.SourceBoardId != null)
+            .Select(ci => new { Board = ci.Asset.SourceBoardId!, Source = ci.Asset.SourceId!, ci.Asset.RelativePath, ci.Asset.Bytes })
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
+
         var known = new HashSet<KnownSourceItem>();
         foreach (var row in rows)
         {
-            if (!row.Deleted && !HasIntactBlob(row.RelativePath, row.Bytes)) continue;
+            if (!HasIntactBlob(row.RelativePath, row.Bytes)) continue; // lost blob → let the crawl repair it
             known.Add(new KnownSourceItem(row.Board, row.Source));
         }
 
-        // Section pins sit in child folders whose CollectionId carries no CollectionSource of its own (sources
-        // live on the root board), so the join above misses them and a re-sync would re-download every sectioned
-        // pin. For a targeted import, pair each held pin in a descendant folder with each of the board's source
-        // board ids — over-claiming a held pin is safe (it only ever skips content we already have).
-        if (targetCollectionId is int root)
-        {
-            var descendants = (await CollectionTree.SubtreeIdsAsync(db, root, ct).ConfigureAwait(false))
-                .Where(id => id != root).ToList();
-            if (descendants.Count > 0)
-            {
-                var rootBoards = await db.CollectionSources
-                    .Where(s => s.CollectionId == root && s.SourceBoardId != null)
-                    .Select(s => s.SourceBoardId!)
-                    .Distinct().ToListAsync(ct).ConfigureAwait(false);
-                if (rootBoards.Count > 0)
-                {
-                    var sectionPins = await db.CollectionItems
-                        .Where(ci => descendants.Contains(ci.CollectionId) && ci.Asset.SourceId != null)
-                        .Select(ci => new { Source = ci.Asset.SourceId!, ci.Asset.RelativePath, ci.Asset.Bytes, Deleted = ci.Asset.DeletedAt != null })
-                        .Distinct().ToListAsync(ct).ConfigureAwait(false);
-                    foreach (var pin in sectionPins)
-                    {
-                        // Same lost-blob rule as above: a foldered pin missing its file re-downloads.
-                        if (!pin.Deleted && !HasIntactBlob(pin.RelativePath, pin.Bytes)) continue;
-                        foreach (var board in rootBoards)
-                            known.Add(new KnownSourceItem(board, pin.Source));
-                    }
-                }
-            }
-        }
+        var tombstoned = await db.Assets
+            .Where(a => a.DeletedAt != null && a.SourceId != null && a.SourceBoardId != null)
+            .Select(a => new { Board = a.SourceBoardId!, Source = a.SourceId! })
+            .Distinct()
+            .ToListAsync(ct).ConfigureAwait(false);
+        foreach (var t in tombstoned)
+            known.Add(new KnownSourceItem(t.Board, t.Source));
 
         return known.ToList();
     }
@@ -493,13 +491,77 @@ public sealed class IngestService
         new(a.Id, _store.GetAbsolutePath(a.RelativePath), a.Kind, a.Title, a.Description,
             a.SourceUrl, a.Width, a.Height, a.Sha256, a.DeletedAt is not null, a.DeletionNote);
 
+    /// <summary>The one identity rule: an asset is its pin — (connector, SourceId) — and only a pinless
+    /// item (unparseable sidecar) falls back to content identity. Ordered by Id so a legacy duplicate
+    /// (the dedup era could record one pin twice across content revisions) resolves deterministically.</summary>
+    private static string IdentityKey(string connector, string? sourceId, string sha256) =>
+        ArchiveOpKeys.ForAsset(connector, sourceId, sha256);
+
     private static async Task<Asset?> FindExistingAssetAsync(
-        HoardDbContext db, Dictionary<string, Asset> cache, string sha256, CancellationToken ct)
+        HoardDbContext db, Dictionary<string, Asset> cache, string connector, string? sourceId, string sha256,
+        CancellationToken ct)
     {
-        if (cache.TryGetValue(sha256, out var cached)) return cached;
-        var existing = await db.Assets.FirstOrDefaultAsync(a => a.Sha256 == sha256, ct).ConfigureAwait(false);
-        if (existing is not null) cache[sha256] = existing;
+        var key = IdentityKey(connector, sourceId, sha256);
+        if (cache.TryGetValue(key, out var cached)) return cached;
+        var existing = sourceId is not null
+            ? await db.Assets.Where(a => a.SourceConnector == connector && a.SourceId == sourceId)
+                .OrderBy(a => a.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false)
+            : await db.Assets.Where(a => a.Sha256 == sha256)
+                .OrderBy(a => a.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (existing is not null) cache[key] = existing;
         return existing;
+    }
+
+    /// <summary>
+    /// Follow a re-crawled pin whose substance moved on at the source: new bytes re-point the row's blob
+    /// (the old blob stays on disk — another row may share it, and the verifier reports true orphans),
+    /// and changed semantic fields refresh in place. Any material change re-emits <c>asset.added</c>,
+    /// whose replay is an upsert-by-pin, so every machine converges on the latest state (LWW by HLC).
+    /// The raw sidecar alone never counts as a change — its drifting counters would otherwise emit an op
+    /// per pin on every sync.
+    /// </summary>
+    private void RefreshAsset(HoardDbContext db, Asset asset, StoredBlob blob, SourceMediaItem item)
+    {
+        var changed = false;
+        if (asset.Sha256 != blob.Sha256)
+        {
+            asset.Sha256 = blob.Sha256;
+            asset.RelativePath = blob.RelativePath;
+            asset.Bytes = blob.Bytes;
+            var (kind, mime) = MediaTypes.FromPath(item.FilePath);
+            asset.Kind = kind;
+            asset.MimeType = mime;
+            changed = true;
+        }
+        changed |= UpdateIfFresh(item.BoardId, asset.SourceBoardId, v => asset.SourceBoardId = v);
+        if (asset.SourceSectionId != item.SectionId) // a section move is real either way, incl. → none
+        {
+            asset.SourceSectionId = item.SectionId;
+            changed = true;
+        }
+        changed |= UpdateIfFresh(item.Title, asset.Title, v => asset.Title = v);
+        changed |= UpdateIfFresh(item.Description, asset.Description, v => asset.Description = v);
+        changed |= UpdateIfFresh(item.SourceUrl, asset.SourceUrl, v => asset.SourceUrl = v);
+        changed |= UpdateIfFresh(item.OriginalUrl, asset.OriginalUrl, v => asset.OriginalUrl = v);
+        if (item.Width is int w && item.Height is int h && (asset.Width != w || asset.Height != h))
+        {
+            asset.Width = w;
+            asset.Height = h;
+            changed = true;
+        }
+
+        if (!changed) return;
+        asset.MetadataJson = item.RawJson ?? asset.MetadataJson; // ride along with a real change only
+        _archive.RecordAssetAdded(db, asset, item.Tags);
+
+        // A fresh non-null value replaces a different old one; a null (this crawl's sidecar was poorer)
+        // never erases what we know.
+        static bool UpdateIfFresh(string? fresh, string? current, Action<string> apply)
+        {
+            if (fresh is null || fresh == current) return false;
+            apply(fresh);
+            return true;
+        }
     }
 
     private Asset CreateAsset(HoardDbContext db, Dictionary<string, Asset> cache, StoredBlob blob, SourceMediaItem item)
@@ -516,6 +578,8 @@ public sealed class IngestService
             Height = item.Height,
             SourceConnector = item.Connector,
             SourceId = item.SourceId,
+            SourceBoardId = item.BoardId,
+            SourceSectionId = item.SectionId,
             SourceUrl = item.SourceUrl,
             OriginalUrl = item.OriginalUrl,
             Title = item.Title,
@@ -525,11 +589,10 @@ public sealed class IngestService
             ImportedAt = DateTimeOffset.UtcNow,
         };
         db.Assets.Add(asset);
-        // Log the add in the same SaveChanges as the asset, so the sync history can never drift from
+        // Log the add in the same SaveChanges as the asset, so the archive history can never drift from
         // what's actually in the library.
-        SyncLog.RecordAdd(db, asset);
         _archive.RecordAssetAdded(db, asset, item.Tags);
-        cache[blob.Sha256] = asset;
+        cache[IdentityKey(item.Connector, item.SourceId, blob.Sha256)] = asset;
         return asset;
     }
 
@@ -631,7 +694,7 @@ public sealed class IngestService
         };
         collection.Items.Add(link);
         asset.CollectionItems.Add(link);
-        _archive.RecordItemLinked(db, asset.Sha256, ArchiveLog.UidOf(collection),
+        _archive.RecordItemLinked(db, asset, ArchiveLog.UidOf(collection),
             source is null ? null : ArchiveLog.UidOf(source), link.Note, link.AddedAt);
     }
 
@@ -671,6 +734,6 @@ public sealed class IngestService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToList();
-        _archive.RecordAssetRetagged(db, asset.Sha256, full);
+        _archive.RecordAssetRetagged(db, asset, full);
     }
 }

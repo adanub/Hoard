@@ -1,4 +1,4 @@
-using Hoard.Ingest.GalleryDl;
+using Hoard.Core.Connectors;
 using Xunit;
 
 namespace Hoard.Core.Tests;

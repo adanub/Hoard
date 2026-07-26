@@ -13,8 +13,9 @@ namespace Hoard.Core.Metadata;
 public static class SchemaInitializer
 {
     /// <summary>Bump this and add a matching <see cref="Upgrades"/> entry whenever the model gains additive objects.
-    /// (v5 and v6 are data-only steps — the attribution backfill and the stale-tombstone repair — with no DDL.)</summary>
-    public const long LatestSchemaVersion = 8;
+    /// (v5 and v6 are data-only steps — the attribution backfill and the stale-tombstone repair — with no DDL;
+    /// v9 is DDL + data: pin-keyed identity columns, the sha index de-uniqued, and the provenance backfill.)</summary>
+    public const long LatestSchemaVersion = 9;
 
     /// <summary>
     /// Ordered additive patches applied to a pre-existing database whose <c>user_version</c> is below the
@@ -161,6 +162,27 @@ public static class SchemaInitializer
                 CREATE INDEX IF NOT EXISTS "IX_ArchiveOps_Hlc" ON "ArchiveOps" ("Hlc");
                 """, ct).ConfigureAwait(false);
             await SetVersionAsync(db, 8, ct).ConfigureAwait(false);
+        }
+
+        // v9 — pin-keyed asset identity: an Asset is one saved pin ((SourceConnector, SourceId)), not one
+        // unique content hash, so the sha unique index becomes a plain blob-pointer lookup (rows may share
+        // a sha), and the pin's board/section provenance is stored first-class (guarded adds, like v7).
+        // The drop+recreate is idempotent and harmless on a fresh-model DB (already non-unique there).
+        // ProvenanceBackfill then stamps old rows from their stored sidecars (data-only, like v5).
+        if (current < 9)
+        {
+            if (!await ColumnExistsAsync(db, "Assets", "SourceBoardId", ct).ConfigureAwait(false))
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE \"Assets\" ADD COLUMN \"SourceBoardId\" TEXT NULL;", ct).ConfigureAwait(false);
+            if (!await ColumnExistsAsync(db, "Assets", "SourceSectionId", ct).ConfigureAwait(false))
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE \"Assets\" ADD COLUMN \"SourceSectionId\" TEXT NULL;", ct).ConfigureAwait(false);
+            await db.Database.ExecuteSqlRawAsync("""
+                DROP INDEX IF EXISTS "IX_Assets_Sha256";
+                CREATE INDEX IF NOT EXISTS "IX_Assets_Sha256" ON "Assets" ("Sha256");
+                """, ct).ConfigureAwait(false);
+            await ProvenanceBackfill.RunAsync(db, ct).ConfigureAwait(false);
+            await SetVersionAsync(db, 9, ct).ConfigureAwait(false);
         }
     }
 

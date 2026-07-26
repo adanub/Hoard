@@ -1,3 +1,4 @@
+using Hoard.Core.Connectors;
 using Microsoft.EntityFrameworkCore;
 
 namespace Hoard.Core.Metadata;
@@ -51,7 +52,7 @@ internal static class SourceAttributionBackfill
             var idsBySource = new Dictionary<int, List<int>>();
             foreach (var item in items)
             {
-                var boardId = SidecarBoardId.From(item.MetadataJson);
+                var boardId = PinterestSidecarParser.TryParse(item.MetadataJson)?.BoardId;
                 if (boardId is null || !sourceByBoard.TryGetValue(boardId, out var sourceId)) continue;
                 if (!idsBySource.TryGetValue(sourceId, out var ids)) idsBySource[sourceId] = ids = new List<int>();
                 ids.Add(item.Id);

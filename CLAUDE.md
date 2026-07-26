@@ -122,16 +122,35 @@ Concepts that span multiple files:
   bump `SchemaInitializer.LatestSchemaVersion` and add a matching idempotent `CREATE … IF NOT EXISTS` upgrade
   whose DDL matches what EF would generate** (verify with `db.Database.GenerateCreateScript()`). Non-additive
   changes (renames/drops) would need a real migration — cross that bridge if it ever comes up.
-- **Ingest is a stream, not a batch.** `ISourceConnector.DownloadAsync` takes an `onItem` callback and invokes
-  it per item as it lands; `IngestService` stores + upserts per item and reports the new `AssetView` via
-  `IngestProgress.ImportedAsset`, which flows through `ImportStatus` so an open Board screen appends it live.
-  Dedup happens twice: gallery-dl's `--download-archive` skips already-fetched pins *before* download, and the
-  content-addressed store dedups by hash *after*.
-- **The sync log is append-only and content-keyed.** Every add (`IngestService`, on a genuinely new asset)
-  and remove (`CurationService.DeleteAssetAsync`) writes a `SyncOp` via `Sync/SyncLog.cs`, in the *same*
-  `SaveChanges` as the change so the history can't drift. Ops are keyed by the asset's SHA-256, not its local
-  row id, so they replay on another device that holds the same content under a different id. This is the
-  Phase 3 (cloud sync) foundation; nothing reads it yet — keep it append-only (never mutate/delete ops).
+- **Asset identity is the PIN, not the content hash (v9).** An `Asset` row is one *saved pin* —
+  `(SourceConnector, SourceId)` — with `Sha256`/`RelativePath` as its (shareable, mutable) blob pointer:
+  two pins holding identical bytes are two rows over ONE stored blob (the content-addressed store still
+  dedups bytes on disk), and a pin whose source re-encoded it updates its row in place. Consequences that
+  must hold everywhere: **never free/delete a blob without checking for other LIVE rows on the same
+  `RelativePath`** (`CurationService.UnreferencedAsync` — tombstone, remove-source, delete-board, and the
+  ingest tombstone-skip all route through this rule); tombstones are **per-pin** blacklists; a pinless row
+  (unparseable sidecar) falls back to content identity (`ArchiveOpKeys.ForAsset`). Board/section
+  provenance is first-class on the row (`SourceBoardId`/`SourceSectionId`, stamped at import, backfilled
+  from stored sidecars at v9, self-healing via the pin-keyed upsert on the next re-crawl). **The ONE
+  Pinterest sidecar parser lives in Core** (`Connectors/PinterestSidecarParser`, pure JSON; `TryParse`
+  for stored-sidecar re-reads) — the connector, schema backfills, and legacy op replay all share it; never
+  duplicate sidecar shape knowledge.
+- **Ingest is a stream, not a batch, upserting by pin.** `ISourceConnector.DownloadAsync` takes an
+  `onItem` callback and invokes it per item as it lands; `IngestService` stores + upserts per item —
+  find by `(connector, SourceId)`, create or refresh in place (`RefreshAsset`: new bytes re-point the
+  blob; changed semantic fields update; any material change re-emits `asset.added`, whose replay is an
+  upsert, so machines converge LWW; the raw sidecar alone never counts as a change or every sync would
+  emit an op per pin) — and reports the new `AssetView` via `IngestProgress.ImportedAsset`, which flows
+  through `ImportStatus` so an open Board screen appends it live. gallery-dl's `--download-archive`
+  pre-skips known pins before download; the CAS dedups bytes after.
+- **The op log (`Sync/ArchiveLog`) is the ONE history; asset ops key on the pin.** Every change writes an
+  op in the *same* `SaveChanges` (never mutate/delete ops). Asset op payloads carry `connector`+`sourceId`
+  (the deterministic natural key — no uid minting, so two devices that saved the same pin converge with no
+  aliasing); the op's `Sha256` column holds the emission-time content sha as the LEGACY key (pre-v9 ops)
+  and the pinless fallback — `ArchiveSync.FindAssetAsync` resolves payload-pin first, sha second, and
+  legacy `asset.added` replay derives provenance from the payload sidecar via the shared parser. The old
+  `SyncLog`/`SyncOps` table is retired: nothing writes or reads it (the entity + table stay only for
+  schema stability).
 - **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a browser-style page
   back/forward stack of *steps* (`Reset`/`Push`/`PushState`/`Back`/`Forward`/`CanGoBack`/`CanGoForward`) — and is the page factory:
   `ShowLauncher` (`Reset` root) → `ShowLibrary` (`Push`, board grid) → `ShowBoard` (`Push`, one board's masonry).
@@ -270,15 +289,19 @@ Concepts that span multiple files:
   No new download logic — it reuses the whole pipeline, so it pulls in missing/new items and **skips already-held
   AND tombstoned (blacklisted) items** (the `KnownItems` skip-archive includes tombstones, and `ImportAsync`
   re-checks `DeletedAt`). Progress flows through the same `ImportStatus` (inline strip + live streaming + reload).
-- **The skip-archive is TARGET-aware, and import re-attaches orphans.** Two import-correctness rules that make
-  re-import/sync actually repopulate a board: (1) `GetKnownItemsAsync(targetCollectionId)` pre-skips only pins
-  **already in the target board** (+ globally-tombstoned blacklist) — NOT pins merely held in some *other* board
-  — so a live pin missing from the target is left for download → dedup-by-hash → link instead of being skipped
-  globally. (2) After the crawl, `ReattachOrphansAsync` links **orphaned live assets** (no `CollectionItem` at
-  all) that belong to an imported board — matched by the board id in their stored sidecar (`SidecarBoardId.From`,
-  shared with the v5 backfill) — into the target. This recovers a **restored-but-uncrawled** image (its pin was
-  removed from the Pinterest board, so gallery-dl never re-lists it, but its content + provenance are in the DB).
-  Tombstoned orphans are never re-attached.
+- **The skip-archive is TARGET-aware and rides each pin's OWN provenance; import re-attaches orphans.**
+  Two import-correctness rules that make re-import/sync actually repopulate a board:
+  (1) `GetKnownItemsAsync(targetCollectionId)` pre-skips only pins **already held in the target board's
+  subtree** (each under its own `Asset.SourceBoardId` — no `CollectionSources` join, no over-claiming) plus
+  the **global tombstone blacklist** (which needs no links at all — a deleted pin never re-fetches even
+  after its board went away) — NOT pins merely held in some *other* board, so a live pin missing from the
+  target is downloaded and upserted-by-pin instead of skipped globally; a held pin whose blob is
+  missing/torn on disk is deliberately not emitted, so a Sync repairs lost files; a legacy row without
+  provenance re-downloads once and self-heals. (2) After the crawl, `ReattachOrphansAsync` links
+  **orphaned live assets** (no `CollectionItem` at all) whose `SourceBoardId` matches an imported/recorded
+  source — indexed provenance, never a sidecar re-parse, and it works even when the source board is now
+  EMPTY at the origin — into the target, re-filing a sectioned orphan into its section folder when that
+  folder still exists. Tombstoned orphans are never re-attached.
 - **A board can merge several source boards (schema v3/v4).** A local board is one `Collection`; the Pinterest
   boards it gathers pins from are rows in **`CollectionSource`** (the authoritative many-sources list — board
   id/url/name). Importing into a target board records its source(s); a second import into the same board *is*
@@ -286,14 +309,14 @@ Concepts that span multiple files:
   override** (`CurationService.RenameBoardAsync` writes it, non-destructive, survives re-import) so the shown
   title is `DisplayName ?? Name`. The denormalised `Collection.SourceBoardId`/`SourceUrl` are kept only as a
   "primary source" pointer (`RemoveSourceAsync` re-seeds it from a surviving source so it never drifts).
-  **`GetKnownItemsAsync` joins through `CollectionSource`** (a flat join — SQLite can't APPLY a `SelectMany`
-  over a nav) so re-crawling any merged source skips pins already held; over-claiming a pin under a sibling
-  source is safe (only ever skips content we have). **Per-pin provenance (v4):** `CollectionItem.CollectionSourceId`
+  Re-crawling any merged source skips pins already held in the board's subtree (each under the pin's own
+  stored `SourceBoardId` — see the skip-archive bullet). **Per-link provenance (v4):** `CollectionItem.CollectionSourceId`
   (nullable FK, **ON DELETE SET NULL**) records which source each link came from, set at import. **Remove-source
   hard-deletes that source's images** (no keep option — a source's pins left behind are churn): `RemoveSourceAsync(id)`
   drops the source record and **deletes the attributed live assets outright** — `db.Assets.Remove` (cascades
-  links + tags everywhere; content-addressed = gone from every board) + logs a Remove + **recycles each blob to
-  the OS bin** (`IFileRecycler`, fallback permanent when none). NOT a tombstone — no placeholder tile, not
+  links + tags everywhere; a duplicate-content pin in another board is its own row and survives, along
+  with the shared blob) + logs a Remove + **recycles each blob to the OS bin** (`IFileRecycler`, fallback
+  permanent when none; only blobs whose last live referrer went — `UnreferencedAsync`). NOT a tombstone — no placeholder tile, not
   in-app restorable; a re-import re-fetches them fresh. When it's the board's **last** source it also sweeps the
   board's remaining live images (catches pre-v4 un-attributed pins). **`DeleteBoardAsync` is the same** (hard
   delete + recycle, then remove the grouping). Both share `StageAssetRemovals` + `FreeBlobsAsync` and skip
@@ -331,8 +354,8 @@ Concepts that span multiple files:
   folder via `GetOrCreateSectionFolderAsync` (find-or-create by parent + `SourceSectionId`, cached per run) while
   a sectionless pin lands on the board; the section pin keeps the **board's** source attribution, so
   `RemoveSourceAsync` (now subtree-scoped via `CollectionTree.SubtreeIdsAsync`, shared with delete-board) sweeps a
-  source's foldered pins too, and `GetKnownItemsAsync` pairs held descendant-folder pins with the root board's
-  source ids so a re-sync pre-skips them. **Confirmed working end-to-end** (the user runs it against real boards
+  source's foldered pins too, and `GetKnownItemsAsync`'s subtree scope pre-skips held descendant-folder pins
+  on a re-sync (under each pin's own board id). **Confirmed working end-to-end** (the user runs it against real boards
   with sections): a plain board crawl emits per-pin section metadata in the sidecar — no section flag on the
   connector — which `PinterestSidecarParser` extracts (it handles either a nested `section` object or a flat
   `section_id`/`board_section_id`, probed defensively since Pinterest's shape drifts; still a graceful no-op for a

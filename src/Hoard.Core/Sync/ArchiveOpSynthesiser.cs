@@ -17,15 +17,34 @@ public static class ArchiveOpSynthesiser
 {
     public static async Task<int> SynthesiseAsync(HoardDbContext db, string deviceId, CancellationToken ct = default)
     {
-        // What the log already covers — synthesis fills only the gaps.
+        // What the log already covers — synthesis fills only the gaps. Assets/links are keyed by the
+        // deterministic natural key (the payload's pin identity; a legacy op falls back to its sha
+        // column), matching how replay resolves them.
         var existing = await db.ArchiveOps
-            .Select(o => new { o.Kind, o.Sha256, o.EntityUid })
+            .Select(o => new { o.Kind, o.Sha256, o.EntityUid, o.PayloadJson })
             .ToListAsync(ct).ConfigureAwait(false);
-        var coveredAssets = existing.Where(o => o.Kind == ArchiveOpKinds.AssetAdded).Select(o => o.Sha256!).ToHashSet();
+        // NB the payload field names differ per kind: an added payload carries sourceConnector/sourceId,
+        // a linked payload connector/sourceId — deserialize each with its own type.
+        var coveredAssets = existing.Where(o => o.Kind == ArchiveOpKinds.AssetAdded)
+            .Select(o =>
+            {
+                var p = o.PayloadJson is null ? null : ArchiveOpJson.Deserialize<AssetAddedPayload>(o.PayloadJson);
+                return p?.SourceId is not null
+                    ? ArchiveOpKeys.ForAsset(p.SourceConnector, p.SourceId, o.Sha256)
+                    : ArchiveOpKeys.ForAsset(null, null, o.Sha256);
+            }).ToHashSet();
         var coveredCollections = existing.Where(o => o.Kind == ArchiveOpKinds.CollectionCreated).Select(o => o.EntityUid!).ToHashSet();
         var coveredSources = existing.Where(o => o.Kind == ArchiveOpKinds.SourceAttached).Select(o => o.EntityUid!).ToHashSet();
         var coveredLinks = existing.Where(o => o.Kind == ArchiveOpKinds.ItemLinked && o.Sha256 != null && o.EntityUid != null)
-            .Select(o => (o.Sha256!, o.EntityUid!)).ToHashSet();
+            .Select(o =>
+            {
+                var p = o.PayloadJson is null ? null : ArchiveOpJson.Deserialize<ItemLinkedPayload>(o.PayloadJson);
+                var key = p?.SourceId is not null
+                    ? ArchiveOpKeys.ForAsset(p.Connector, p.SourceId, o.Sha256)
+                    : ArchiveOpKeys.ForAsset(null, null, o.Sha256);
+                return (key, o.EntityUid!);
+            }).ToHashSet();
+        static string RowAssetKey(Asset a) => ArchiveOpKeys.ForAsset(a.SourceConnector, a.SourceId, a.Sha256);
 
         // The clock follows each row's own timestamp; HybridClock keeps ticks monotonic regardless, so
         // the emission order below IS the synthesised causal order even across sloppy row timestamps.
@@ -75,14 +94,14 @@ public static class ArchiveOpSynthesiser
                      .ToListAsync(ct).ConfigureAwait(false))
                      .OrderBy(a => a.ImportedAt).ThenBy(a => a.Id))
         {
-            if (coveredAssets.Contains(asset.Sha256)) continue;
+            if (coveredAssets.Contains(RowAssetKey(asset))) continue;
             cursor = asset.ImportedAt;
             log.RecordAssetAdded(db, asset, asset.AssetTags.Select(at => at.Tag.Name).ToList());
             emitted++;
             if (asset.DeletedAt is { } deletedAt)
             {
                 cursor = deletedAt;
-                log.RecordAssetTombstoned(db, asset.Sha256, asset.DeletionNote ?? "", deletedAt);
+                log.RecordAssetTombstoned(db, asset);
                 emitted++;
             }
         }
@@ -92,9 +111,9 @@ public static class ArchiveOpSynthesiser
                      .ToListAsync(ct).ConfigureAwait(false))
                      .OrderBy(ci => ci.AddedAt).ThenBy(ci => ci.Id))
         {
-            if (coveredLinks.Contains((link.Asset.Sha256, link.Collection.Uid ?? ""))) continue;
+            if (coveredLinks.Contains((RowAssetKey(link.Asset), link.Collection.Uid ?? ""))) continue;
             cursor = link.AddedAt;
-            log.RecordItemLinked(db, link.Asset.Sha256, ArchiveLog.UidOf(link.Collection),
+            log.RecordItemLinked(db, link.Asset, ArchiveLog.UidOf(link.Collection),
                 link.CollectionSource is { } source ? ArchiveLog.UidOf(source) : null, link.Note, link.AddedAt);
             emitted++;
         }

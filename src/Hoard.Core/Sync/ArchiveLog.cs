@@ -158,6 +158,9 @@ public sealed class ArchiveLog
     }
 
     // ---- asset lifecycle -------------------------------------------------------------------------
+    // Asset ops carry the PIN identity (connector + source id) in their payloads — the deterministic
+    // natural key replay resolves first — while the sha column keeps the emission-time content sha (the
+    // legacy/pinless fallback key). See ArchiveOps.cs.
 
     public void RecordAssetAdded(HoardDbContext db, Asset asset, IReadOnlyList<string>? tags = null) =>
         Append(db, ArchiveOpKinds.AssetAdded, sha256: asset.Sha256, payload: ArchiveOpJson.Serialize(
@@ -165,19 +168,25 @@ public sealed class ArchiveLog
                 CanonicalPath(asset.RelativePath), asset.MimeType, asset.Kind, asset.Width, asset.Height, asset.Bytes,
                 asset.SourceConnector, asset.SourceId, asset.SourceUrl, asset.OriginalUrl,
                 asset.Title, asset.Description, asset.MetadataJson,
-                asset.CreatedAt, asset.ImportedAt, tags is { Count: > 0 } ? tags : null)));
+                asset.CreatedAt, asset.ImportedAt, tags is { Count: > 0 } ? tags : null,
+                asset.SourceBoardId, asset.SourceSectionId)));
 
-    public void RecordAssetTombstoned(HoardDbContext db, string sha256, string note, DateTimeOffset deletedAt) =>
-        Append(db, ArchiveOpKinds.AssetTombstoned, sha256: sha256,
-            payload: ArchiveOpJson.Serialize(new AssetTombstonedPayload(note, deletedAt)));
+    /// <summary>Reads the tombstone off the (already-marked) row.</summary>
+    public void RecordAssetTombstoned(HoardDbContext db, Asset asset) =>
+        Append(db, ArchiveOpKinds.AssetTombstoned, sha256: asset.Sha256,
+            payload: ArchiveOpJson.Serialize(new AssetTombstonedPayload(
+                asset.DeletionNote ?? "", asset.DeletedAt ?? DateTimeOffset.UtcNow,
+                asset.SourceConnector, asset.SourceId)));
 
     public void RecordAssetRestored(HoardDbContext db, string oldSha256, Asset asset) =>
         Append(db, ArchiveOpKinds.AssetRestored, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
-            new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes)));
+            new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes,
+                asset.SourceConnector, asset.SourceId)));
 
     public void RecordAssetRefetched(HoardDbContext db, string oldSha256, Asset asset) =>
         Append(db, ArchiveOpKinds.AssetRefetched, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
-            new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes)));
+            new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes,
+                asset.SourceConnector, asset.SourceId)));
 
     /// <summary>
     /// Op payloads carry store paths in canonical forward-slash form: a Windows-written row (or one
@@ -186,12 +195,13 @@ public sealed class ArchiveLog
     /// </summary>
     private static string CanonicalPath(string relativePath) => relativePath.Replace('\\', '/');
 
-    public void RecordAssetRetagged(HoardDbContext db, string sha256, IReadOnlyList<string> fullTagSet) =>
-        Append(db, ArchiveOpKinds.AssetRetagged, sha256: sha256,
-            payload: ArchiveOpJson.Serialize(new AssetRetaggedPayload(fullTagSet)));
+    public void RecordAssetRetagged(HoardDbContext db, Asset asset, IReadOnlyList<string> fullTagSet) =>
+        Append(db, ArchiveOpKinds.AssetRetagged, sha256: asset.Sha256,
+            payload: ArchiveOpJson.Serialize(new AssetRetaggedPayload(fullTagSet, asset.SourceConnector, asset.SourceId)));
 
-    public void RecordAssetRemoved(HoardDbContext db, string sha256) =>
-        Append(db, ArchiveOpKinds.AssetRemoved, sha256: sha256);
+    public void RecordAssetRemoved(HoardDbContext db, Asset asset) =>
+        Append(db, ArchiveOpKinds.AssetRemoved, sha256: asset.Sha256,
+            payload: ArchiveOpJson.Serialize(new AssetKeyPayload(asset.SourceConnector, asset.SourceId)));
 
     // ---- collections / sources -------------------------------------------------------------------
 
@@ -224,12 +234,14 @@ public sealed class ArchiveLog
     // ---- links -----------------------------------------------------------------------------------
 
     public void RecordItemLinked(
-        HoardDbContext db, string sha256, string collectionUid, string? sourceUid, string? note, DateTimeOffset addedAt) =>
-        Append(db, ArchiveOpKinds.ItemLinked, sha256: sha256, entityUid: collectionUid,
-            payload: ArchiveOpJson.Serialize(new ItemLinkedPayload(sourceUid, note, addedAt)));
+        HoardDbContext db, Asset asset, string collectionUid, string? sourceUid, string? note, DateTimeOffset addedAt) =>
+        Append(db, ArchiveOpKinds.ItemLinked, sha256: asset.Sha256, entityUid: collectionUid,
+            payload: ArchiveOpJson.Serialize(new ItemLinkedPayload(sourceUid, note, addedAt,
+                asset.SourceConnector, asset.SourceId)));
 
-    public void RecordItemUnlinked(HoardDbContext db, string sha256, string collectionUid) =>
-        Append(db, ArchiveOpKinds.ItemUnlinked, sha256: sha256, entityUid: collectionUid);
+    public void RecordItemUnlinked(HoardDbContext db, Asset asset, string collectionUid) =>
+        Append(db, ArchiveOpKinds.ItemUnlinked, sha256: asset.Sha256, entityUid: collectionUid,
+            payload: ArchiveOpJson.Serialize(new AssetKeyPayload(asset.SourceConnector, asset.SourceId)));
 
     /// <summary>
     /// The entity's cross-device uid, minting one in place when absent (a row created by pre-op code or

@@ -1,6 +1,7 @@
 using Hoard.Core.Domain;
 using Hoard.Core.Library;
 using Hoard.Core.Storage;
+using Hoard.Core.Sync;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -66,9 +67,8 @@ public class CurationServiceTests : IDisposable
         Assert.Equal(1, await db.CollectionItems.CountAsync());    // board link kept (tile stays in place)
         Assert.Equal(1, await db.AssetTags.CountAsync());          // tag link kept
 
-        var op = Assert.Single(await db.SyncOps.ToListAsync());
-        Assert.Equal(SyncOpKind.Remove, op.Op);
-        Assert.Equal(sha, op.EntityKey);
+        var op = Assert.Single(await db.ArchiveOps.Where(o => o.Kind == ArchiveOpKinds.AssetTombstoned).ToListAsync());
+        Assert.Equal(sha, op.Sha256);
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class CurationServiceTests : IDisposable
         Assert.Null(await curation.DeleteAssetAsync(assetId, "second")); // already a tombstone
 
         await using var db = _dbFactory.CreateDbContext();
-        Assert.Equal(1, await db.SyncOps.CountAsync()); // only the first delete logged a Remove
+        Assert.Equal(1, await db.ArchiveOps.CountAsync(o => o.Kind == ArchiveOpKinds.AssetTombstoned)); // only the first delete logged
     }
 
     [Fact]

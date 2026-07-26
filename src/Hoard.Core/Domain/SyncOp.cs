@@ -14,11 +14,10 @@ public enum SyncEntityType
 }
 
 /// <summary>
-/// An append-only record of a library change. Keyed by the <b>content identity</b> (the asset's
-/// SHA-256) rather than the local row id, so an op can be replayed on another device that holds the
-/// same content under a different local id. This is the foundation for Phase 3 cloud reconciliation —
-/// nothing consumes it yet, but every add (on ingest) and remove (on curation) is logged from the start
-/// so no history is lost before sync ships.
+/// LEGACY, retired: the pre-archive-format change log. <c>Sync/ArchiveLog</c> (the v2 per-device op
+/// segments) is the replayable history now; nothing writes or reads this table any more. The entity and
+/// its table are kept only for schema stability — existing project DBs have it, and dropping a table is
+/// the one non-additive change the versioning scheme avoids.
 /// </summary>
 public class SyncOp
 {

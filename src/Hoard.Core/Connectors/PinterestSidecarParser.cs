@@ -1,18 +1,39 @@
 using System.Globalization;
 using System.Text.Json;
-using Hoard.Core.Connectors;
 
-namespace Hoard.Ingest.GalleryDl;
+namespace Hoard.Core.Connectors;
 
 /// <summary>
 /// Parses a gallery-dl Pinterest metadata sidecar (the <c>&lt;file&gt;.json</c> twin) into a
 /// <see cref="SourceMediaItem"/>. gallery-dl has no fixed sidecar schema and Pinterest's fields
 /// drift over time, so every field is looked up defensively across known aliases and the raw
 /// JSON is always retained on the item for future re-parsing.
+/// <para>This is the ONE place that knows the sidecar shape. It lives in Core (it's pure JSON — no
+/// subprocess/desktop dependency) so both the gallery-dl connector at ingest time and Core's own
+/// re-reads of a stored <c>Asset.MetadataJson</c> (schema backfills, legacy op replay) share it —
+/// a second, drifting copy is exactly the bug class this placement removes.</para>
 /// </summary>
 public static class PinterestSidecarParser
 {
     public const string ConnectorName = "pinterest";
+
+    /// <summary>
+    /// <see cref="Parse"/> for re-reading a STORED sidecar (<c>Asset.MetadataJson</c>): no media file is
+    /// involved and the JSON is historical data that may be absent or malformed, so failures return null
+    /// instead of throwing. The item's <c>FilePath</c> is meaningless here — read only the metadata.
+    /// </summary>
+    public static SourceMediaItem? TryParse(string? sidecarJson)
+    {
+        if (string.IsNullOrWhiteSpace(sidecarJson)) return null;
+        try
+        {
+            return Parse(mediaFilePath: "", sidecarJson);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     public static SourceMediaItem Parse(string mediaFilePath, string sidecarJson)
     {

@@ -458,6 +458,47 @@ public class SchemaInitializerTests : IDisposable
         finally { await conn.CloseAsync(); }
     }
 
+    [Fact]
+    public async Task V9_stamps_provenance_from_stored_sidecars_and_deuniques_the_sha_index()
+    {
+        // Simulate a v8 database: the fresh model already HAS the v9 columns (the guarded adds skip,
+        // like the v7 test), so v9's work here is the index swap + the provenance backfill.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            await SchemaInitializer.InitializeAsync(db);
+            db.Assets.Add(new Asset
+            {
+                Sha256 = new string('a', 64), RelativePath = "aa/aa/one.jpg",
+                SourceConnector = "pinterest", SourceId = "p1",
+                MetadataJson = """{"pin_id":"p1","board":{"id":"board-42"},"section_id":"sec-3"}""",
+                ImportedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlRawAsync("PRAGMA user_version = 8;");
+        }
+
+        await using (var db = _dbFactory.CreateDbContext())
+            await SchemaInitializer.InitializeAsync(db); // applies v9
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var asset = Assert.Single(await db.Assets.ToListAsync());
+            Assert.Equal("board-42", asset.SourceBoardId);   // stamped from the stored sidecar
+            Assert.Equal("sec-3", asset.SourceSectionId);
+
+            // The sha is a blob pointer now, not an identity: a second row with the SAME sha (the same
+            // bytes saved as another pin) must insert cleanly.
+            db.Assets.Add(new Asset
+            {
+                Sha256 = new string('a', 64), RelativePath = "aa/aa/one.jpg",
+                SourceConnector = "pinterest", SourceId = "p2",
+                ImportedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            Assert.Equal(2, await db.Assets.CountAsync(a => a.Sha256 == new string('a', 64)));
+        }
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch { }

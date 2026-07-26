@@ -1,3 +1,4 @@
+using Hoard.Core.Connectors;
 using Hoard.Core.Domain;
 using Hoard.Core.Metadata;
 using Microsoft.EntityFrameworkCore;
@@ -131,79 +132,70 @@ public static class ArchiveSync
         {
             case ArchiveOpKinds.AssetAdded when op.Sha256 is not null:
             {
-                if (await db.Assets.AnyAsync(a => a.Sha256 == op.Sha256, ct).ConfigureAwait(false)) break;
                 var p = ArchiveOpJson.Deserialize<AssetAddedPayload>(op.PayloadJson);
-                var asset = new Asset
+                // Provenance: explicit on post-v9 ops; a legacy op's replay derives it from the stored
+                // sidecar via the ONE shared parser — so a rebuilt index is as complete as a migrated one.
+                var boardId = p.SourceBoardId;
+                var sectionId = p.SourceSectionId;
+                if (boardId is null && PinterestSidecarParser.TryParse(p.MetadataJson) is { } side)
                 {
-                    Sha256 = op.Sha256,
-                    RelativePath = p.RelativePath,
-                    MimeType = p.MimeType,
-                    Kind = p.Kind,
-                    Width = p.Width,
-                    Height = p.Height,
-                    Bytes = p.Bytes,
-                    SourceConnector = p.SourceConnector,
-                    SourceId = p.SourceId,
-                    SourceUrl = p.SourceUrl,
-                    OriginalUrl = p.OriginalUrl,
-                    Title = p.Title,
-                    Description = p.Description,
-                    MetadataJson = p.MetadataJson,
-                    CreatedAt = p.CreatedAt,
-                    ImportedAt = p.ImportedAt,
-                };
-                db.Assets.Add(asset);
-                foreach (var name in p.Tags ?? [])
-                {
-                    var tag = await db.Tags.FirstOrDefaultAsync(t => t.Name == name, ct).ConfigureAwait(false)
-                              ?? db.Tags.Local.FirstOrDefault(t => t.Name == name);
-                    if (tag is null)
-                    {
-                        tag = new Tag { Name = name };
-                        db.Tags.Add(tag);
-                    }
-                    asset.AssetTags.Add(new AssetTag { Asset = asset, Tag = tag });
+                    boardId = side.BoardId;
+                    sectionId ??= side.SectionId;
                 }
+
+                // UPSERT by the pin (falling back to content for pinless/legacy rows): two devices that
+                // independently saved the same pin converge on one row, and a re-emitted added op — how a
+                // refreshed pin propagates — lands as an update, LWW by HLC order. A tombstone is never
+                // cleared here (that's asset.restored's job).
+                var asset = await FindAssetAsync(db, op.Sha256, p.SourceConnector, p.SourceId, ct).ConfigureAwait(false);
+                var isNew = asset is null;
+                if (asset is null) db.Assets.Add(asset = new Asset());
+                asset.Sha256 = op.Sha256;
+                asset.RelativePath = p.RelativePath;
+                asset.MimeType = p.MimeType;
+                asset.Kind = p.Kind;
+                asset.Width = p.Width;
+                asset.Height = p.Height;
+                asset.Bytes = p.Bytes;
+                asset.SourceConnector = p.SourceConnector;
+                asset.SourceId = p.SourceId;
+                asset.SourceBoardId = boardId;
+                asset.SourceSectionId = sectionId;
+                asset.SourceUrl = p.SourceUrl;
+                asset.OriginalUrl = p.OriginalUrl;
+                asset.Title = p.Title;
+                asset.Description = p.Description;
+                asset.MetadataJson = p.MetadataJson;
+                asset.CreatedAt = p.CreatedAt;
+                asset.ImportedAt = p.ImportedAt;
+                if (isNew || p.Tags is { Count: > 0 })
+                    await ReplaceTagsAsync(db, asset, p.Tags ?? [], ct).ConfigureAwait(false);
                 break;
             }
-            case ArchiveOpKinds.AssetTombstoned when await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false) is { } asset:
+            case ArchiveOpKinds.AssetTombstoned when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
             {
                 var p = ArchiveOpJson.Deserialize<AssetTombstonedPayload>(op.PayloadJson);
                 asset.DeletedAt = p.DeletedAt;
                 asset.DeletionNote = p.Note;
                 break;
             }
-            case ArchiveOpKinds.AssetRestored when await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false) is { } asset:
+            case ArchiveOpKinds.AssetRestored when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
             {
-                await ApplyContentChangeAsync(db, asset, op, ct).ConfigureAwait(false);
+                ApplyContentChange(asset, op);
                 asset.DeletedAt = null;
                 asset.DeletionNote = null;
                 break;
             }
-            case ArchiveOpKinds.AssetRefetched when await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false) is { } asset:
-                await ApplyContentChangeAsync(db, asset, op, ct).ConfigureAwait(false);
+            case ArchiveOpKinds.AssetRefetched when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
+                ApplyContentChange(asset, op);
                 break;
-            case ArchiveOpKinds.AssetRetagged when await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false) is { } asset:
+            case ArchiveOpKinds.AssetRetagged when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
             {
-                // Full replacement of the asset's tag set (LWW). Delete-then-insert of the same
-                // (AssetId, TagId) pair in one save is fine — EF orders deletes before inserts.
                 var p = ArchiveOpJson.Deserialize<AssetRetaggedPayload>(op.PayloadJson);
-                var current = await db.AssetTags.Where(at => at.AssetId == asset.Id).ToListAsync(ct).ConfigureAwait(false);
-                db.AssetTags.RemoveRange(current);
-                foreach (var name in p.Tags)
-                {
-                    var tag = db.Tags.Local.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
-                              ?? await db.Tags.FirstOrDefaultAsync(t => t.Name == name, ct).ConfigureAwait(false);
-                    if (tag is null)
-                    {
-                        tag = new Tag { Name = name };
-                        db.Tags.Add(tag);
-                    }
-                    db.AssetTags.Add(new AssetTag { Asset = asset, Tag = tag });
-                }
+                await ReplaceTagsAsync(db, asset, p.Tags, ct).ConfigureAwait(false);
                 break;
             }
-            case ArchiveOpKinds.AssetRemoved when await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false) is { } asset:
+            case ArchiveOpKinds.AssetRemoved when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
                 db.Assets.Remove(asset); // links + tags cascade
                 break;
             case ArchiveOpKinds.CollectionCreated when op.EntityUid is not null:
@@ -292,10 +284,10 @@ public static class ArchiveSync
             }
             case ArchiveOpKinds.ItemLinked when op.Sha256 is not null && op.EntityUid is not null:
             {
-                var asset = await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false);
+                var p = ArchiveOpJson.Deserialize<ItemLinkedPayload>(op.PayloadJson);
+                var asset = await FindAssetAsync(db, op.Sha256, p.Connector, p.SourceId, ct).ConfigureAwait(false);
                 var collection = await FindCollectionAsync(db, op.EntityUid, ct).ConfigureAwait(false);
                 if (asset is null || collection is null) break;
-                var p = ArchiveOpJson.Deserialize<ItemLinkedPayload>(op.PayloadJson);
                 var source = p.SourceUid is not null
                     ? await db.CollectionSources.FirstOrDefaultAsync(s => s.Uid == p.SourceUid, ct).ConfigureAwait(false)
                     : null;
@@ -321,7 +313,7 @@ public static class ArchiveSync
             }
             case ArchiveOpKinds.ItemUnlinked when op.Sha256 is not null && op.EntityUid is not null:
             {
-                var asset = await FindAssetAsync(db, op.Sha256, ct).ConfigureAwait(false);
+                var asset = await FindAssetAsync(db, op, ct).ConfigureAwait(false);
                 var collection = await FindCollectionAsync(db, op.EntityUid, ct).ConfigureAwait(false);
                 if (asset is null || collection is null) break;
                 var link = await db.CollectionItems
@@ -332,21 +324,66 @@ public static class ArchiveSync
         }
     }
 
-    private static async Task ApplyContentChangeAsync(HoardDbContext db, Asset asset, ArchiveOp op, CancellationToken ct)
+    private static void ApplyContentChange(Asset asset, ArchiveOp op)
     {
         var p = ArchiveOpJson.Deserialize<AssetContentChangedPayload>(op.PayloadJson);
-        // If the new content identity already exists as another row, adopting it would violate the
-        // unique sha index — keep the local row as-is (the known RestoreAsync sha-collision wart).
-        if (p.Sha256 != asset.Sha256
-            && await db.Assets.AnyAsync(a => a.Sha256 == p.Sha256, ct).ConfigureAwait(false))
-            return;
+        // The sha is just the row's blob pointer (not unique), so the transition always applies —
+        // the dedup-era "sha-collision wart" bail-out is structurally gone.
         asset.Sha256 = p.Sha256;
         asset.RelativePath = p.RelativePath;
         asset.Bytes = p.Bytes;
     }
 
-    private static Task<Asset?> FindAssetAsync(HoardDbContext db, string? sha, CancellationToken ct) =>
-        sha is null ? Task.FromResult<Asset?>(null) : db.Assets.FirstOrDefaultAsync(a => a.Sha256 == sha, ct);
+    /// <summary>Full replacement of the asset's tag set (LWW). Delete-then-insert of the same
+    /// (AssetId, TagId) pair in one save is fine — EF orders deletes before inserts.</summary>
+    private static async Task ReplaceTagsAsync(HoardDbContext db, Asset asset, IReadOnlyList<string> tags, CancellationToken ct)
+    {
+        if (asset.Id != 0)
+        {
+            var current = await db.AssetTags.Where(at => at.AssetId == asset.Id).ToListAsync(ct).ConfigureAwait(false);
+            db.AssetTags.RemoveRange(current);
+        }
+        foreach (var name in tags)
+        {
+            var tag = db.Tags.Local.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))
+                      ?? await db.Tags.FirstOrDefaultAsync(t => t.Name == name, ct).ConfigureAwait(false);
+            if (tag is null)
+            {
+                tag = new Tag { Name = name };
+                db.Tags.Add(tag);
+            }
+            db.AssetTags.Add(new AssetTag { Asset = asset, Tag = tag });
+        }
+    }
+
+    /// <summary>
+    /// The op → asset resolution rule: the payload's pin identity first (deterministic across devices),
+    /// the op's sha column second (legacy pre-v9 ops, and pinless assets — valid because the dedup era
+    /// guaranteed one row per sha). Ordered by Id so a legacy duplicate resolves deterministically.
+    /// </summary>
+    private static Task<Asset?> FindAssetAsync(HoardDbContext db, string? sha, string? connector, string? sourceId, CancellationToken ct)
+    {
+        if (connector is not null && sourceId is not null)
+            return db.Assets.Where(a => a.SourceConnector == connector && a.SourceId == sourceId)
+                .OrderBy(a => a.Id).FirstOrDefaultAsync(ct);
+        return sha is null
+            ? Task.FromResult<Asset?>(null)
+            : db.Assets.Where(a => a.Sha256 == sha).OrderBy(a => a.Id).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>Resolution for ops whose payload is a pin-identity carrier (tombstoned/restored/refetched/
+    /// retagged/removed/unlinked) — tolerates the payload being absent entirely (legacy removed/unlinked).</summary>
+    private static Task<Asset?> FindAssetAsync(HoardDbContext db, ArchiveOp op, CancellationToken ct)
+    {
+        string? connector = null, sourceId = null;
+        if (op.PayloadJson is not null)
+        {
+            var key = ArchiveOpJson.Deserialize<AssetKeyPayload>(op.PayloadJson);
+            connector = key.Connector;
+            sourceId = key.SourceId;
+        }
+        return FindAssetAsync(db, op.Sha256, connector, sourceId, ct);
+    }
 
     private static Task<Collection?> FindCollectionAsync(HoardDbContext db, string? uid, CancellationToken ct) =>
         uid is null ? Task.FromResult<Collection?>(null) : db.Collections.FirstOrDefaultAsync(c => c.Uid == uid, ct);
