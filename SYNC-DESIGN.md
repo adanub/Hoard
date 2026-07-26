@@ -229,8 +229,8 @@ ignore it).
   higher chapter exists — the S3-shaped prerequisite). **Remaining: compaction** (a compacted snapshot
   segment, safe once every known device has applied the retired chapters — single-user, so deferred
   until log size hurts).
-- **P5 — remotes (Phase 3 proper).** The same format over object storage; replicated local stores with
-  fetch-on-demand; the mobile head reuses all of it. The archive is already remote-shaped — immutable
+- **P5 — remotes (Phase 3 proper).** The same format replicated to a dumb remote; the mobile head
+  reuses all of it. The archive is already remote-shaped — immutable
   sha-named blobs, per-device append-only chapters that are sealed once a higher one exists — so a
   remote is just *another copy of the archive files*, and sync is file-set reconciliation, not a
   protocol. Sub-increments:
@@ -251,11 +251,10 @@ ignore it).
     relationship to the archive, not archive state), and **Sync now** → `Sync/RemoteSync.SyncAsync`
     (pull → apply to the index via the normal catch-up, so the UI refreshes immediately → push), with
     live progress, import-gating, and an inside-the-project folder guard.
-  - **R3 — S3/B2.** An S3-compatible `IRemoteStore` (SigV4 over HttpClient, no SDK dependency; B2/R2/
-    MinIO all speak it), credentials in app-data (OS keychain later).
-  - **R4 — fetch-on-demand replicas.** A pull that takes segments but defers blobs; the existing
-    per-tile "file missing → re-download" path grows a "fetch from remote" source, so a phone-sized
-    replica holds the index + thumbnails and streams originals on view.
+  - **R3 (S3/B2 `IRemoteStore`) and R4 (fetch-on-demand replicas) — DROPPED (2026-07-26), judged
+    unnecessary.** The folder remote already reaches any target that can be mounted (backup drive,
+    rclone/Syncthing to object storage), so P5 is complete at R0–R2. Don't resurrect without a new
+    driving need.
 
 ## Risks & accepted trade-offs
 

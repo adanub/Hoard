@@ -89,7 +89,8 @@ Concepts that span multiple files:
   (`Sync/RemoteConfig` at `appData/projects/<id>/remote.json`) and runs `Sync/RemoteSync.SyncAsync` =
   pull → apply-to-index (the same catch-up an open runs, so the grid refreshes immediately) → push.
   `Sync/ArchiveReplicator` moves only the archive proper (marker + `store/` + `ops/`) against a dumb
-  `Sync/IRemoteStore` (today `FileSystemRemoteStore` over any mounted path; S3/B2 is R3). The
+  `Sync/IRemoteStore` (`FileSystemRemoteStore` over any mounted path — the only implementation; the
+  once-planned S3/B2 remote (R3) and fetch-on-demand replicas (R4) were dropped as unnecessary). The
   load-bearing rules: **blobs before segments both ways** (op-implies-blob must hold on the receiving
   side mid-crash); **chapters converge by length** with a just-before-upload re-stat
   (`GetLengthAsync` — a start-of-run snapshot lets concurrent pushers regress a chapter); **a pull never

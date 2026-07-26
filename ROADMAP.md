@@ -38,7 +38,7 @@ span the chain (`ArchiveRotationTests`, 5 tests); committed `65ca5da`/`3318b15`,
 P4:** compaction only (deferred — single-user, revisit when log size hurts).
 
 **P5 R0–R2 — committed `a60d3b5` (+`2708632` fix), user-verified:** the remote plan is specced as
-increments **R0–R4 in `SYNC-DESIGN.md`** (read that first). Landed here: **R0** `Sync/IRemoteStore` (a
+increments **R0–R2 in `SYNC-DESIGN.md`** (read that first; R3/R4 were dropped — see below). Landed here: **R0** `Sync/IRemoteStore` (a
 dumb object store: list/download/upload-atomic/text — nothing archive-aware) with
 `FileSystemRemoteStore` (any mounted path: backup drive, rclone/Syncthing folder — the test harness AND
 a real target), and **R1** `Sync/ArchiveReplicator` — push/pull as pure file-set reconciliation: **blobs
@@ -81,9 +81,10 @@ AND **length-verifies a resident blob** (a crash-torn short file at a content ad
 trusted — and the skip-archive's intact check now compares length from ONE store walk, not a stat per
 pin over SMB); the backup-folder guard no longer rejects a sibling named `<project>-backup`; the sync
 token is captured before the awaits (no `ObjectDisposedException` on back-out); a non-object remote
-marker gets the honest refusal. Tests: **143 Core / 84 Desktop** green. **Next: R3** (S3/B2
-`IRemoteStore` over SigV4 HTTP), **R4** (fetch-on-demand replicas — pull segments, defer blobs, extend
-the file-missing tile's re-download with a fetch-from-remote source).
+marker gets the honest refusal. Tests: **143 Core / 84 Desktop** green. **R3 (S3/B2) and R4
+(fetch-on-demand replicas) are DROPPED (2026-07-26), judged unnecessary** — the folder remote reaches
+any mountable target (rclone/Syncthing cover object storage), so P5 is complete at R0–R2; don't
+resurrect without a new driving need.
 
 **Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
 detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch
@@ -591,8 +592,9 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
   P0–P3 are DONE** (committed `9c1aeb1`) **and P4 is done except compaction** (this session,
   uncommitted — see the Status block). The project folder is 100% immutable files (content-addressed
   blobs + per-device append-only op segments); SQLite plus every derived cache is per-machine app-data
-  state; NAS multi-machine works. Remaining: segment compaction (deferred) and **P5** (S3/B2 remotes as
-  the same format over object storage; the mobile head reuses all of it).
+  state; NAS multi-machine works. **P5's folder-remote backup (R0–R2) is done; R3 (S3/B2) and R4
+  (fetch-on-demand replicas) were dropped (2026-07-26) as unnecessary.** Remaining: segment
+  compaction only (deferred).
 - **Phase 4 — mobile:** extract Core behind a `Hoard.Server` (ASP.NET Core minimal API, does ingestion
   server-side since mobile can't spawn gallery-dl); Avalonia mobile client with background sync.
 - **Phase 5 — capture + more connectors:** TS browser extension (in-page "save to Hoard"); more sources
