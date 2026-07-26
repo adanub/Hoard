@@ -107,6 +107,58 @@ public class PinIdentityReplayTests : IDisposable
         Assert.All(assets, a => Assert.Equal(Sha('b'), a.Sha256)); // both rows now point at the same blob
     }
 
+    [Fact]
+    public async Task A_stale_op_pulled_late_does_not_regress_newer_state()
+    {
+        // Device A refreshed the pin (hlc 9, already applied); device B's ORIGINAL import (hlc 1)
+        // arrives only later — as the sole pending op. Without the per-row LWW register this would be
+        // last-applied-wins and the row would regress to January.
+        var factory = NewDb("stale.db");
+        var opsRoot = Path.Combine(_dir, "stale-ops");
+        ArchiveSegments.Append(opsRoot, "dev-a", [AddedOp("dev-a", 1, hlcTick: 9, pin: "p1", sha: Sha('a'))]);
+
+        await using var db = factory.CreateDbContext();
+        await ArchiveSync.CatchUpAsync(db, opsRoot, new ArchiveLog("host"));
+        Assert.Equal(Sha('a'), (await db.Assets.SingleAsync()).Sha256);
+
+        ArchiveSegments.Append(opsRoot, "dev-b", [AddedOp("dev-b", 1, hlcTick: 1, pin: "p1", sha: Sha('b'))]);
+        await ArchiveSync.CatchUpAsync(db, opsRoot, new ArchiveLog("host"));
+
+        var asset = Assert.Single(await db.Assets.ToListAsync());
+        Assert.Equal(Sha('a'), asset.Sha256); // the newer state stood; the stale op was dropped
+    }
+
+    [Fact]
+    public async Task A_pinless_op_never_captures_a_pinned_rows_identity()
+    {
+        // Pin p1 exists; a pinless item with IDENTICAL bytes arrives from another device. The sha
+        // fallback must not hand p1's row to the anonymous item (that would null its SourceId and
+        // orphan every later pin-keyed op).
+        var factory = NewDb("pinless.db");
+        var opsRoot = Path.Combine(_dir, "pinless-ops");
+        ArchiveSegments.Append(opsRoot, "dev",
+        [
+            AddedOp("dev", 1, hlcTick: 1, pin: "p1", sha: Sha('a')),
+            new ArchiveOp
+            {
+                DeviceId = "dev", Seq = 2, Hlc = Hlc(2, "dev"), Kind = ArchiveOpKinds.AssetAdded,
+                Sha256 = Sha('a'),
+                PayloadJson = ArchiveOpJson.Serialize(new AssetAddedPayload(
+                    $"aa/bb/{Sha('a')}.jpg", "image/jpeg", MediaKind.Image, 10, 10, 10,
+                    "pinterest", null, null, null, "anonymous", null, null,
+                    null, DateTimeOffset.UnixEpoch.AddMinutes(2), null)),
+            },
+        ]);
+
+        await using var db = factory.CreateDbContext();
+        await ArchiveSync.CatchUpAsync(db, opsRoot, new ArchiveLog("host"));
+
+        var assets = await db.Assets.OrderBy(a => a.Id).ToListAsync();
+        Assert.Equal(2, assets.Count);                    // the anonymous item became its OWN row
+        Assert.Equal("p1", assets[0].SourceId);           // the pin kept its identity
+        Assert.Null(assets[1].SourceId);
+    }
+
     private TestDbContextFactory NewDb(string name)
     {
         var factory = new TestDbContextFactory(Path.Combine(_dir, name));

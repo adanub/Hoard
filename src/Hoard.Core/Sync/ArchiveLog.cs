@@ -8,8 +8,8 @@ namespace Hoard.Core.Sync;
 /// <summary>
 /// Appends archive ops (<c>SYNC-DESIGN.md</c>) alongside the DB changes they describe. Callers add the op
 /// to the same <see cref="HoardDbContext"/> as the change, inside the same <c>SaveChanges</c>, so the log
-/// can never drift from the data — the same contract as the older <see cref="SyncLog"/> stub, which stays
-/// in place untouched (append-only promise) until the op log takes over as the source of truth.
+/// can never drift from the data. (The pre-v2 <c>SyncLog</c> stub this superseded is retired — its table
+/// remains only for schema stability.)
 ///
 /// One instance per device id: <see cref="ArchiveOp.Seq"/> is allocated from an in-process counter seeded
 /// from the database on first use (and re-seeded when the underlying database changes — a project switch),
@@ -160,10 +160,11 @@ public sealed class ArchiveLog
     // ---- asset lifecycle -------------------------------------------------------------------------
     // Asset ops carry the PIN identity (connector + source id) in their payloads — the deterministic
     // natural key replay resolves first — while the sha column keeps the emission-time content sha (the
-    // legacy/pinless fallback key). See ArchiveOps.cs.
+    // legacy/pinless fallback key). Each writer also stamps the row's LastOpHlc (its LWW register) with
+    // the op's own HLC, so replay can refuse stale ops regardless of arrival order. See ArchiveOps.cs.
 
     public void RecordAssetAdded(HoardDbContext db, Asset asset, IReadOnlyList<string>? tags = null) =>
-        Append(db, ArchiveOpKinds.AssetAdded, sha256: asset.Sha256, payload: ArchiveOpJson.Serialize(
+        asset.LastOpHlc = Append(db, ArchiveOpKinds.AssetAdded, sha256: asset.Sha256, payload: ArchiveOpJson.Serialize(
             new AssetAddedPayload(
                 CanonicalPath(asset.RelativePath), asset.MimeType, asset.Kind, asset.Width, asset.Height, asset.Bytes,
                 asset.SourceConnector, asset.SourceId, asset.SourceUrl, asset.OriginalUrl,
@@ -173,18 +174,18 @@ public sealed class ArchiveLog
 
     /// <summary>Reads the tombstone off the (already-marked) row.</summary>
     public void RecordAssetTombstoned(HoardDbContext db, Asset asset) =>
-        Append(db, ArchiveOpKinds.AssetTombstoned, sha256: asset.Sha256,
+        asset.LastOpHlc = Append(db, ArchiveOpKinds.AssetTombstoned, sha256: asset.Sha256,
             payload: ArchiveOpJson.Serialize(new AssetTombstonedPayload(
                 asset.DeletionNote ?? "", asset.DeletedAt ?? DateTimeOffset.UtcNow,
                 asset.SourceConnector, asset.SourceId)));
 
     public void RecordAssetRestored(HoardDbContext db, string oldSha256, Asset asset) =>
-        Append(db, ArchiveOpKinds.AssetRestored, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
+        asset.LastOpHlc = Append(db, ArchiveOpKinds.AssetRestored, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
             new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes,
                 asset.SourceConnector, asset.SourceId)));
 
     public void RecordAssetRefetched(HoardDbContext db, string oldSha256, Asset asset) =>
-        Append(db, ArchiveOpKinds.AssetRefetched, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
+        asset.LastOpHlc = Append(db, ArchiveOpKinds.AssetRefetched, sha256: oldSha256, payload: ArchiveOpJson.Serialize(
             new AssetContentChangedPayload(asset.Sha256, CanonicalPath(asset.RelativePath), asset.Bytes,
                 asset.SourceConnector, asset.SourceId)));
 
@@ -196,7 +197,7 @@ public sealed class ArchiveLog
     private static string CanonicalPath(string relativePath) => relativePath.Replace('\\', '/');
 
     public void RecordAssetRetagged(HoardDbContext db, Asset asset, IReadOnlyList<string> fullTagSet) =>
-        Append(db, ArchiveOpKinds.AssetRetagged, sha256: asset.Sha256,
+        asset.LastOpHlc = Append(db, ArchiveOpKinds.AssetRetagged, sha256: asset.Sha256,
             payload: ArchiveOpJson.Serialize(new AssetRetaggedPayload(fullTagSet, asset.SourceConnector, asset.SourceId)));
 
     public void RecordAssetRemoved(HoardDbContext db, Asset asset) =>
@@ -251,7 +252,7 @@ public sealed class ArchiveLog
     public static string UidOf(CollectionSource source) => source.Uid ??= NewUid();
     public static string NewUid() => Guid.NewGuid().ToString("N");
 
-    private void Append(HoardDbContext db, string kind, string? sha256 = null, string? entityUid = null, string? payload = null)
+    private string Append(HoardDbContext db, string kind, string? sha256 = null, string? entityUid = null, string? payload = null)
     {
         long seq;
         string hlc;
@@ -275,5 +276,6 @@ public sealed class ArchiveLog
             EntityUid = entityUid,
             PayloadJson = payload,
         });
+        return hlc;
     }
 }

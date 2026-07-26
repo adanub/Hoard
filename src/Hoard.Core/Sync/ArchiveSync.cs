@@ -149,7 +149,9 @@ public static class ArchiveSync
                 // cleared here (that's asset.restored's job).
                 var asset = await FindAssetAsync(db, op.Sha256, p.SourceConnector, p.SourceId, ct).ConfigureAwait(false);
                 var isNew = asset is null;
+                if (IsStale(asset, op)) break; // catch-up only sees PENDING ops — a late-pulled old segment must not regress the row
                 if (asset is null) db.Assets.Add(asset = new Asset());
+                asset.LastOpHlc = op.Hlc;
                 asset.Sha256 = op.Sha256;
                 asset.RelativePath = p.RelativePath;
                 asset.MimeType = p.MimeType;
@@ -174,6 +176,8 @@ public static class ArchiveSync
             }
             case ArchiveOpKinds.AssetTombstoned when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
             {
+                if (IsStale(asset, op)) break;
+                asset.LastOpHlc = op.Hlc;
                 var p = ArchiveOpJson.Deserialize<AssetTombstonedPayload>(op.PayloadJson);
                 asset.DeletedAt = p.DeletedAt;
                 asset.DeletionNote = p.Note;
@@ -181,21 +185,28 @@ public static class ArchiveSync
             }
             case ArchiveOpKinds.AssetRestored when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
             {
+                if (IsStale(asset, op)) break;
+                asset.LastOpHlc = op.Hlc;
                 ApplyContentChange(asset, op);
                 asset.DeletedAt = null;
                 asset.DeletionNote = null;
                 break;
             }
             case ArchiveOpKinds.AssetRefetched when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
+                if (IsStale(asset, op)) break;
+                asset.LastOpHlc = op.Hlc;
                 ApplyContentChange(asset, op);
                 break;
             case ArchiveOpKinds.AssetRetagged when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
             {
+                if (IsStale(asset, op)) break;
+                asset.LastOpHlc = op.Hlc;
                 var p = ArchiveOpJson.Deserialize<AssetRetaggedPayload>(op.PayloadJson);
                 await ReplaceTagsAsync(db, asset, p.Tags, ct).ConfigureAwait(false);
                 break;
             }
             case ArchiveOpKinds.AssetRemoved when await FindAssetAsync(db, op, ct).ConfigureAwait(false) is { } asset:
+                if (IsStale(asset, op)) break; // a stale removal must not delete state a newer op rebuilt
                 db.Assets.Remove(asset); // links + tags cascade
                 break;
             case ArchiveOpKinds.CollectionCreated when op.EntityUid is not null:
@@ -324,6 +335,13 @@ public static class ArchiveSync
         }
     }
 
+    /// <summary>The LWW register check: an op strictly older than the last one applied to (or emitted
+    /// for) this row is stale and must be dropped — arrival order (which segment got pulled when) must
+    /// never decide state. Null register (legacy row) accepts and starts tracking; equal HLC re-applies
+    /// idempotently.</summary>
+    private static bool IsStale(Asset? asset, ArchiveOp op) =>
+        asset?.LastOpHlc is { } last && string.CompareOrdinal(op.Hlc, last) < 0;
+
     private static void ApplyContentChange(Asset asset, ArchiveOp op)
     {
         var p = ArchiveOpJson.Deserialize<AssetContentChangedPayload>(op.PayloadJson);
@@ -358,17 +376,23 @@ public static class ArchiveSync
 
     /// <summary>
     /// The op → asset resolution rule: the payload's pin identity first (deterministic across devices),
-    /// the op's sha column second (legacy pre-v9 ops, and pinless assets — valid because the dedup era
-    /// guaranteed one row per sha). Ordered by Id so a legacy duplicate resolves deterministically.
+    /// the op's sha column second. The sha fallback serves two distinct cases: a LEGACY op (no payload
+    /// identity at all — connector null) may target any row, valid because the dedup era guaranteed one
+    /// row per sha; a NEW op for a PINLESS asset (connector present, sourceId null) must match only
+    /// pinless rows — an unrestricted match could capture a pinned row sharing the bytes and the added
+    /// upsert would null its SourceId, destroying the pin's identity. Duplicate rows (legacy dedup-era
+    /// data can hold one pin twice) resolve LIVE-first — the pin is live if any of its rows is — then by
+    /// oldest Id for determinism.
     /// </summary>
     private static Task<Asset?> FindAssetAsync(HoardDbContext db, string? sha, string? connector, string? sourceId, CancellationToken ct)
     {
         if (connector is not null && sourceId is not null)
             return db.Assets.Where(a => a.SourceConnector == connector && a.SourceId == sourceId)
-                .OrderBy(a => a.Id).FirstOrDefaultAsync(ct);
-        return sha is null
-            ? Task.FromResult<Asset?>(null)
-            : db.Assets.Where(a => a.Sha256 == sha).OrderBy(a => a.Id).FirstOrDefaultAsync(ct);
+                .OrderBy(a => a.DeletedAt != null).ThenBy(a => a.Id).FirstOrDefaultAsync(ct);
+        if (sha is null) return Task.FromResult<Asset?>(null);
+        var pinlessOnly = connector is not null; // new-style op for a pinless asset
+        return db.Assets.Where(a => a.Sha256 == sha && (!pinlessOnly || a.SourceId == null))
+            .OrderBy(a => a.DeletedAt != null).ThenBy(a => a.Id).FirstOrDefaultAsync(ct);
     }
 
     /// <summary>Resolution for ops whose payload is a pin-identity carrier (tombstoned/restored/refetched/

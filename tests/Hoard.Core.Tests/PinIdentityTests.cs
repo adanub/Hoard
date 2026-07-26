@@ -221,6 +221,66 @@ public class PinIdentityTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Freeing_checks_referrers_across_path_separator_spellings()
+    {
+        // A legacy Windows-era row holds the blob path with backslashes; a new pin shares the bytes
+        // under the canonical spelling. Deleting the new pin must NOT free the blob — the legacy row
+        // still points at it (raw string comparison used to miss it).
+        await new IngestService(_dbFactory, _store, new[] { new PinConnector(("p1", "shared-bytes", "board-A")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+        int p1Id;
+        string blobPath;
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var a = await db.Assets.SingleAsync();
+            p1Id = a.Id;
+            blobPath = _store.GetAbsolutePath(a.RelativePath);
+            db.Assets.Add(new Asset
+            {
+                Sha256 = a.Sha256, RelativePath = a.RelativePath.Replace('/', '\\'), Bytes = a.Bytes,
+                SourceConnector = "pinterest", SourceId = "p2", SourceBoardId = "board-B",
+                ImportedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await new CurationService(_dbFactory, _store).DeleteAssetAsync(p1Id, "dupe");
+        Assert.True(File.Exists(blobPath)); // the backslash-spelled live referrer protected it
+    }
+
+    [Fact]
+    public async Task A_tombstone_without_provenance_heals_it_from_the_next_crawl()
+    {
+        // A legacy tombstone whose sidecar yielded no board id can't pre-skip (the blacklist needs a
+        // board) — one re-crawl must stamp it so the NEXT sync's skip-archive covers it.
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.Assets.Add(new Asset
+            {
+                Sha256 = new string('d', 64), RelativePath = "dd/dd/gone.jpg",
+                SourceConnector = "pinterest", SourceId = "p1", // no SourceBoardId
+                ImportedAt = DateTimeOffset.UtcNow, DeletedAt = DateTimeOffset.UtcNow, DeletionNote = "x",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await new IngestService(_dbFactory, _store, new[] { new PinConnector(("p1", "bytes", "board-A")) })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var row = Assert.Single(await db.Assets.ToListAsync());
+            Assert.NotNull(row.DeletedAt);              // still deleted
+            Assert.Equal("board-A", row.SourceBoardId); // provenance healed → blacklists next sync
+        }
+
+        var probe = new PinConnector();
+        await new IngestService(_dbFactory, _store, new[] { probe })
+            .ImportAsync("https://pinterest.com/jane/", new ConnectorOptions(), null);
+        Assert.Contains(new KnownSourceItem("board-A", "p1"), probe.LastOptions!.KnownItems!);
+    }
+
     /// <summary>A connector serving (pin id, content, board id) triples; empty = a crawl that lists nothing.
     /// Ignores the skip-archive (like a connector whose archive was lost) so DB-side rules are exercised.</summary>
     private sealed class PinConnector : ISourceConnector

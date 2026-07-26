@@ -247,6 +247,21 @@ public class ProjectTests : IDisposable
         Assert.True(Directory.Exists(notAProject)); // guard kept it safe
     }
 
+    [Fact]
+    public void Open_refuses_an_archive_written_by_a_newer_build()
+    {
+        // The forward format gate: half-understanding a newer archive would emit/replay ops under
+        // unknown semantics and silently diverge the fleet — refusal with a clear message is the
+        // only safe behaviour.
+        var folder = Path.Combine(_dir, "FromTheFuture");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "hoard.project.json"),
+            $$"""{"name":"Future","id":"{{Guid.NewGuid()}}","format":{{HoardProject.CurrentFormatVersion + 1}}}""");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => HoardProject.Open(folder));
+        Assert.Contains("newer version of Hoard", ex.Message);
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch { }

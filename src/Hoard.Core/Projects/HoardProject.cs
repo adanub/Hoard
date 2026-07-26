@@ -194,6 +194,14 @@ public sealed class HoardProject
             // failure v2 exists to remove.
             FormatVersion = marker?.Format is > 0 and int f ? f : InferFormatFromFolder(full),
         };
+        // The forward gate: an archive stamped by a NEWER build must be refused, not half-understood —
+        // opening it would emit/replay ops under semantics this build doesn't know and silently diverge
+        // the fleet. (Builds ≤ the pin-identity change shipped without this check — the reason the whole
+        // fleet must be upgraded together across that transition; from here on, a format bump protects.)
+        if (project.FormatVersion > CurrentFormatVersion)
+            throw new InvalidOperationException(
+                $"'{full}' was written by a newer version of Hoard (archive format {project.FormatVersion}; " +
+                $"this build understands up to {CurrentFormatVersion}). Update Hoard on this machine to open it.");
         if (Guid.TryParse(marker?.Id, out var id) && id != default)
         {
             project.Id = id;

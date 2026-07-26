@@ -14,8 +14,9 @@ public static class SchemaInitializer
 {
     /// <summary>Bump this and add a matching <see cref="Upgrades"/> entry whenever the model gains additive objects.
     /// (v5 and v6 are data-only steps — the attribution backfill and the stale-tombstone repair — with no DDL;
-    /// v9 is DDL + data: pin-keyed identity columns, the sha index de-uniqued, and the provenance backfill.)</summary>
-    public const long LatestSchemaVersion = 9;
+    /// v9 is DDL + data: pin-keyed identity columns, the sha index de-uniqued, and the provenance backfill;
+    /// v10 adds the per-row LWW register.)</summary>
+    public const long LatestSchemaVersion = 10;
 
     /// <summary>
     /// Ordered additive patches applied to a pre-existing database whose <c>user_version</c> is below the
@@ -183,6 +184,17 @@ public static class SchemaInitializer
                 """, ct).ConfigureAwait(false);
             await ProvenanceBackfill.RunAsync(db, ct).ConfigureAwait(false);
             await SetVersionAsync(db, 9, ct).ConfigureAwait(false);
+        }
+
+        // v10 — the per-row LWW register: replay applies an asset op only if it's not older than the
+        // last one applied to that row, which is what makes catch-up order-independent (a late-pulled
+        // stale segment can no longer regress newer state). Null on existing rows = start tracking.
+        if (current < 10)
+        {
+            if (!await ColumnExistsAsync(db, "Assets", "LastOpHlc", ct).ConfigureAwait(false))
+                await db.Database.ExecuteSqlRawAsync(
+                    "ALTER TABLE \"Assets\" ADD COLUMN \"LastOpHlc\" TEXT NULL;", ct).ConfigureAwait(false);
+            await SetVersionAsync(db, 10, ct).ConfigureAwait(false);
         }
     }
 

@@ -29,7 +29,10 @@ public static class PinterestSidecarParser
         {
             return Parse(mediaFilePath: "", sidecarJson);
         }
-        catch (JsonException)
+        // JsonException = unparseable text; InvalidOperationException = parseable but not an object
+        // ("[]", "null", a bare number — TryGetProperty throws on a non-Object root). Historical data
+        // can be either, and a throwing sidecar here once aborted every open mid-upgrade.
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
             return null;
         }

@@ -42,6 +42,13 @@ public class Asset
     /// re-files into its section folder rather than the board root.</summary>
     public string? SourceSectionId { get; set; }
 
+    /// <summary>The HLC of the last asset op applied to (or emitted for) this row (v10) — the LWW
+    /// register that makes replay order-independent: an op older than this is stale and must not
+    /// regress the row (catch-up only ever sees PENDING ops, so without this a late-arriving old
+    /// segment would be last-applied-wins). Stamped at local emission and at replay; null on legacy
+    /// rows means "accept the next op and start tracking". Derived data (rebuilt from ops).</summary>
+    public string? LastOpHlc { get; set; }
+
     /// <summary>Canonical page URL on the source (the pin page).</summary>
     public string? SourceUrl { get; set; }
 

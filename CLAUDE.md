@@ -120,15 +120,20 @@ Concepts that span multiple files:
   `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.
   Each user owns many independent project DBs, so this is lighter than migrations. **When you change the model:
   bump `SchemaInitializer.LatestSchemaVersion` and add a matching idempotent `CREATE … IF NOT EXISTS` upgrade
-  whose DDL matches what EF would generate** (verify with `db.Database.GenerateCreateScript()`). Non-additive
-  changes (renames/drops) would need a real migration — cross that bridge if it ever comes up.
+  whose DDL matches what EF would generate** (verify with `db.Database.GenerateCreateScript()`). Index
+  swaps (`DROP INDEX` + `CREATE INDEX`, e.g. v9 de-uniquing the sha index) are data-preserving and fine;
+  non-additive changes to columns/tables (renames/drops) would need a real migration — cross that bridge
+  if it ever comes up.
 - **Asset identity is the PIN, not the content hash (v9).** An `Asset` row is one *saved pin* —
   `(SourceConnector, SourceId)` — with `Sha256`/`RelativePath` as its (shareable, mutable) blob pointer:
   two pins holding identical bytes are two rows over ONE stored blob (the content-addressed store still
   dedups bytes on disk), and a pin whose source re-encoded it updates its row in place. Consequences that
   must hold everywhere: **never free/delete a blob without checking for other LIVE rows on the same
-  `RelativePath`** (`CurationService.UnreferencedAsync` — tombstone, remove-source, delete-board, and the
-  ingest tombstone-skip all route through this rule); tombstones are **per-pin** blacklists; a pinless row
+  `RelativePath`** (`Library/BlobReferences` — the ONE referrer rule; tombstone, remove-source,
+  delete-board, and the ingest tombstone-skip all route through it, and it compares paths
+  **separator-canonically** because legacy Windows rows hold `ab\cd\…` beside replayed `ab/cd/…`);
+  tombstones are **per-pin** blacklists (a provenance-less tombstone heals its board id from the next
+  crawl's skip branch so it can re-enter the blacklist); a pinless row
   (unparseable sidecar) falls back to content identity (`ArchiveOpKeys.ForAsset`). Board/section
   provenance is first-class on the row (`SourceBoardId`/`SourceSectionId`, stamped at import, backfilled
   from stored sidecars at v9, self-healing via the pin-keyed upsert on the next re-crawl). **The ONE
@@ -147,8 +152,16 @@ Concepts that span multiple files:
   op in the *same* `SaveChanges` (never mutate/delete ops). Asset op payloads carry `connector`+`sourceId`
   (the deterministic natural key — no uid minting, so two devices that saved the same pin converge with no
   aliasing); the op's `Sha256` column holds the emission-time content sha as the LEGACY key (pre-v9 ops)
-  and the pinless fallback — `ArchiveSync.FindAssetAsync` resolves payload-pin first, sha second, and
-  legacy `asset.added` replay derives provenance from the payload sidecar via the shared parser. The old
+  and the pinless fallback (restricted to pinless rows for NEW ops, so an anonymous item can never
+  capture a pinned row's identity; unrestricted only for true legacy ops) — `ArchiveSync.FindAssetAsync`
+  resolves payload-pin first, sha second, duplicates LIVE-first, and legacy `asset.added` replay derives
+  provenance from the payload sidecar via the shared parser. **Replay is guarded by the per-row LWW
+  register** (`Asset.LastOpHlc`, v10): every asset-op writer stamps the row with the op's own HLC and
+  replay drops ops older than the register — catch-up only ever sees PENDING ops, so without this a
+  late-pulled old segment would be last-applied-wins and replicas would diverge. **The marker gains a
+  forward format gate** (`HoardProject.Open` refuses `format > CurrentFormatVersion`) so the NEXT op
+  semantics change can bump the format and old builds refuse instead of silently diverging (builds
+  before the pin-identity change had no gate — upgrade all machines together across that transition). The old
   `SyncLog`/`SyncOps` table is retired: nothing writes or reads it (the entity + table stay only for
   schema stability).
 - **Shell navigation.** `MainWindowViewModel` owns a `NavigationService` (`Navigation/`) — a browser-style page

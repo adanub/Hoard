@@ -61,7 +61,7 @@ public sealed class CurationService
         // Free the blob only after the commit, so a failure here leaves an orphan blob (harmless,
         // reclaimable) rather than a live row pointing at a missing file — and only when this pin was
         // its last live referrer (rows aren't unique per content).
-        foreach (var freeable in await UnreferencedAsync(db, [relativePath], ct).ConfigureAwait(false))
+        foreach (var freeable in await BlobReferences.UnreferencedAsync(db, [relativePath], ct).ConfigureAwait(false))
             await _store.DeleteAsync(freeable, ct).ConfigureAwait(false);
         return sha;
     }
@@ -140,7 +140,7 @@ public sealed class CurationService
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         // Post-commit: free only blobs whose last live referrer just went (shared-content pins survive).
-        await FreeBlobsAsync(await UnreferencedAsync(db, freed, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+        await FreeBlobsAsync(await BlobReferences.UnreferencedAsync(db, freed, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
         return freed.Count;
     }
 
@@ -176,7 +176,7 @@ public sealed class CurationService
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await _archive.FlushSegmentAsync(db, ct).ConfigureAwait(false);
         // Post-commit: free only blobs whose last live referrer just went (shared-content pins survive).
-        await FreeBlobsAsync(await UnreferencedAsync(db, freed, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+        await FreeBlobsAsync(await BlobReferences.UnreferencedAsync(db, freed, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
         return freed.Count;
     }
 
@@ -235,7 +235,7 @@ public sealed class CurationService
     /// Stage a hard delete of <paramref name="assets"/>: log a Remove op per asset (carrying its pin
     /// identity) and remove its row — which cascades its board links + tags. Returns the blob paths to
     /// free <i>after</i> the commit (so a mid-way failure orphans a blob harmlessly rather than stranding a
-    /// row); run them through <see cref="UnreferencedAsync"/> first so a blob a surviving live pin still
+    /// row); run them through <see cref="BlobReferences.UnreferencedAsync"/> first so a blob a surviving live pin still
     /// shares is never freed. Does not call SaveChanges, so the caller can remove the owning source/board
     /// in the same transaction.
     /// </summary>
@@ -249,22 +249,6 @@ public sealed class CurationService
             db.Assets.Remove(asset);
         }
         return blobs;
-    }
-
-    /// <summary>Of <paramref name="relativePaths"/>, the (distinct) ones no LIVE row still references —
-    /// rows aren't unique per content, so a blob is freed only when its last live referrer goes. Call
-    /// after the commit that removed/tombstoned the referrers being deleted.</summary>
-    private static async Task<List<string>> UnreferencedAsync(
-        HoardDbContext db, IReadOnlyList<string> relativePaths, CancellationToken ct)
-    {
-        var distinct = relativePaths.Distinct().ToList();
-        if (distinct.Count == 0) return distinct;
-        var stillHeld = await db.Assets
-            .Where(a => a.DeletedAt == null && distinct.Contains(a.RelativePath))
-            .Select(a => a.RelativePath)
-            .Distinct()
-            .ToListAsync(ct).ConfigureAwait(false);
-        return distinct.Except(stillHeld).ToList();
     }
 
     /// <summary>

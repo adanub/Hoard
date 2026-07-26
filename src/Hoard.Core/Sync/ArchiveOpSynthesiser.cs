@@ -111,7 +111,10 @@ public static class ArchiveOpSynthesiser
                      .ToListAsync(ct).ConfigureAwait(false))
                      .OrderBy(ci => ci.AddedAt).ThenBy(ci => ci.Id))
         {
-            if (coveredLinks.Contains((RowAssetKey(link.Asset), link.Collection.Uid ?? ""))) continue;
+            // A LEGACY item.linked op carried no payload identity, so it keyed by sha — accept either
+            // spelling as coverage, or a resumed migration would append a duplicate op per held link.
+            if (coveredLinks.Contains((RowAssetKey(link.Asset), link.Collection.Uid ?? ""))
+                || coveredLinks.Contains((ArchiveOpKeys.ForAsset(null, null, link.Asset.Sha256), link.Collection.Uid ?? ""))) continue;
             cursor = link.AddedAt;
             log.RecordItemLinked(db, link.Asset, ArchiveLog.UidOf(link.Collection),
                 link.CollectionSource is { } source ? ArchiveLog.UidOf(source) : null, link.Note, link.AddedAt);

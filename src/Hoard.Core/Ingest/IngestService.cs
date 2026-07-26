@@ -145,8 +145,16 @@ public sealed class IngestService
             // skip-archive missed it.
             if (existing is { DeletedAt: not null })
             {
-                var shared = await db.Assets
-                    .AnyAsync(a => a.DeletedAt == null && a.RelativePath == blob.RelativePath, committed)
+                // A tombstone can never self-heal provenance through the refresh path (it returns here),
+                // so stamp it from THIS crawl — without a board id the blacklist can't pre-skip the pin
+                // and every future sync would re-download and re-free it.
+                if (existing.SourceBoardId is null && item.BoardId is not null)
+                {
+                    existing.SourceBoardId = item.BoardId;
+                    existing.SourceSectionId ??= item.SectionId;
+                    await db.SaveChangesAsync(committed).ConfigureAwait(false);
+                }
+                var shared = await BlobReferences.IsSharedAsync(db, blob.RelativePath, existing.Id, committed)
                     .ConfigureAwait(false);
                 if (!shared) await _store.DeleteAsync(blob.RelativePath, committed).ConfigureAwait(false);
                 processed++;
@@ -503,11 +511,15 @@ public sealed class IngestService
     {
         var key = IdentityKey(connector, sourceId, sha256);
         if (cache.TryGetValue(key, out var cached)) return cached;
+        // LIVE rows win over tombstoned duplicates (legacy dedup-era data can hold one pin twice): the
+        // pin is live if ANY of its rows is, so the tombstone-skip must not fire off a stale duplicate.
+        // The pinless sha fallback matches only pinless rows — capturing a pinned row that happens to
+        // share the bytes would hand its identity to an anonymous item.
         var existing = sourceId is not null
             ? await db.Assets.Where(a => a.SourceConnector == connector && a.SourceId == sourceId)
-                .OrderBy(a => a.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false)
-            : await db.Assets.Where(a => a.Sha256 == sha256)
-                .OrderBy(a => a.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                .OrderBy(a => a.DeletedAt != null).ThenBy(a => a.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false)
+            : await db.Assets.Where(a => a.Sha256 == sha256 && a.SourceId == null)
+                .OrderBy(a => a.DeletedAt != null).ThenBy(a => a.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
         if (existing is not null) cache[key] = existing;
         return existing;
     }

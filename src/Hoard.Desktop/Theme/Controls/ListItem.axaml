@@ -6,7 +6,8 @@
   Apply via a ListBox's ItemContainerTheme="{StaticResource HoardListItem}" (or Theme= on a ListBoxItem).
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ctrl="using:Hoard.Desktop.Controls">
 
     <ControlTheme x:Key="HoardListItem" TargetType="ListBoxItem">
         <Setter Property="Background" Value="Transparent"/>
@@ -24,6 +25,16 @@
         <Setter Property="ClipToBounds" Value="False"/>
         <!-- Shared pressable-surface scaffold (Border#root + hit-transparent content + press transition). -->
         <Setter Property="Template" Value="{StaticResource PressableSurfaceTemplate}"/>
+
+        <!-- The scaffold's Marquee needs an activator in EVERY theme that uses the shared template
+             (the content is hit-transparent, so it can't watch the pointer itself): without these, an
+             over-wide row label would clip with no ellipsis, no wrap, and no pan. Same rule as Button. -->
+        <Style Selector="^:pointerover /template/ ctrl|Marquee#marquee">
+            <Setter Property="IsActive" Value="True"/>
+        </Style>
+        <Style Selector="^:pressed /template/ ctrl|Marquee#marquee">
+            <Setter Property="IsActive" Value="True"/>
+        </Style>
 
         <!-- Hover: raised pill (the SAME raised neutral as the secondary button — lighter than bg in BOTH
              themes; CardBrush is lighter in light but darker in dark, which read inconsistent). -->
