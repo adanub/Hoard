@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,6 +48,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
     private readonly LibraryService _library;
     private readonly CurationService _curation;
     private readonly IngestService _ingest;
+    private readonly BoardExporter? _exporter;
     private readonly ThumbnailCache? _thumbnails;
     private readonly ToastService _toasts;
     private readonly ImportStatus _importStatus;
@@ -85,7 +87,8 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
     public BoardViewModel(
         LibraryService library, CurationService curation, IngestService ingest,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus, ProjectManager? projects,
-        BoardTarget target, NavigationService nav, Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null)
+        BoardTarget target, NavigationService nav, Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null,
+        BoardExporter? exporter = null)
     {
         _uiSettingsStore = uiSettings;
         _uiSettings = uiSettings?.Settings;
@@ -95,6 +98,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
         _library = library;
         _curation = curation;
         _ingest = ingest;
+        _exporter = exporter;
         _thumbnails = thumbnails;
         _toasts = toasts;
         _importStatus = importStatus;
@@ -116,7 +120,12 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
         _syncAction = new PlusAction("Sync board", OpenSyncSheetCommand) { IsVisible = IsSyncable };
         PlusActions = _collectionId is null
             ? Array.Empty<PlusAction>()
-            : new[] { _syncAction, new PlusAction("New folder", OpenNewFolderSheetCommand) };
+            : new[]
+            {
+                _syncAction,
+                new PlusAction("New folder", OpenNewFolderSheetCommand),
+                new PlusAction("Export", OpenExportSheetCommand),
+            };
 
         _importStatus.PropertyChanged += OnImportStatusChanged;
         Assets.CollectionChanged += (_, _) => SyncExpandedIndex(); // keep the band on the selected tile as items shift
@@ -232,6 +241,9 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
             AppendImportedIfRelevant();
             return;
         }
+        // The export gate reads both interlock flags — re-evaluate when either flips.
+        if (e.PropertyName is nameof(ImportStatus.IsImporting) or nameof(ImportStatus.IsRemoteSyncing))
+            ExportCommand.NotifyCanExecuteChanged();
         var wasImporting = IsBoardImporting;
         UpdateImportState();
         // An import into this board just finished → reload the grid (order/counts/filter) AND the folder row
@@ -590,6 +602,95 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
         {
             _importStatus.End(); // → OnImportStatusChanged reloads the grid
         }
+    }
+
+    // ── Human-readable export: materialise this board as a Board/Folder/image tree ─
+
+    [ObservableProperty] private bool _isExportSheetOpen;
+    [ObservableProperty] private string _exportPathText = "";
+    [ObservableProperty] private string _exportStatusText = "";
+    [ObservableProperty] private bool _isExporting;
+    private string? _exportFolder;
+
+    [RelayCommand]
+    private void OpenExportSheet()
+    {
+        ExportStatusText = "";
+        IsExportSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseExportSheet() => IsExportSheetOpen = false;
+
+    /// <summary>Called from the view's folder picker (it needs the visual tree's TopLevel).</summary>
+    public void SetExportFolder(string path)
+    {
+        var full = Path.GetFullPath(path);
+        // Trailing-separator compare, like the Backup guard: plain StartsWith would also reject a
+        // SIBLING whose name merely extends the project's.
+        if (_projects?.Current is { } project
+            && WithSeparator(full).StartsWith(WithSeparator(Path.GetFullPath(project.Root)), StringComparison.OrdinalIgnoreCase))
+        {
+            ExportStatusText = "Choose a folder outside the project — the archive folder must hold only the archive itself.";
+            return;
+        }
+
+        static string WithSeparator(string p) =>
+            p.EndsWith(Path.DirectorySeparatorChar) ? p : p + Path.DirectorySeparatorChar;
+        _exportFolder = full;
+        ExportPathText = full;
+        ExportStatusText = "";
+        ExportCommand.NotifyCanExecuteChanged();
+    }
+
+    // Reading the archive is safe alongside anything, but an import/backup-sync mid-run would export a
+    // partial snapshot that looks complete — refuse to start until they finish (they don't wait for us:
+    // export never writes the archive, so nothing gates on IsExporting).
+    private bool CanExport() =>
+        _exporter is not null && _collectionId is not null && _exportFolder is not null
+        && !IsExporting && !_importStatus.IsImporting && !_importStatus.IsRemoteSyncing;
+
+    [RelayCommand(CanExecute = nameof(CanExport))]
+    private async Task ExportAsync()
+    {
+        if (_exporter is null || _collectionId is not int boardId || _exportFolder is not { } destination
+            || _importStatus.IsImporting || _importStatus.IsRemoteSyncing) return;
+        var ct = _disposeCts.Token; // captured before any await — safe to read even after the CTS is disposed
+        IsExporting = true;
+        ExportCommand.NotifyCanExecuteChanged();
+        try
+        {
+            ExportStatusText = "Exporting…";
+            var progress = new Progress<string>(text => ExportStatusText = text);
+            var report = await Task.Run(() => _exporter.ExportAsync(boardId, destination, progress, ct), ct);
+            ExportStatusText = SummariseExport(report);
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away mid-export; whole files only (temp+rename), the next export resumes.
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Export failed for board {BoardId} to {Destination}", boardId, destination);
+            ExportStatusText = "Export failed: " + ex.Message;
+        }
+        finally
+        {
+            IsExporting = false;
+            ExportCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private static string SummariseExport(ExportReport report)
+    {
+        var text = report.Copied == 0
+            ? "Already up to date — nothing new to copy."
+            : report.UpToDate == 0
+                ? $"Done — copied {report.Copied} file(s)."
+                : $"Done — copied {report.Copied} file(s); {report.UpToDate} already there.";
+        if (report.MissingBlobs > 0)
+            text += $" Skipped {report.MissingBlobs} whose file is missing from the store — re-download those first.";
+        return text;
     }
 
     // ── Fullscreen zoom/pan lightbox for the selected image ───────────────────────

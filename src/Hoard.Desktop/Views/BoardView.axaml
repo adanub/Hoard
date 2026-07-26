@@ -350,6 +350,16 @@
             </StackPanel>
         </ctrl:SheetHost>
 
+        <!-- Export popup (the ＋ menu's Export): pick a destination + copy the board out as a browsable
+             Board/Folder/image tree. The picker command is wired in code-behind (needs the TopLevel). -->
+        <ctrl:SheetHost IsOpen="{Binding IsExportSheetOpen}" DismissCommand="{Binding CloseExportSheetCommand}">
+            <ctrl:ExportSheet x:Name="ExportSheetContent"
+                              PathText="{Binding ExportPathText}"
+                              StatusText="{Binding ExportStatusText}"
+                              IsExporting="{Binding IsExporting}"
+                              ExportCommand="{Binding ExportCommand}"/>
+        </ctrl:SheetHost>
+
         <!-- Fullscreen zoom/pan viewer for the expanded image, layered above everything (last child = topmost). -->
         <ctrl:Lightbox IsOpen="{Binding IsLightboxOpen}" Source="{Binding LightboxSource}"
                        IsGif="{Binding LightboxIsGif}" CloseCommand="{Binding CloseLightboxCommand}"/>

@@ -104,6 +104,17 @@ Concepts that span multiple files:
   (the replicator copies the very files an import writes); keep any NEW archive-writing entry point
   gated on both flags. Two folder copies with the same marker id are **replicas of one archive** (they
   share this machine's index); syncing them against each other is the intended workflow, not a conflict.
+- **Human-readable export (the Board ＋ menu's Export).** `Library/BoardExporter` + the pure `ExportNames`
+  (Core) materialise a board's subtree as a browsable `Board/Folder/image` tree at a user-chosen folder
+  (`Controls/ExportSheet` + the export region in `BoardViewModel`; the folder picker lives in `BoardView`
+  code-behind, like Backup's). **Read-only against the archive** — the `store/` stays content-addressed.
+  File names are **stable per asset** (`Title [pinId].ext`, sha stub when pinless; the Windows-invalid
+  char set applied on every OS; folder names honour `DisplayName` with `[id]` sibling-collision suffixes),
+  which is what makes re-export an **incremental refresh**: a same-length destination file is skipped
+  (blobs are immutable) and a torn one re-copies; writes are temp+rename. Tombstones never export; a
+  missing blob is counted in the `ExportReport`, not fatal. Export **refuses to start** while an
+  import/backup sync runs (a mid-run export would snapshot a partial board) but publishes no interlock
+  flag of its own — nothing needs to gate on a reader.
 - **Schema versioning is additive, via `PRAGMA user_version` — not EF migrations.** `EnsureCreated` builds a
   fresh project DB from the full current model; an existing DB (maybe from an older app version) is patched by
   `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.

@@ -1,0 +1,36 @@
+<!--
+  ExportSheet — contents of the Export popup (inside a SheetHost on the Board screen). Pick a destination
+  folder and copy the board's images out as a browsable Board/Folder/image tree; result on the status line.
+  Self-bindings use #Root; data bindings come from the inherited BoardViewModel context via the view.
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.ExportSheet"
+             x:Name="Root">
+
+    <StackPanel Margin="24" Spacing="14">
+        <TextBlock Classes="h2" Text="Export"/>
+        <TextBlock Classes="muted" TextWrapping="Wrap"
+                   Text="Copy this board's images into ordinary folders you can browse — one folder for the board, one per sub-folder. Exporting again to the same place only copies what's new."/>
+
+        <!-- Destination folder + picker -->
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox Grid.Column="0" Theme="{StaticResource HoardInput}" IsReadOnly="True"
+                     Text="{Binding #Root.PathText}" PlaceholderText="No destination chosen yet"/>
+            <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary" Width="38" Height="38"
+                    Padding="0" Command="{Binding #Root.ChooseCommand}">
+                <ctrl:Icon Data="{StaticResource Icon.folder}" Width="18" Height="18"/>
+            </Button>
+        </Grid>
+
+        <!-- Status/progress; the BusyBar carries its own visibility gate (never a raw indeterminate bar) -->
+        <ctrl:BusyBar IsVisible="{Binding #Root.IsExporting}"/>
+        <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding #Root.StatusText}"
+                   IsVisible="{Binding #Root.StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Content="Export" Command="{Binding #Root.ExportCommand}"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

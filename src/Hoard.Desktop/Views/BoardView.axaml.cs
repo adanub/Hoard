@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
@@ -60,6 +61,22 @@ public partial class BoardView : UserControl
         _gifScan.Tick += OnGifScanTick;
         GridScroll.ScrollChanged += OnGridScrollChanged;
         WireFolderEditSheet();
+        // The destination picker needs the visual tree's TopLevel, so it lives here; everything else on
+        // the Export sheet binds straight to the view model in XAML (the RemoteSheet pattern).
+        ExportSheetContent.ChooseCommand = new RelayCommand(() => _ = PickExportFolderAsync());
+    }
+
+    private async Task PickExportFolderAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top is null) return;
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+        {
+            Title = "Choose an export folder",
+            AllowMultiple = false,
+        });
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path && Vm is { } vm)
+            vm.SetExportFolder(path);
     }
 
     private readonly DispatcherTimer _gifScan;

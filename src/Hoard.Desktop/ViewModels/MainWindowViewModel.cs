@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly ProjectDbContextFactory _dbFactory;
     private readonly UiSettingsStore? _uiSettings;
     private readonly Hoard.Core.Sync.ArchiveLog? _archive;
+    private readonly BoardExporter? _exporter;
 
     // One thumbnail cache per opened project, shared by the Library (board covers) and Board (tiles) screens.
     private ThumbnailCache? _thumbnails;
@@ -44,7 +45,7 @@ public partial class MainWindowViewModel : ViewModelBase
         IngestService ingest, LibraryService library, CurationService curation,
         ProjectManager projects, ProjectDbContextFactory dbFactory,
         UiSettingsStore? uiSettings = null, AppPaths? appPaths = null,
-        Hoard.Core.Sync.ArchiveLog? archive = null)
+        Hoard.Core.Sync.ArchiveLog? archive = null, BoardExporter? exporter = null)
     {
         _ingest = ingest;
         _library = library;
@@ -53,6 +54,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _dbFactory = dbFactory;
         _uiSettings = uiSettings;
         _archive = archive;
+        _exporter = exporter;
         Settings = new SettingsViewModel(uiSettings, projects, appPaths);
         Chrome = new ShellChromeViewModel(Navigation, openSettings: Settings.Open);
         if (projects is not null) ShowLauncher(); // skip in the design-time (null) ctor
@@ -94,7 +96,7 @@ public partial class MainWindowViewModel : ViewModelBase
         // back/forward stack as pages.
         BoardViewModel Create() => new(
             _library, _curation, _ingest, _thumbnails, ToastService, ImportStatus, _projects,
-            target, Navigation, openBoard: ShowBoard, uiSettings: _uiSettings);
+            target, Navigation, openBoard: ShowBoard, uiSettings: _uiSettings, exporter: _exporter);
         // Null thunk when the project is gone, so forward drops the dead entry instead of rebuilding a board
         // against a closed/deleted project.
         Navigation.Push(Create(), () => _projects.Current is null ? null : Create());

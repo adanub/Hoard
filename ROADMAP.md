@@ -86,6 +86,21 @@ marker gets the honest refusal. Tests: **143 Core / 84 Desktop** green. **R3 (S3
 any mountable target (rclone/Syncthing cover object storage), so P5 is complete at R0–R2; don't
 resurrect without a new driving need.
 
+**Human-readable export — BUILT (2026-07-26, uncommitted, awaiting the user's runtime verification):**
+the Board screen's ＋ menu gains **Export** — a sheet (`Controls/ExportSheet`, RemoteSheet-shaped; folder
+picker wired in `BoardView` code-behind) that materialises the board's subtree as a browsable
+`Board/Folder/image` tree at a chosen destination, via `Library/BoardExporter` + the pure, unit-tested
+`ExportNames` (Core; registered in `AddHoardCore`, threaded `MainWindowViewModel → BoardViewModel`).
+The rules: live assets only (tombstones never export); **names are stable per asset** — `Title [pinId].ext`
+(sha stub when pinless), sanitised with the cross-platform Windows-invalid set, folder names honour the
+`DisplayName` rename override with sibling-collision `[id]` suffixes — so **re-export is an incremental
+refresh** (a same-length destination file is skipped — blobs are immutable — and a torn one re-copies);
+writes are temp+rename; a missing blob is counted in the report, not fatal; the destination is guarded
+against the project folder (trailing-separator compare, like Backup's). Runs off the UI thread on the
+board's dispose token; **refuses to start while an import/backup sync runs** but publishes no flag itself
+(export never writes the archive, so nothing needs to gate on a reader). Tests: `ExportNamesTests` +
+`BoardExporterTests` (19 new). **162 Core / 84 Desktop green.**
+
 **Code-review pass on the P4 batch (multi-angle; 10 confirmed findings, all fixed):** catch-up pending
 detection is now a per-device **set difference** against held rows, not a MAX-seq watermark — a batch
 rollback behind a later-committed seq re-pends and heals instead of being buried forever; an unappliable
@@ -540,12 +555,11 @@ idiom, dead usings/`Focusable` removed, BusyBar added to the gallery, CLAUDE.md'
   images + folder names, the Library filters board cards, the launcher filters recents; see the shell-chrome
   session below).
 - **Manual collections** (user-created, not just source boards) — slots into the redesigned Library screen.
-- **Human-readable export/mirror** (candidate, from user feedback 2026-07-25): an on-demand "Export
-  board…" (or maintained read-only mirror) that materialises `Board/Folder/image` trees from the index —
-  the browsable-in-Finder view people expect. The archive's `store/` itself stays content-addressed:
-  sha-addressing is what gives cross-board dedup, immutable files (ops reference blobs by hash forever;
-  renames are metadata ops, not mass file moves), and OS-portable paths (no invalid-name/length/case
-  collisions from board titles).
+- ~~**Human-readable export/mirror**~~ — **built** as the on-demand Board ＋-menu **Export** (see the
+  Status block; re-export is already an incremental refresh, so a "maintained mirror" mode is just
+  re-running it — not built as an automatic watcher). The archive's `store/` itself stays
+  content-addressed: sha-addressing is what gives cross-board dedup, immutable files, and OS-portable
+  paths.
 - **FTS5** search — deferred scale-up from the current LIKE (additive aux table); premature while libraries
   are small (LIKE is fine for hundreds of pins), so low priority.
 - ~~**Tag filtering**~~ — **deprioritised**: confirmed against real data (78 pins) that the Pinterest
