@@ -4,6 +4,24 @@ What's planned, in rough priority order. **Forward-looking only** — completed 
 and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md` for storage/sync and
 `DESIGN.md` for UI). Keep entries short, and delete them when they land.
 
+## Now — user-reported pain (2026-07-27), highest priority
+
+- **Board Sync is far too slow.** Today a Sync re-runs the full gallery-dl crawl per source: every pin
+  is enumerated page-by-page even though nearly all are pre-skipped by the skip-archive, so wall time
+  scales with board size instead of with what's new. Needs a real incremental design — e.g. stop the
+  crawl once it hits N consecutive already-known pins (newest-first listing means new pins front-load),
+  and/or a listing-only pass that fetches nothing until it knows what's missing — not a per-item check
+  of the entire board every time.
+- **Backup sync (folder/NAS remote) is far too slow.** A sync with a handful of changed files can take
+  10+ minutes because `ArchiveReplicator` reconciles by re-enumerating and stat-ing the FULL file set
+  (thousands of blobs over SMB) on every run. The archive is append-only, so the op log already knows
+  exactly what's new — keep a per-remote cursor (pushed chapter lengths + a pushed-blob manifest under
+  the remote config) and move only the delta; demote the full re-list to a rare explicit "verify
+  backup" action, never the every-sync path.
+- **Whole-project export.** Export currently works one board at a time; add an Export at the Library
+  level that materialises the entire project as `dest/<Project>/<Board>/<Folder>/…` — same
+  `BoardExporter` naming/incremental rules, one run.
+
 ## Next (unordered, pick by need)
 
 - **FTS5 search** — scale-up from LIKE (additive aux table); premature while libraries are hundreds of
