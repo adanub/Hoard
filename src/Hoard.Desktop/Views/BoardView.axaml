@@ -176,6 +176,12 @@
                                                                 <TextBlock Text="Boards" Classes="muted" FontSize="11"/>
                                                                 <TextBlock Text="{Binding Boards}" TextWrapping="Wrap"/>
                                                             </StackPanel>
+                                                            <!-- The pin id IS this image's identity (one row per saved pin), so it's
+                                                                 what tells two look-alike images apart. -->
+                                                            <StackPanel IsVisible="{Binding SourceId, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                                <TextBlock Text="Pin id" Classes="muted" FontSize="11"/>
+                                                                <TextBlock Text="{Binding SourceId}" TextWrapping="Wrap"/>
+                                                            </StackPanel>
                                                         </StackPanel>
                                                         <StackPanel Spacing="6" Margin="0,6,0,0">
                                                             <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open source on Pinterest"
