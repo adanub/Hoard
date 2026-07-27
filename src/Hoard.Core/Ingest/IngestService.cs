@@ -224,6 +224,7 @@ public sealed class IngestService
         }, ct).ConfigureAwait(false);
 
         var reattached = await ReattachOrphansAsync(db, targetCollection, sourceByBoard, importedPins, connector.Name, progress, ct).ConfigureAwait(false);
+        await DropSupersededLinksAsync(db, targetCollection, ct).ConfigureAwait(false);
 
         // One segment flush for the whole import (not per item): everything committed above re-lands
         // from the authoritative table even if this call never runs (crash/cancel).
@@ -235,6 +236,64 @@ public sealed class IngestService
             $"Imported {newAssets} new, {duplicates} already-had{skippedNote}{reattachedNote}."));
         var touched = targetCollection is not null ? 1 : collections.Count;
         return new IngestResult(processed, newAssets, duplicates, touched);
+    }
+
+    /// <summary>
+    /// Drop links this run's new pins SUPERSEDE — the tail of the pre-v9 content-dedup era.
+    /// <para>Back when an asset was identified by its bytes, crawling board B and meeting an image already
+    /// stored from board A didn't create a row: it linked A's row into B. Identity is the pin now, so
+    /// re-syncing B correctly creates B's own row for B's own pin — and the board then shows the image
+    /// TWICE, once through the legacy link and once through the new row. (The pins really are different:
+    /// Pinterest issues a fresh id per save, so the same picture on two boards is two pins.)</para>
+    /// <para>So whenever the target's subtree holds one picture through two rows and one of them names a
+    /// board this collection doesn't gather from, that link is the legacy artefact — unlink it. Only the
+    /// LINK goes: the row itself is untouched and stays in its own board. Rows whose provenance is null
+    /// (never backfilled) or is one of this board's own sources are never judged, and a group is only
+    /// pruned while a properly-attributed row survives to show the picture. Runs on every targeted import
+    /// rather than only when a new pin lands, so a board damaged by an earlier sync heals on the next.</para>
+    /// </summary>
+    private async Task<int> DropSupersededLinksAsync(
+        HoardDbContext db, Collection? targetCollection, CancellationToken ct)
+    {
+        if (targetCollection is null) return 0;
+
+        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, targetCollection.Id, ct).ConfigureAwait(false);
+        // Every source board this collection legitimately gathers from — a merge makes several of them.
+        var ownBoards = (await db.CollectionSources
+            .Where(s => s.CollectionId == targetCollection.Id && s.SourceBoardId != null)
+            .Select(s => s.SourceBoardId!)
+            .ToListAsync(ct).ConfigureAwait(false)).ToHashSet(StringComparer.Ordinal);
+        if (targetCollection.SourceBoardId is { } primary) ownBoards.Add(primary);
+        if (ownBoards.Count == 0) return 0; // nothing to judge provenance against
+
+        var links = await db.CollectionItems
+            .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.Asset.DeletedAt == null)
+            .Select(ci => new { ci.Id, ci.AssetId, ci.CollectionId, ci.Asset.Sha256, ci.Asset.SourceBoardId })
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        // Only content held here by more than one ROW can be showing twice; within such a group, a row whose
+        // provenance names a board this collection doesn't gather from is the legacy artefact — but only
+        // while a properly-attributed row survives to show the picture. Null provenance is never judged.
+        var superseded = links
+            .GroupBy(l => l.Sha256, StringComparer.Ordinal)
+            .Where(g => g.Select(l => l.AssetId).Distinct().Count() > 1)
+            .Where(g => g.Any(l => l.SourceBoardId is null || ownBoards.Contains(l.SourceBoardId)))
+            .SelectMany(g => g.Where(l => l.SourceBoardId is not null && !ownBoards.Contains(l.SourceBoardId)))
+            .Select(l => l.Id)
+            .ToHashSet();
+        if (superseded.Count == 0) return 0;
+
+        var rows = await db.CollectionItems
+            .Include(ci => ci.Asset).Include(ci => ci.Collection)
+            .Where(ci => superseded.Contains(ci.Id))
+            .ToListAsync(ct).ConfigureAwait(false);
+        foreach (var link in rows)
+        {
+            db.CollectionItems.Remove(link);
+            _archive.RecordItemUnlinked(db, link.Asset, ArchiveLog.UidOf(link.Collection));
+        }
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return rows.Count;
     }
 
     /// <summary>

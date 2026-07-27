@@ -56,6 +56,86 @@ public class PinIdentityTests : IDisposable
     }
 
     [Fact]
+    public async Task A_new_pin_supersedes_the_legacy_dedup_link_that_showed_the_same_image_twice()
+    {
+        // Pre-v9 an asset was its BYTES, so crawling board B and meeting an image already stored from
+        // board A linked A's row into B rather than creating a row. Identity is the pin now, so re-syncing
+        // B correctly mints B's own pin — and the board showed the picture twice until this sweep.
+        var ingest = new IngestService(_dbFactory, _store, new[] { new PinConnector(("pA", "same-bytes", "board-A")) });
+        var boardB = await ingest.CreateBoardAsync("Hair refs", "https://pinterest.com/jane/hair/");
+        await ingest.ImportAsync("https://pinterest.com/jane/art/", new ConnectorOptions(), null);
+
+        // The legacy artefact: board A's row (pin pA) also linked into board B.
+        await using (var seed = _dbFactory.CreateDbContext())
+        {
+            var legacy = await seed.Assets.SingleAsync(a => a.SourceId == "pA");
+            seed.CollectionItems.Add(new CollectionItem { CollectionId = boardB, AssetId = legacy.Id });
+            await seed.SaveChangesAsync();
+        }
+
+        // Board B is re-synced: Pinterest issues its own pin id for the same picture saved there.
+        await new IngestService(_dbFactory, _store, new[] { new PinConnector(("pB", "same-bytes", "board-B")) })
+            .ImportAsync("https://pinterest.com/jane/hair/", new ConnectorOptions(), null, boardB);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var inB = await db.CollectionItems.Include(ci => ci.Asset)
+            .Where(ci => ci.CollectionId == boardB).Select(ci => ci.Asset.SourceId).ToListAsync();
+        Assert.Equal(["pB"], inB); // shown ONCE, under the pin that board B actually holds
+        // The superseded row is untouched and still lives in its own board.
+        Assert.Equal(2, await db.Assets.CountAsync());
+        Assert.True(await db.CollectionItems.AnyAsync(ci => ci.Asset.SourceId == "pA"));
+        // Other machines converge on the unlink.
+        Assert.Equal(1, await db.ArchiveOps.CountAsync(o => o.Kind == ArchiveOpKinds.ItemUnlinked));
+    }
+
+    [Fact]
+    public async Task A_board_already_damaged_by_an_earlier_sync_heals_without_a_new_pin_arriving()
+    {
+        // The state a user is left in AFTER the duplicating sync: both rows exist and both are linked, so
+        // nothing new lands on the next sync. The sweep must still run, or the doubles are permanent.
+        var ingest = new IngestService(_dbFactory, _store, new[] { new PinConnector(("pA", "same-bytes", "board-A")) });
+        var boardB = await ingest.CreateBoardAsync("Hair refs", "https://pinterest.com/jane/hair/");
+        await ingest.ImportAsync("https://pinterest.com/jane/art/", new ConnectorOptions(), null);
+        await new IngestService(_dbFactory, _store, new[] { new PinConnector(("pB", "same-bytes", "board-B")) })
+            .ImportAsync("https://pinterest.com/jane/hair/", new ConnectorOptions(), null, boardB);
+        await using (var seed = _dbFactory.CreateDbContext())
+        {
+            var legacy = await seed.Assets.SingleAsync(a => a.SourceId == "pA");
+            seed.CollectionItems.Add(new CollectionItem { CollectionId = boardB, AssetId = legacy.Id });
+            await seed.SaveChangesAsync();
+        }
+
+        // A plain re-sync: the crawl re-lists pB, which already has its row — nothing is created.
+        await new IngestService(_dbFactory, _store, new[] { new PinConnector(("pB", "same-bytes", "board-B")) })
+            .ImportAsync("https://pinterest.com/jane/hair/", new ConnectorOptions(), null, boardB);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var inB = await db.CollectionItems.Include(ci => ci.Asset)
+            .Where(ci => ci.CollectionId == boardB).Select(ci => ci.Asset.SourceId).ToListAsync();
+        Assert.Equal(["pB"], inB);
+        Assert.Equal(2, await db.Assets.CountAsync()); // board A's row survives, in board A
+    }
+
+    [Fact]
+    public async Task A_merged_source_boards_pins_are_never_treated_as_superseded()
+    {
+        // The same shape, except board B deliberately GATHERS board A — so A's row belongs there and the
+        // sweep must leave it alone even though a same-bytes pin arrives from another source.
+        var ingest = new IngestService(_dbFactory, _store, new[] { new PinConnector(("pA", "same-bytes", "board-A")) });
+        var boardB = await ingest.CreateBoardAsync("Merged", "https://pinterest.com/jane/merged/");
+        await ingest.ImportAsync("https://pinterest.com/jane/art/", new ConnectorOptions(), null, boardB);
+
+        await new IngestService(_dbFactory, _store, new[] { new PinConnector(("pB", "same-bytes", "board-B")) })
+            .ImportAsync("https://pinterest.com/jane/other/", new ConnectorOptions(), null, boardB);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var inB = await db.CollectionItems.Include(ci => ci.Asset)
+            .Where(ci => ci.CollectionId == boardB).Select(ci => ci.Asset.SourceId).OrderBy(s => s).ToListAsync();
+        Assert.Equal(["pA", "pB"], inB);
+        Assert.Equal(0, await db.ArchiveOps.CountAsync(o => o.Kind == ArchiveOpKinds.ItemUnlinked));
+    }
+
+    [Fact]
     public async Task Provenance_lands_on_the_row_at_import()
     {
         await new IngestService(_dbFactory, _store, new[] { new PinConnector(("p1", "bytes", "board-A")) })
