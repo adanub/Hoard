@@ -24,7 +24,10 @@ public class BoardExporterTests : IDisposable
         _dest = Path.Combine(_dir, "export");
         _dbFactory = new TestDbContextFactory(Path.Combine(_dir, "hoard.db"));
         using (var db = _dbFactory.CreateDbContext()) db.Database.EnsureCreated();
-        _store = new ContentAddressedStore(Path.Combine(_dir, "store"));
+        // The store sits in its own project folder (as it does in a real archive) so the exporter can
+        // tell the archive apart from the destination — a flat layout would make _dest look like it
+        // lives inside the project.
+        _store = new ContentAddressedStore(Path.Combine(_dir, "project", "store"));
     }
 
     public void Dispose()
@@ -162,6 +165,68 @@ public class BoardExporterTests : IDisposable
         await Exporter.ExportAsync(boardId, _dest);
 
         var dirs = Directory.GetDirectories(Path.Combine(_dest, "Interiors"))
+            .Select(Path.GetFileName).OrderBy(n => n).ToArray();
+        Assert.Equal(new[] { "A B", $"A B [{b}]" }, dirs);
+    }
+
+    [Fact]
+    public async Task A_project_export_writes_every_board_under_one_project_folder()
+    {
+        var terrain = await CreateBoardAsync("Terrain");
+        var buildings = await CreateBoardAsync("Buildings", parentId: terrain);
+        var interiors = await CreateBoardAsync("Interiors");
+        await SeedAssetAsync(terrain, "loose", title: "Cliff", pinId: "1");
+        await SeedAssetAsync(buildings, "nested", title: "Tower", pinId: "2");
+        await SeedAssetAsync(interiors, "other", title: "Lamp", pinId: "3");
+
+        var report = await Exporter.ExportProjectAsync("Test Backup", _dest);
+
+        var root = Path.Combine(_dest, "Test Backup");
+        Assert.Equal(new ExportReport(3, 0, 0), report); // one run, one summed report
+        Assert.True(File.Exists(Path.Combine(root, "Terrain", "Cliff [1].jpg")));
+        Assert.True(File.Exists(Path.Combine(root, "Terrain", "Buildings", "Tower [2].jpg")));
+        Assert.True(File.Exists(Path.Combine(root, "Interiors", "Lamp [3].jpg")));
+
+        // Re-running is the same incremental refresh a board export is.
+        Assert.Equal(new ExportReport(0, 3, 0), await Exporter.ExportProjectAsync("Test Backup", _dest));
+    }
+
+    [Fact]
+    public async Task Exporting_into_the_projects_own_parent_folder_is_refused()
+    {
+        // The innocent-looking destination that used to write the export straight back into the archive:
+        // <parent>/<project name> IS the project folder.
+        var boardId = await CreateBoardAsync("Terrain");
+        await SeedAssetAsync(boardId, "one", pinId: "1");
+        var projectRoot = Directory.GetParent(_store.Root)!.FullName;
+        var parent = Directory.GetParent(projectRoot)!.FullName;
+        var projectName = Path.GetFileName(projectRoot);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Exporter.ExportProjectAsync(projectName, parent));
+        // A board whose name happens to match the project folder is the same trap by another route.
+        var clash = await CreateBoardAsync(projectName);
+        await SeedAssetAsync(clash, "two", pinId: "2");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Exporter.ExportAsync(clash, parent));
+
+        // A sibling folder is still fine.
+        Assert.Equal(new ExportReport(2, 0, 0), await Exporter.ExportProjectAsync("Somewhere Else", parent));
+        Directory.Delete(Path.Combine(parent, "Somewhere Else"), recursive: true);
+    }
+
+    [Fact]
+    public async Task Two_boards_that_sanitise_to_the_same_name_are_disambiguated_against_each_other()
+    {
+        // Only a whole-project run can see this: exporting the boards one at a time, neither call knows
+        // the other's folder name.
+        var a = await CreateBoardAsync("A/B");
+        var b = await CreateBoardAsync("A:B");
+        await SeedAssetAsync(a, "in-a", pinId: "1");
+        await SeedAssetAsync(b, "in-b", pinId: "2");
+
+        await Exporter.ExportProjectAsync("Shelf", _dest);
+
+        var dirs = Directory.GetDirectories(Path.Combine(_dest, "Shelf"))
             .Select(Path.GetFileName).OrderBy(n => n).ToArray();
         Assert.Equal(new[] { "A B", $"A B [{b}]" }, dirs);
     }

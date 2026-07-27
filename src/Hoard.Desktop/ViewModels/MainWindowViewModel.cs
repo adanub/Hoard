@@ -79,7 +79,8 @@ public partial class MainWindowViewModel : ViewModelBase
             _thumbnails = _projects.Current is { } p ? new ThumbnailCache(_projects.ThumbnailsRootFor(p)) : null;
             return new LibraryViewModel(
                 _ingest, _library, _curation, _projects, _thumbnails, ToastService, ImportStatus,
-                openBoard: ShowBoard, uiSettings: _uiSettings, dbFactory: _dbFactory, archive: _archive);
+                openBoard: ShowBoard, uiSettings: _uiSettings, dbFactory: _dbFactory, archive: _archive,
+                exporter: _exporter);
         }
         // The forward-rebuild thunk returns null if the project was closed/deleted while backed out, so GoForward
         // drops the dead entry instead of rebuilding a blank Library for a project that no longer exists.

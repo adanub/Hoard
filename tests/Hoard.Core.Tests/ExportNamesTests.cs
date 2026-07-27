@@ -73,4 +73,13 @@ public class ExportNamesTests
         Assert.Equal("Kitchen Ideas", ExportNames.FolderName("Kitchen Ideas", 7));
         Assert.Equal("Untitled [7]", ExportNames.FolderName("///", 7));
     }
+
+    [Fact]
+    public void ProjectFolderName_backstops_an_unprintable_name_with_a_generic_one()
+    {
+        // A project has no id worth putting in a path, so the fallback is a plain name.
+        Assert.Equal("Test Backup", ExportNames.ProjectFolderName("Test Backup"));
+        Assert.Equal("Hoard project", ExportNames.ProjectFolderName("///"));
+        Assert.Equal("Hoard project", ExportNames.ProjectFolderName(null));
+    }
 }

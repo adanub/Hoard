@@ -115,6 +115,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     private readonly UiSettingsStore? _uiSettings;
     private readonly IDbContextFactory<HoardDbContext>? _dbFactory;
     private readonly ArchiveLog? _archive;
+    private readonly BoardExporter? _exporter;
     // Cancelled when the Library is navigated away from (disposed), so an in-flight import doesn't keep running
     // and toast / rebuild the grid on this dead VM after the user has left.
     private readonly CancellationTokenSource _disposeCts = new();
@@ -127,7 +128,8 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         IngestService ingest, LibraryService library, CurationService curation, ProjectManager projects,
         ThumbnailCache? thumbnails, ToastService toasts, ImportStatus importStatus,
         Action<BoardTarget> openBoard, UiSettingsStore? uiSettings = null,
-        IDbContextFactory<HoardDbContext>? dbFactory = null, ArchiveLog? archive = null)
+        IDbContextFactory<HoardDbContext>? dbFactory = null, ArchiveLog? archive = null,
+        BoardExporter? exporter = null)
     {
         _ingest = ingest;
         _library = library;
@@ -140,6 +142,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         _uiSettings = uiSettings;
         _dbFactory = dbFactory;
         _archive = archive;
+        _exporter = exporter;
         BoardEditor = new BoardCardEditor(
             library, curation, thumbnails, toasts, "board",
             removeCard: r => { Tiles.Remove(r); r.Dispose(); }, loadExtraDetail: LoadBoardSourcesAsync);
@@ -147,6 +150,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         {
             new PlusAction("Import board", OpenImportSheetCommand),
             new PlusAction("Backup", OpenRemoteSheetCommand),
+            new PlusAction("Export project", OpenExportSheetCommand),
         };
         // Watch the shared import state so a board card lights up whoever started the import — this grid's own
         // import sheet OR a board's Sync button (which drives only ImportStatus, not this grid directly).
@@ -178,9 +182,16 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
                 ImportCommand.NotifyCanExecuteChanged();
                 SyncRemoteCommand.NotifyCanExecuteChanged(); // the backup sync is import-gated too
                 RepairRemoteCommand.NotifyCanExecuteChanged();
+                ExportCommand.NotifyCanExecuteChanged(); // an export mid-import would snapshot a partial project
                 // An external sync just finished → reload counts/covers. A Library-initiated import refreshes
                 // itself afterwards (and owns the empty-board discard), so don't double-refresh for that case.
                 if (!_importStatus.IsImporting && !_selfImporting) _ = RefreshAsync();
+                break;
+            case nameof(ImportStatus.IsRemoteSyncing):
+                // This screen owns the flag today, and notifies these directly — but the gate reads the
+                // SHARED status, so anything that ever sets it elsewhere must still grey the buttons out.
+                ImportCommand.NotifyCanExecuteChanged();
+                ExportCommand.NotifyCanExecuteChanged();
                 break;
         }
     }
@@ -646,6 +657,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         _importStatus.IsRemoteSyncing = true; // published app-wide: imports/board-syncs refuse to overlap
         SyncRemoteCommand.NotifyCanExecuteChanged();
         RepairRemoteCommand.NotifyCanExecuteChanged();
+        ExportCommand.NotifyCanExecuteChanged(); // export refuses while a sync runs — grey it out, don't dead-click
         try
         {
             RemoteStatusText = mode == ReplicationMode.Full ? "Checking every file…" : "Checking the backup…";
@@ -673,6 +685,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
             _importStatus.IsRemoteSyncing = false;
             SyncRemoteCommand.NotifyCanExecuteChanged();
             RepairRemoteCommand.NotifyCanExecuteChanged();
+            ExportCommand.NotifyCanExecuteChanged(); // export refuses while a sync runs — show that
         }
     }
 
@@ -698,6 +711,90 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
 
         static string Leg(string verb, int blobs) =>
             blobs > 0 ? $"{verb} {blobs} {(blobs == 1 ? "image" : "images")}" : $"{verb} history changes";
+    }
+
+    // ── Human-readable export: materialise the WHOLE project as a Project/Board/Folder/image tree ─
+    // The board screen has the same sheet for one board; this run covers every board in one pass, so
+    // progress counts the project and boards whose names sanitise alike disambiguate against each other.
+
+    [ObservableProperty] private bool _isExportSheetOpen;
+    [ObservableProperty] private string _exportPathText = "";
+    [ObservableProperty] private string _exportStatusText = "";
+    [ObservableProperty] private bool _isExporting;
+    private string? _exportFolder;
+
+    [RelayCommand]
+    private void OpenExportSheet()
+    {
+        ExportStatusText = "";
+        IsExportSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseExportSheet() => IsExportSheetOpen = false;
+
+    /// <summary>Called from the view's folder picker (it needs the visual tree's TopLevel).</summary>
+    public void SetExportFolder(string path)
+    {
+        var full = Path.GetFullPath(path);
+        // Test the folder the run will CREATE, not the one that was picked: choosing the project's own
+        // parent puts <chosen>/<project name> right back on the project folder.
+        if (_projects?.Current is { } project
+            && DestinationFolder.IsInsideProject(
+                Path.Combine(full, ExportNames.ProjectFolderName(project.Name)), project.Root))
+        {
+            ExportStatusText = "That would export into the project folder itself — choose a folder outside it.";
+            return;
+        }
+
+        _exportFolder = full;
+        ExportPathText = full;
+        ExportStatusText = "";
+        ExportCommand.NotifyCanExecuteChanged();
+    }
+
+    // Reading the archive is safe alongside anything, but an import/backup-sync mid-run would export a
+    // partial snapshot that looks complete — refuse to start until they finish (they don't wait for us:
+    // export never writes the archive, so nothing gates on IsExporting).
+    private bool CanExport() =>
+        _exporter is not null && _exportFolder is not null && _projects?.Current is not null
+        && !IsExporting && !IsRemoteSyncing && !_importStatus.IsImporting && !_importStatus.IsRemoteSyncing;
+
+    [RelayCommand(CanExecute = nameof(CanExport))]
+    private async Task ExportAsync()
+    {
+        if (_exporter is null || _exportFolder is not { } destination || _projects?.Current is not { } project) return;
+        // A sync can start after the sheet opened. Say so — a button that just does nothing reads as broken.
+        if (_importStatus.IsImporting || _importStatus.IsRemoteSyncing)
+        {
+            ExportStatusText = "Wait for the import or backup sync to finish — an export now would miss part of it.";
+            return;
+        }
+        var ct = _disposeCts.Token; // captured before any await — safe to read even after the CTS is disposed
+        IsExporting = true;
+        ExportCommand.NotifyCanExecuteChanged();
+        try
+        {
+            ExportStatusText = "Exporting…";
+            var progress = new Progress<string>(text => ExportStatusText = text);
+            var report = await Task.Run(
+                () => _exporter.ExportProjectAsync(project.Name, destination, progress, ct), ct);
+            ExportStatusText = ExportSummary.Describe(report);
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away mid-export; whole files only (temp+rename), the next export resumes.
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Project export failed for {Root} to {Destination}", project.Root, destination);
+            ExportStatusText = "Export failed: " + ex.Message;
+        }
+        finally
+        {
+            IsExporting = false;
+            ExportCommand.NotifyCanExecuteChanged();
+        }
     }
 
     private string? WriteImportLog(StringBuilder transcript)

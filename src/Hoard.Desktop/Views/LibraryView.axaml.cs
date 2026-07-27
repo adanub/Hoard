@@ -22,6 +22,7 @@ public partial class LibraryView : UserControl
         // The picker needs the visual tree's TopLevel, so it lives here; everything else on the Backup
         // sheet binds straight to the view model in XAML.
         RemoteSheetContent.ChooseCommand = new RelayCommand(() => _ = PickRemoteFolderAsync());
+        ExportSheetContent.ChooseCommand = new RelayCommand(() => _ = PickExportFolderAsync());
     }
 
     private LibraryViewModel? Vm => DataContext as LibraryViewModel;
@@ -37,6 +38,19 @@ public partial class LibraryView : UserControl
         });
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path && Vm is { } vm)
             vm.SetRemoteFolder(path);
+    }
+
+    private async Task PickExportFolderAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top is null) return;
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Choose an export folder",
+            AllowMultiple = false,
+        });
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path && Vm is { } vm)
+            vm.SetExportFolder(path);
     }
 
     private void WireBoardEditSheet()

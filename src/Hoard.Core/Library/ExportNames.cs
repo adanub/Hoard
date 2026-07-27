@@ -63,4 +63,13 @@ public static class ExportNames
         var component = SanitiseComponent(name);
         return component.Length == 0 ? $"Untitled [{collectionId}]" : component;
     }
+
+    /// <summary>The exported directory name for a whole project — the folder its boards land in. A project
+    /// has no id to fall back on (its identity is a GUID nobody wants in a path), so an unprintable name
+    /// gets a plain generic one.</summary>
+    public static string ProjectFolderName(string? name)
+    {
+        var component = SanitiseComponent(name);
+        return component.Length == 0 ? "Hoard project" : component;
+    }
 }

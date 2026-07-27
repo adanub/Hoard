@@ -117,7 +117,17 @@
                               HasRemote="{Binding HasRemote}"
                               IsSyncing="{Binding IsRemoteSyncing}"
                               SyncCommand="{Binding SyncRemoteCommand}"
+                              RepairCommand="{Binding RepairRemoteCommand}"
                               RemoveCommand="{Binding RemoveRemoteCommand}"/>
+        </ctrl:SheetHost>
+
+        <!-- Export popup (the ＋ menu's Export project): write the whole project out as a browsable tree. -->
+        <ctrl:SheetHost IsOpen="{Binding IsExportSheetOpen}" DismissCommand="{Binding CloseExportSheetCommand}">
+            <ctrl:ExportSheet x:Name="ExportSheetContent"
+                              PathText="{Binding ExportPathText}"
+                              StatusText="{Binding ExportStatusText}"
+                              IsExporting="{Binding IsExporting}"
+                              ExportCommand="{Binding ExportCommand}"/>
         </ctrl:SheetHost>
     </Panel>
 </UserControl>

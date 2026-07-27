@@ -626,17 +626,16 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
     public void SetExportFolder(string path)
     {
         var full = Path.GetFullPath(path);
-        // Trailing-separator compare, like the Backup guard: plain StartsWith would also reject a
-        // SIBLING whose name merely extends the project's.
+        // Test the folder the run will CREATE, not the one that was picked: choosing the project's own
+        // parent puts <chosen>/<board name> right back on the project folder when the two names match.
         if (_projects?.Current is { } project
-            && WithSeparator(full).StartsWith(WithSeparator(Path.GetFullPath(project.Root)), StringComparison.OrdinalIgnoreCase))
+            && DestinationFolder.IsInsideProject(
+                Path.Combine(full, ExportNames.FolderName(Title, _collectionId ?? 0)), project.Root))
         {
-            ExportStatusText = "Choose a folder outside the project — the archive folder must hold only the archive itself.";
+            ExportStatusText = "That would export into the project folder itself — choose a folder outside it.";
             return;
         }
 
-        static string WithSeparator(string p) =>
-            p.EndsWith(Path.DirectorySeparatorChar) ? p : p + Path.DirectorySeparatorChar;
         _exportFolder = full;
         ExportPathText = full;
         ExportStatusText = "";
@@ -663,7 +662,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
             ExportStatusText = "Exporting…";
             var progress = new Progress<string>(text => ExportStatusText = text);
             var report = await Task.Run(() => _exporter.ExportAsync(boardId, destination, progress, ct), ct);
-            ExportStatusText = SummariseExport(report);
+            ExportStatusText = ExportSummary.Describe(report);
         }
         catch (OperationCanceledException)
         {
@@ -679,18 +678,6 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
             IsExporting = false;
             ExportCommand.NotifyCanExecuteChanged();
         }
-    }
-
-    private static string SummariseExport(ExportReport report)
-    {
-        var text = report.Copied == 0
-            ? "Already up to date — nothing new to copy."
-            : report.UpToDate == 0
-                ? $"Done — copied {report.Copied} file(s)."
-                : $"Done — copied {report.Copied} file(s); {report.UpToDate} already there.";
-        if (report.MissingBlobs > 0)
-            text += $" Skipped {report.MissingBlobs} whose file is missing from the store — re-download those first.";
-        return text;
     }
 
     // ── Fullscreen zoom/pan lightbox for the selected image ───────────────────────

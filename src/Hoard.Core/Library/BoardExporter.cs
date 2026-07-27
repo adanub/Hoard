@@ -31,19 +31,54 @@ public sealed class BoardExporter
     /// asset whose blob is missing from the store is counted, not fatal. Writes are temp-file + rename,
     /// so a cancelled run leaves whole files only and the next run resumes where it left off.
     /// </summary>
-    public async Task<ExportReport> ExportAsync(
+    public Task<ExportReport> ExportAsync(
         int collectionId, string destinationRoot, IProgress<string>? progress = null, CancellationToken ct = default)
+        => ExportRootsAsync([collectionId], destinationRoot, progress, ct);
+
+    /// <summary>
+    /// Export the WHOLE project — every top-level board and its folders — into
+    /// <paramref name="destinationRoot"/>/&lt;project name&gt;/&lt;board&gt;/…, in one pass. Same naming,
+    /// same up-to-date skip, same read-only treatment of the archive as a single board's export; the only
+    /// difference is that every board shares one run, so progress counts the project and two boards whose
+    /// names sanitise alike are disambiguated against each other.
+    /// </summary>
+    public async Task<ExportReport> ExportProjectAsync(
+        string projectName, string destinationRoot, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        List<int> rootIds;
+        await using (var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false))
+        {
+            rootIds = await db.Collections
+                .Where(c => c.ParentId == null)
+                .OrderBy(c => c.Id)
+                .Select(c => c.Id)
+                .ToListAsync(ct).ConfigureAwait(false);
+        }
+
+        // Every CollectionItem hangs off some collection and every collection roots at a top-level board,
+        // so the top-level boards cover the project's live assets exactly.
+        return await ExportRootsAsync(
+            rootIds,
+            Path.Combine(destinationRoot, ExportNames.ProjectFolderName(projectName)),
+            progress, ct).ConfigureAwait(false);
+    }
+
+    private async Task<ExportReport> ExportRootsAsync(
+        IReadOnlyList<int> rootIds, string destinationRoot, IProgress<string>? progress, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
-        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, collectionId, ct).ConfigureAwait(false);
+        var subtreeIds = new List<int>();
+        foreach (var rootId in rootIds)
+            subtreeIds.AddRange(await CollectionTree.SubtreeIdsAsync(db, rootId, ct).ConfigureAwait(false));
         var collections = await db.Collections
             .Where(c => subtreeIds.Contains(c.Id))
             .Select(c => new { c.Id, c.ParentId, Name = c.DisplayName ?? c.Name })
             .ToListAsync(ct).ConfigureAwait(false);
         var directories = BuildDirectories(
-            collectionId, destinationRoot,
+            rootIds, destinationRoot,
             collections.Select(c => (c.Id, c.ParentId, c.Name)).ToList());
+        RefuseToWriteIntoTheArchive(directories.Values);
 
         var items = await db.CollectionItems
             .Where(ci => subtreeIds.Contains(ci.CollectionId) && ci.Asset.DeletedAt == null)
@@ -92,6 +127,15 @@ public sealed class BoardExporter
                 File.Copy(source.FullName, temp);
                 File.Move(temp, destination, overwrite: true);
             }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // The blob was freed between the Exists check above and the copy. An export refuses to
+                // START during an import/sync but publishes no flag of its own, so one can begin under a
+                // running export and tombstone a blob mid-run — count it like any other missing file
+                // rather than killing a whole project's export over one image.
+                missing++;
+                continue;
+            }
             finally
             {
                 if (File.Exists(temp)) File.Delete(temp);
@@ -109,41 +153,77 @@ public sealed class BoardExporter
     }
 
     /// <summary>
-    /// Map every collection in the subtree to its destination directory: the root board becomes a folder
+    /// The archive folder holds only the archive, so an export must never land inside it — and the
+    /// dangerous case isn't an obviously-silly destination but an innocent one: exporting to the
+    /// project's own PARENT makes <c>&lt;parent&gt;/&lt;project or board name&gt;</c> resolve straight back
+    /// onto the project folder. Checked here, on the directories actually about to be written, so it
+    /// holds for every caller rather than only the ones that remembered to look.
+    /// </summary>
+    private void RefuseToWriteIntoTheArchive(IEnumerable<string> directories)
+    {
+        // The store is <project>/store by construction, so its parent is the archive folder.
+        if (Directory.GetParent(Path.GetFullPath(_store.Root))?.FullName is not { } projectRoot) return;
+        var prefix = projectRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? projectRoot
+            : projectRoot + Path.DirectorySeparatorChar;
+
+        foreach (var directory in directories)
+        {
+            var full = Path.GetFullPath(directory);
+            if (full.Equals(projectRoot, StringComparison.OrdinalIgnoreCase)
+                || full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "That would export into the project folder itself — choose a folder outside it.");
+        }
+    }
+
+    /// <summary>
+    /// Map every collection in the subtrees to its destination directory: each root board becomes a folder
     /// under the destination, each child nests under its parent. Sibling names that sanitise to the same
     /// component are disambiguated with the collection id (case-insensitively — exports must survive
-    /// case-preserving file systems).
+    /// case-preserving file systems). The ROOTS are siblings of each other, so a whole-project run
+    /// disambiguates two boards that sanitise alike — which per-board runs could never do.
     /// </summary>
     private static Dictionary<int, string> BuildDirectories(
-        int rootId, string destinationRoot, IReadOnlyList<(int Id, int? ParentId, string Name)> collections)
+        IReadOnlyList<int> rootIds, string destinationRoot, IReadOnlyList<(int Id, int? ParentId, string Name)> collections)
     {
+        var roots = rootIds.ToHashSet();
         var byParent = collections
-            .Where(c => c.Id != rootId)
+            .Where(c => !roots.Contains(c.Id))
             .ToLookup(c => c.ParentId);
         var directories = new Dictionary<int, string>();
-
-        var root = collections.First(c => c.Id == rootId);
-        directories[rootId] = Path.Combine(destinationRoot, ExportNames.FolderName(root.Name, rootId));
-
         var pending = new Queue<int>();
-        pending.Enqueue(rootId);
+
+        var usedAtRoot = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rootId in rootIds.OrderBy(id => id))
+        {
+            if (collections.FirstOrDefault(c => c.Id == rootId) is not { Id: > 0 } root) continue;
+            directories[rootId] = Path.Combine(destinationRoot, Distinct(root.Name, rootId, usedAtRoot));
+            pending.Enqueue(rootId);
+        }
+
         while (pending.Count > 0)
         {
             var parentId = pending.Dequeue();
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var child in byParent[parentId].OrderBy(c => c.Id))
             {
-                var name = ExportNames.FolderName(child.Name, child.Id);
-                if (!used.Add(name))
-                {
-                    name = $"{name} [{child.Id}]";
-                    used.Add(name);
-                }
-                directories[child.Id] = Path.Combine(directories[parentId], name);
+                directories[child.Id] = Path.Combine(directories[parentId], Distinct(child.Name, child.Id, used));
                 pending.Enqueue(child.Id);
             }
         }
 
         return directories;
+
+        static string Distinct(string? name, int id, HashSet<string> used)
+        {
+            var folder = ExportNames.FolderName(name, id);
+            if (!used.Add(folder))
+            {
+                folder = $"{folder} [{id}]";
+                used.Add(folder);
+            }
+            return folder;
+        }
     }
 }
