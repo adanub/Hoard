@@ -259,8 +259,25 @@ ignore it).
     live progress, import-gating, and an inside-the-project folder guard.
   - **R3 (S3/B2 `IRemoteStore`) and R4 (fetch-on-demand replicas) — DROPPED (2026-07-26), judged
     unnecessary.** The folder remote already reaches any target that can be mounted (backup drive,
-    rclone/Syncthing to object storage), so P5 is complete at R0–R2. Don't resurrect without a new
-    driving need.
+    rclone/Syncthing to object storage). Don't resurrect without a new driving need.
+  - **R5 — delta replication.** ✅ Done: R1 reconciled the FULL file set every run (a recursive remote
+    listing plus a local store walk, per leg), so a sync cost what the archive *contains* — 10+ minutes
+    over SMB with nothing changed. **The op log is now the cursor, and nothing is persisted to make it
+    one.** A chapter is append-only with a single writer, so the remote's byte length of it is an exact
+    watermark of the ops it holds; the ops beyond that offset name exactly the blobs it lacks
+    (`payload.relativePath`). Neither leg lists `store/` any more — a run costs a marker read, one
+    `ops/` listing, and a couple of stats per chapter. The rules this buys, and their price:
+    **a chapter is the receipt** (it is published only once the blobs its new ops name have settled —
+    otherwise a missed blob is permanent, because no later run looks below the cursor); **the bytes
+    published are the bytes scanned** (both legs stage a frozen copy, so a chapter growing mid-run can't
+    smuggle unscanned ops past the watermark); **lengths compare on the whole-line prefix**, so a torn
+    tail can't out-length a repaired copy; **payload paths are untrusted input** and are confined to
+    `store/` before any write. What this design *cannot* see is anything the log doesn't describe —
+    a remote someone deleted files from, blobs no op names (an interrupted import, a same-bytes refetch).
+    So R1's full reconciliation survives as `ReplicationMode.Full`, surfaced as **Repair backup**, and a
+    newly-chosen backup folder gets one automatically in case it holds a partial copy. Consequence for
+    P3 compaction: retiring or shortening a chapter moves the watermark backwards, so compaction must be
+    full-mode-only and force a Repair against every configured remote.
 
 ## Risks & accepted trade-offs
 

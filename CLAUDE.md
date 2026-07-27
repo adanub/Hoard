@@ -104,17 +104,62 @@ Concepts that span multiple files:
   (the replicator copies the very files an import writes); keep any NEW archive-writing entry point
   gated on both flags. Two folder copies with the same marker id are **replicas of one archive** (they
   share this machine's index); syncing them against each other is the intended workflow, not a conflict.
-- **Human-readable export (the Board ＋ menu's Export).** `Library/BoardExporter` + the pure `ExportNames`
-  (Core) materialise a board's subtree as a browsable `Board/Folder/image` tree at a user-chosen folder
-  (`Controls/ExportSheet` + the export region in `BoardViewModel`; the folder picker lives in `BoardView`
-  code-behind, like Backup's). **Read-only against the archive** — the `store/` stays content-addressed.
+- **Backup sync is a DELTA driven by the op log — the log IS the cursor, nothing is persisted.** A
+  chapter is append-only with one writer, so the remote's byte length of it says exactly which ops it
+  holds, and the ops past that offset name exactly the blobs it lacks (`Sync/ArchiveOpBlobs.Referenced`
+  reads `payload.relativePath` + `bytes`; **keep every blob-bearing op payload spelling the field that
+  way** or its image drops out of backups silently). So a run costs a marker read, one `ops/` listing and
+  a couple of stats per chapter — **neither leg lists `store/` or walks the local store**, which is what
+  made a quiet sync take 10+ minutes over SMB. The load-bearing consequences, each pinned by a test:
+  **a chapter is the RECEIPT** — publishing it moves the cursor permanently, so it is only uploaded/
+  `File.Move`d into place once every blob its new ops name has **settled**; settled means transferred,
+  already present, or provably absent at the source — a blob whose transfer FAILED must stay outstanding
+  (marking it merely "seen" would let a later chapter naming the same blob sail through after the first
+  deferred); **the bytes published must be the bytes scanned**, so both push paths copy the chapter aside
+  first (`FreezeChapter`, truncated to `ArchiveSegments.ValidLength`) — the active chapter can grow
+  mid-run, and uploading a live file would also publish a torn tail as the remote's length; **the freeze
+  happens AFTER the skip decision** (taken from `ValidLength` of the original), or a quiet sync would put
+  the whole ops history through a `File.Copy` every run — chapter zero predates rotation and can be tens
+  of megabytes on a NAS; **pull stages into `ops/<name>.jsonl.tmp-<guid>`** (invisible: segment listings
+  glob `*.jsonl`) and only renames after its blobs land; **"do I need this chapter?" compares RAW length
+  to RAW length** while `ValidLength` supplies only the READ offset — measuring one side by its whole-line
+  prefix never converges on a torn remote copy (taking it makes the files equal, yet the comparison still
+  says "behind", so every sync re-fetches forever); **our OWN chapter pushes on any difference** (we're
+  authoritative, so Repair can replace a torn remote copy with a shorter repaired one) while a foreign one
+  converges by length-max;
+  **blob candidates are `GetLengthAsync`-checked against the payload's `bytes`**, so a re-emitted
+  `asset.added` (a title edit) costs a stat rather than a re-upload, and a length mismatch repairs a torn
+  remote blob; **payload paths are untrusted** — `ResolveBlob` rejects rooted/`..`/`.tmp-` paths and
+  anything resolving outside `store/`, and canonicalises legacy `\` separators. `RemoteSync` **flushes
+  the op log before pushing** (an op still in the table would leave its image out of the backup while the
+  run said "already in sync") and verifies the marker **once** for the whole run. What delta structurally
+  cannot see — files deleted from the remote behind our back, blobs no op names — is what
+  **`ReplicationMode.Full`** is for: it is today's whole-file-set reconciliation, exposed as the Backup
+  sheet's **Repair backup** button (and run automatically the first time a newly-chosen folder is synced,
+  since it may hold a partial copy).
+- **Human-readable export (the Board ＋ menu's Export, and the Library ＋ menu's Export project).**
+  `Library/BoardExporter` + the pure `ExportNames` (Core) materialise a board's subtree as a browsable
+  `Board/Folder/image` tree at a user-chosen folder (`Controls/ExportSheet` + the export region in
+  `BoardViewModel`/`LibraryViewModel`; the folder picker lives in each View's code-behind, like Backup's).
+  `ExportProjectAsync(projectName, dest)` runs **every top-level board in ONE pass** into
+  `dest/<Project>/<Board>/<Folder>/…` (`ExportNames.ProjectFolderName`) — both entry points share
+  `ExportRootsAsync`/`BuildDirectories`, which takes a LIST of roots so the whole-project run
+  disambiguates two boards whose names sanitise alike (per-board runs can't see each other) and reports
+  one summed `ExportReport` over one progress denominator. **Read-only against the archive** — the
+  `store/` stays content-addressed.
   File names are **stable per asset** (`Title [pinId].ext`, sha stub when pinless; the Windows-invalid
   char set applied on every OS; folder names honour `DisplayName` with `[id]` sibling-collision suffixes),
   which is what makes re-export an **incremental refresh**: a same-length destination file is skipped
   (blobs are immutable) and a torn one re-copies; writes are temp+rename. Tombstones never export; a
-  missing blob is counted in the `ExportReport`, not fatal. Export **refuses to start** while an
-  import/backup sync runs (a mid-run export would snapshot a partial board) but publishes no interlock
-  flag of its own — nothing needs to gate on a reader.
+  missing blob is counted in the `ExportReport`, not fatal — **including one that vanishes mid-copy**,
+  since export publishes no interlock flag, so a sync CAN start under a running export and free a blob
+  between the `Exists` check and the copy. Export **refuses to start** while an import/backup sync runs
+  (a mid-run export would snapshot a partial board) but publishes no interlock flag of its own — nothing
+  needs to gate on a reader. **The destination guard tests the folder the run will CREATE**
+  (`<chosen>/<project or board name>`), not the one the user picked: choosing the project's own parent
+  otherwise lands the export straight back on the project folder. `BoardExporter` re-checks every
+  directory it is about to write against the archive root (derived from the store's parent), so no
+  caller can bypass it.
 - **Schema versioning is additive, via `PRAGMA user_version` — not EF migrations.** `EnsureCreated` builds a
   fresh project DB from the full current model; an existing DB (maybe from an older app version) is patched by
   `Metadata/SchemaInitializer.cs`, which applies the additive DDL upgrades it predates and stamps `user_version`.
@@ -246,7 +291,7 @@ Concepts that span multiple files:
   **The bar's search state always mirrors the current page's query** (arriving on a page with a query opens the
   field; ✕/Esc-in-field clears the page's filter as it collapses) — a collapsed bar can never hide an active
   filter. **＋ menu per page:** Projects → New project; Library → Import board + Backup (the remote-sync
-  sheet — see the Backup/replication bullet); Board → Sync (hidden until the
+  sheet — see the Backup/replication bullet) + Export project; Board → Sync (hidden until the
   async source load proves ≥1 source, disabled while importing) + New folder; the virtual "All images"/results
   board contributes nothing, which hides ＋ entirely. **The whole bar hides while any sheet is open or the
   lightbox is up:** `SheetHost` raises a bubbling `IsOpenChangedEvent` that `MainWindow` folds into
@@ -314,7 +359,16 @@ Concepts that span multiple files:
   **orphaned live assets** (no `CollectionItem` at all) whose `SourceBoardId` matches an imported/recorded
   source — indexed provenance, never a sidecar re-parse, and it works even when the source board is now
   EMPTY at the origin — into the target, re-filing a sectioned orphan into its section folder when that
-  folder still exists. Tombstoned orphans are never re-attached.
+  folder still exists. Tombstoned orphans are never re-attached. (3) `DropSupersededLinksAsync` cleans up
+  the **tail of the pre-v9 content-dedup era**: back when an asset was its BYTES, crawling board B and
+  meeting a picture already stored from board A linked A's row into B instead of creating a row — so once
+  identity became the pin, re-syncing B correctly minted B's own pin and the board showed the picture
+  TWICE (Pinterest issues a fresh pin id per save, so the same image on two boards really is two pins).
+  After each targeted crawl, any content the target's subtree holds through **two rows** where one names
+  a board this collection doesn't gather from has that LINK dropped (`item.unlinked`, so devices
+  converge) — the row itself is untouched and stays in its own board. Null provenance is never judged, a
+  group is only pruned while a properly-attributed row survives, and it runs on **every** targeted import
+  rather than only when a new pin lands, so a board an earlier sync damaged heals on the next one.
 - **A board can merge several source boards (schema v3/v4).** A local board is one `Collection`; the Pinterest
   boards it gathers pins from are rows in **`CollectionSource`** (the authoritative many-sources list — board
   id/url/name). Importing into a target board records its source(s); a second import into the same board *is*

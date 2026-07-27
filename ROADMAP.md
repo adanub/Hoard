@@ -12,17 +12,14 @@ and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md
   crawl once it hits N consecutive already-known pins (newest-first listing means new pins front-load),
   and/or a listing-only pass that fetches nothing until it knows what's missing — not a per-item check
   of the entire board every time.
-- **Backup sync (folder/NAS remote) is far too slow.** A sync with a handful of changed files can take
-  10+ minutes because `ArchiveReplicator` reconciles by re-enumerating and stat-ing the FULL file set
-  (thousands of blobs over SMB) on every run. The archive is append-only, so the op log already knows
-  exactly what's new — keep a per-remote cursor (pushed chapter lengths + a pushed-blob manifest under
-  the remote config) and move only the delta; demote the full re-list to a rare explicit "verify
-  backup" action, never the every-sync path.
-- **Whole-project export.** Export currently works one board at a time; add an Export at the Library
-  level that materialises the entire project as `dest/<Project>/<Board>/<Folder>/…` — same
-  `BoardExporter` naming/incremental rules, one run.
 
 ## Next (unordered, pick by need)
+
+- **Emit an op when a refetch returns identical bytes.** `IngestService.RefetchAsync` deliberately
+  writes no op when the re-downloaded bytes match (`asset.Sha256 != oldSha` gate). Delta replication
+  derives what a backup needs from ops, so a blob that only ever came back through a same-bytes refetch
+  is invisible to it until a Repair. An unconditional `asset.refetched` when the local blob was missing
+  would close it (replay is idempotent), at the cost of one op per manual refetch.
 
 - **Details panel: "Open on Pinterest"** — open the pin's page on Pinterest (the item's location on its
   board, buildable as `pinterest.com/pin/<SourceId>/`), distinct from today's source-URL action (which
@@ -58,7 +55,10 @@ and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md
 ## Later phases
 
 - **Phase 3 finish — segment compaction**: deferred until op-log size actually hurts (single-user). A
-  `ProjectVerifier` safe orphan-sweep would need an "all devices caught up" proof first.
+  `ProjectVerifier` safe orphan-sweep would need an "all devices caught up" proof first. **It would also
+  break delta replication's cursor** — a retired or shortened chapter moves the remote's watermark
+  backwards — so compaction must be full-mode-only and must force a Repair against every configured
+  remote.
 - **Phase 4 — mobile**: extract Core behind a `Hoard.Server` (ASP.NET Core minimal API; server-side
   ingestion since mobile can't spawn gallery-dl); Avalonia mobile client with background sync.
 - **Phase 5 — capture + more connectors**: TS browser extension (in-page "save to Hoard"); more

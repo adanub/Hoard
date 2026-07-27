@@ -163,7 +163,13 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
 - **Marquee** (`Controls/Marquee.cs`) — a clipping viewport inside `PressableSurfaceTemplate`: a button
   label wider than its button crops at rest and pans end-to-end (slow ping-pong via the shared `Tween`,
   never a code-built transform Animation) while `:pointerover`/`:pressed` set `IsActive`; snaps home on
-  leave. Inert whenever content fits.
+  leave. Inert whenever content fits. **A cut edge never ends on a hard line at the container's
+  boundary** — it ramps out through an alpha gradient (`OpacityMask`) whose width is `FadeWidth`, bound
+  in the template to the surface's own `CornerRadius` so the text is fully opaque only once it's clear of
+  the curve (a size class that shrinks the radius tightens the fade with it). Each side fades **only by
+  as much as it currently hides** (`Infrastructure/EdgeFade`, pure + unit-tested): a resting label keeps
+  a crisp first character and grows its leading fade in as it pans, so nothing is dimmed that isn't also
+  cropped.
 - **FlexWrapPanel** (`Controls/FlexWrapPanel.cs`) — flex-wrap-with-grow button group: items share the row
   equally and wrap one at a time when narrow. The standard container for any row of action buttons.
 - **Input** (`TextBox`, theme `HoardInput`) — a **recessed** field: `ShadowInset`, thin border, accent focus

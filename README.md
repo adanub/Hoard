@@ -63,10 +63,18 @@ opening one offers a one-time storage upgrade (a `hoard.db.pre-v2.bak` backup st
 
 **Backing up / syncing between computers:** inside a project, ＋ → **Backup** points the archive at
 another folder (a backup drive, a NAS share, a synced folder) and **Sync now** reconciles the two —
-it first takes changes made elsewhere, then sends yours, moving only what's missing. Two folders
-carrying the same project marker are copies of the *same* archive, so this is also how a local working
-copy and a NAS copy stay in step (and how a machine repairs images whose files went missing — they're
-fetched from the backup rather than re-downloaded).
+it first takes changes made elsewhere, then sends yours. A sync costs what *changed*, not what the
+archive holds: the history file already records every image, so Hoard moves exactly the new ones instead
+of re-checking thousands of files each time. **Repair backup** is the thorough pass — use it if the
+backup folder has been altered from outside (files deleted, a drive half-restored); it re-checks every
+file on both sides. Two folders carrying the same project marker are copies of the *same* archive, so
+this is also how a local working copy and a NAS copy stay in step (and how a machine repairs images
+whose files went missing — they're fetched from the backup rather than re-downloaded).
+
+**Getting your images out as ordinary files:** ＋ → **Export project** writes the whole project to a
+folder you choose as `<Project>/<Board>/<Folder>/<Title [pin id]>.jpg` — plain folders and files, no
+Hoard needed to read them. A board's own ＋ → **Export** does just that board. Names are stable, so
+re-running an export only copies what's new.
 
 On launch you get a **project launcher**: pick a recent project, **Open existing folder…**, or create
 a **New project** (just type a name + choose a parent location — Hoard creates the folder for you).
