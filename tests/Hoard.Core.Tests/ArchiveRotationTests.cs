@@ -106,6 +106,53 @@ public class ArchiveRotationTests : IDisposable
             ArchiveSegments.ReadAll(opsRoot, "dev").Select(o => o.Seq)); // only 7 and 8 were appended
     }
 
+    [Fact]
+    public void ReadFrom_takes_the_tail_past_an_offset_and_matches_a_whole_read_at_zero()
+    {
+        var opsRoot = Path.Combine(_dir, "ops");
+        ArchiveSegments.Append(opsRoot, "dev", Enumerable.Range(1, 3).Select(Op));
+        var path = ArchiveSegments.SegmentPath(opsRoot, "dev");
+
+        // The offset the delta replicator uses is another copy's length — here, the file as it stood
+        // after two ops.
+        var afterTwo = new FileInfo(path).Length;
+        ArchiveSegments.Append(opsRoot, "dev", [Op(4)]);
+
+        Assert.Equal([4L], ArchiveSegments.ReadFrom(path, "dev", afterTwo).Select(o => o.Seq));
+        Assert.Equal(
+            ArchiveSegments.Read(path, "dev").Select(o => o.Seq),
+            ArchiveSegments.ReadFrom(path, "dev", 0).Select(o => o.Seq));
+        Assert.Empty(ArchiveSegments.ReadFrom(path, "dev", new FileInfo(path).Length));
+    }
+
+    [Fact]
+    public void ReadFrom_falls_back_to_the_whole_chapter_when_the_offset_is_not_a_line_boundary()
+    {
+        // An offset can land mid-line when it came from a copy carrying a torn tail. Guessing where the
+        // next line starts would silently drop ops — and under delta replication, their images with them.
+        var opsRoot = Path.Combine(_dir, "ops");
+        ArchiveSegments.Append(opsRoot, "dev", Enumerable.Range(1, 3).Select(Op));
+        var path = ArchiveSegments.SegmentPath(opsRoot, "dev");
+
+        var midLine = new FileInfo(path).Length - 20;
+        Assert.Equal([1L, 2L, 3L], ArchiveSegments.ReadFrom(path, "dev", midLine).Select(o => o.Seq));
+    }
+
+    [Fact]
+    public void ValidLength_reports_the_whole_line_prefix_of_a_torn_chapter()
+    {
+        var opsRoot = Path.Combine(_dir, "ops");
+        ArchiveSegments.Append(opsRoot, "dev", Enumerable.Range(1, 2).Select(Op));
+        var path = ArchiveSegments.SegmentPath(opsRoot, "dev");
+        var whole = new FileInfo(path).Length;
+
+        Assert.Equal(whole, ArchiveSegments.ValidLength(path));
+
+        File.AppendAllText(path, "{\"seq\":3,\"hl"); // a crashed append
+        Assert.Equal(whole, ArchiveSegments.ValidLength(path));
+        Assert.Equal(0, ArchiveSegments.ValidLength(Path.Combine(opsRoot, "absent.jsonl")));
+    }
+
     private static ArchiveOp Op(int n) => new()
     {
         DeviceId = "dev",

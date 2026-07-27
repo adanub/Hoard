@@ -12,7 +12,7 @@
     <StackPanel Margin="24" Spacing="14">
         <TextBlock Classes="h2" Text="Backup"/>
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="Keep a copy of this project's archive in another folder — a backup drive, a NAS share, or a synced folder. Syncing first takes changes made elsewhere, then sends yours."/>
+                   Text="Keep a copy of this project's archive in another folder — a backup drive, a NAS share, or a synced folder. Syncing first takes changes made elsewhere, then sends yours — moving only what changed. Repair re-checks every file, for when the backup folder has been altered from outside."/>
 
         <!-- Remote folder + picker -->
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -31,6 +31,8 @@
 
         <ctrl:FlexWrapPanel Spacing="8">
             <Button Theme="{StaticResource HoardButton}" Content="Sync now" Command="{Binding #Root.SyncCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Repair backup"
+                    Command="{Binding #Root.RepairCommand}" IsVisible="{Binding #Root.HasRemote}"/>
             <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Remove backup"
                     Command="{Binding #Root.RemoveCommand}" IsVisible="{Binding #Root.HasRemote}"/>
         </ctrl:FlexWrapPanel>

@@ -177,6 +177,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
                 // re-evaluate the Import button against the shared status.
                 ImportCommand.NotifyCanExecuteChanged();
                 SyncRemoteCommand.NotifyCanExecuteChanged(); // the backup sync is import-gated too
+                RepairRemoteCommand.NotifyCanExecuteChanged();
                 // An external sync just finished → reload counts/covers. A Library-initiated import refreshes
                 // itself afterwards (and owns the empty-board discard), so don't double-refresh for that case.
                 if (!_importStatus.IsImporting && !_selfImporting) _ = RefreshAsync();
@@ -564,6 +565,9 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     [ObservableProperty] private bool _isRemoteSyncing;
 
     private RemoteConfig? _remoteConfig;
+    // True until this session has reconciled the whole file set with the configured folder — see
+    // SetRemoteFolder. Deliberately not persisted: it only ever costs an extra thorough sync.
+    private bool _remoteNeedsFullSync;
 
     [RelayCommand]
     private void OpenRemoteSheet()
@@ -575,6 +579,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         RemoteStatusText = "";
         IsRemoteSheetOpen = true;
         SyncRemoteCommand.NotifyCanExecuteChanged();
+        RepairRemoteCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand] private void CloseRemoteSheet() => IsRemoteSheetOpen = false;
@@ -584,22 +589,23 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     {
         if (_projects?.Current is not { } project) return;
         var full = Path.GetFullPath(path);
-        // Trailing-separator compare: plain StartsWith would also reject a SIBLING whose name merely
-        // extends the project's ("Hoard" vs "Hoard-backup" — a natural backup-folder name).
-        if (WithSeparator(full).StartsWith(WithSeparator(Path.GetFullPath(project.Root)), StringComparison.OrdinalIgnoreCase))
+        if (DestinationFolder.IsInsideProject(full, project.Root))
         {
             RemoteStatusText = "Choose a folder outside the project — an archive can't back up into itself.";
             return;
         }
 
-        static string WithSeparator(string p) =>
-            p.EndsWith(Path.DirectorySeparatorChar) ? p : p + Path.DirectorySeparatorChar;
         _remoteConfig = new RemoteConfig(RemoteConfig.FolderType, full);
         _remoteConfig.Save(_projects.AppPaths, project.Id);
         HasRemote = true;
         RemotePathText = full;
         RemoteStatusText = "";
+        // A folder we've never synced with may hold a PARTIAL copy of this archive (a half-finished
+        // rclone target, a drive someone tidied). Delta mode trusts what the remote already has, so give
+        // this first run the full reconcile instead — after that the fast path is safe.
+        _remoteNeedsFullSync = true;
         SyncRemoteCommand.NotifyCanExecuteChanged();
+        RepairRemoteCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand]
@@ -611,15 +617,27 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         HasRemote = false;
         RemotePathText = "";
         RemoteStatusText = "";
+        _remoteNeedsFullSync = false;
         SyncRemoteCommand.NotifyCanExecuteChanged();
+        RepairRemoteCommand.NotifyCanExecuteChanged();
     }
 
     private bool CanSyncRemote() =>
         _remoteConfig is not null && !IsRemoteSyncing && !_importStatus.IsImporting
         && _dbFactory is not null && _archive is not null;
 
+    /// <summary>The every-day sync: move only what the op log proves is new (see
+    /// <see cref="ReplicationMode.Delta"/>), so it costs what changed rather than what the archive holds.</summary>
     [RelayCommand(CanExecute = nameof(CanSyncRemote))]
-    private async Task SyncRemoteAsync()
+    private Task SyncRemoteAsync()
+        => RunRemoteAsync(_remoteNeedsFullSync ? ReplicationMode.Full : ReplicationMode.Delta);
+
+    /// <summary>The thorough pass: re-check every file on both sides. Heals what a delta sync structurally
+    /// cannot see — a backup someone deleted files from, a torn copy, images no op names.</summary>
+    [RelayCommand(CanExecute = nameof(CanSyncRemote))]
+    private Task RepairRemoteAsync() => RunRemoteAsync(ReplicationMode.Full);
+
+    private async Task RunRemoteAsync(ReplicationMode mode)
     {
         if (_projects?.Current is not { } project || _remoteConfig is null
             || _dbFactory is null || _archive is null || _importStatus.IsImporting) return;
@@ -627,14 +645,16 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         IsRemoteSyncing = true;
         _importStatus.IsRemoteSyncing = true; // published app-wide: imports/board-syncs refuse to overlap
         SyncRemoteCommand.NotifyCanExecuteChanged();
+        RepairRemoteCommand.NotifyCanExecuteChanged();
         try
         {
-            RemoteStatusText = "Checking the backup…";
+            RemoteStatusText = mode == ReplicationMode.Full ? "Checking every file…" : "Checking the backup…";
             var progress = new Progress<string>(text => RemoteStatusText = text);
             var remote = _remoteConfig.CreateStore();
             var report = await Task.Run(
-                () => RemoteSync.SyncAsync(project, remote, _dbFactory, _archive, progress: progress, ct: token),
+                () => RemoteSync.SyncAsync(project, remote, _dbFactory, _archive, mode: mode, progress: progress, ct: token),
                 token);
+            if (report.Verified) _remoteNeedsFullSync = false;
             RemoteStatusText = Summarise(report);
             if (report.ChaptersPulled > 0 && !_disposed) _ = RefreshAsync(); // changes arrived — reload the grid
         }
@@ -652,16 +672,29 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
             IsRemoteSyncing = false;
             _importStatus.IsRemoteSyncing = false;
             SyncRemoteCommand.NotifyCanExecuteChanged();
+            RepairRemoteCommand.NotifyCanExecuteChanged();
         }
     }
 
     private static string Summarise(ReplicationReport report)
     {
-        if (!report.AnythingMoved) return "Already in sync — nothing to move.";
-        var legs = new List<string>();
-        if (report.BlobsPushed > 0 || report.ChaptersPushed > 0) legs.Add(Leg("sent", report.BlobsPushed));
-        if (report.BlobsPulled > 0 || report.ChaptersPulled > 0) legs.Add(Leg("received", report.BlobsPulled));
-        return "Done — " + string.Join(" · ", legs) + ".";
+        var text = report.AnythingMoved ? "Done — " + string.Join(" · ", Legs(report)) + "." : NothingMoved(report);
+        // Say so when the run knowingly left work behind — a backup that is quietly incomplete is worse
+        // than a slow one.
+        if (report.BlobsUnavailable > 0)
+            text += $" {report.BlobsUnavailable} image(s) are missing from the backup — run Repair backup.";
+        if (report.ChaptersDeferred > 0)
+            text += " Some history couldn't be sent this time — it will go next sync.";
+        return text;
+
+        static string NothingMoved(ReplicationReport report) =>
+            report.Verified ? "Backup verified — every file is already there." : "Already in sync — nothing to move.";
+
+        static IEnumerable<string> Legs(ReplicationReport report)
+        {
+            if (report.BlobsPushed > 0 || report.ChaptersPushed > 0) yield return Leg("sent", report.BlobsPushed);
+            if (report.BlobsPulled > 0 || report.ChaptersPulled > 0) yield return Leg("received", report.BlobsPulled);
+        }
 
         static string Leg(string verb, int blobs) =>
             blobs > 0 ? $"{verb} {blobs} {(blobs == 1 ? "image" : "images")}" : $"{verb} history changes";

@@ -29,6 +29,9 @@ public partial class RemoteSheet : UserControl
     public static readonly StyledProperty<ICommand?> SyncCommandProperty =
         AvaloniaProperty.Register<RemoteSheet, ICommand?>(nameof(SyncCommand));
 
+    public static readonly StyledProperty<ICommand?> RepairCommandProperty =
+        AvaloniaProperty.Register<RemoteSheet, ICommand?>(nameof(RepairCommand));
+
     public static readonly StyledProperty<ICommand?> RemoveCommandProperty =
         AvaloniaProperty.Register<RemoteSheet, ICommand?>(nameof(RemoveCommand));
 
@@ -38,6 +41,7 @@ public partial class RemoteSheet : UserControl
     public bool IsSyncing { get => GetValue(IsSyncingProperty); set => SetValue(IsSyncingProperty, value); }
     public ICommand? ChooseCommand { get => GetValue(ChooseCommandProperty); set => SetValue(ChooseCommandProperty, value); }
     public ICommand? SyncCommand { get => GetValue(SyncCommandProperty); set => SetValue(SyncCommandProperty, value); }
+    public ICommand? RepairCommand { get => GetValue(RepairCommandProperty); set => SetValue(RepairCommandProperty, value); }
     public ICommand? RemoveCommand { get => GetValue(RemoveCommandProperty); set => SetValue(RemoveCommandProperty, value); }
 
     public RemoteSheet()

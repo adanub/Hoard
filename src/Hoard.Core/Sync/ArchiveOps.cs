@@ -89,6 +89,44 @@ public static class ArchiveOpKeys
         sourceId is not null ? $"pin:{connector}:{sourceId}" : $"sha:{sha}";
 }
 
+/// <summary>
+/// The blob (if any) an op points at, read straight off its payload. Every op that implies a stored
+/// blob names it as <c>payload.relativePath</c> (<see cref="AssetAddedPayload"/> and
+/// <see cref="AssetContentChangedPayload"/> — added, refetched, restored); every other kind names none.
+/// <b>Keep that true when adding an op kind that carries a blob pointer</b> — the delta replicator
+/// derives "which blobs does the remote still need" from nothing but this, so a blob-bearing payload
+/// that spelled the field differently would be silently skipped until a Repair.
+/// </summary>
+public static class ArchiveOpBlobs
+{
+    /// <summary>A blob an op points at: its store-relative path as written, and the size the payload
+    /// claims (-1 when it carries none) — enough to tell "the remote already holds this" from
+    /// "the remote holds a torn copy" without stating the local file.</summary>
+    public readonly record struct Reference(string RelativePath, long Bytes);
+
+    public static Reference? Referenced(ArchiveOp op)
+    {
+        if (op.PayloadJson is null) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(op.PayloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            if (!root.TryGetProperty("relativePath", out var path) || path.ValueKind != JsonValueKind.String) return null;
+            if (path.GetString() is not { Length: > 0 } relativePath) return null;
+            var bytes = root.TryGetProperty("bytes", out var size) && size.ValueKind == JsonValueKind.Number
+                        && size.TryGetInt64(out var parsed)
+                ? parsed
+                : -1;
+            return new Reference(relativePath, bytes);
+        }
+        catch (JsonException)
+        {
+            return null; // a garbled payload names nothing; Repair backup is the backstop
+        }
+    }
+}
+
 public static class ArchiveOpJson
 {
     public static readonly JsonSerializerOptions Options = new()

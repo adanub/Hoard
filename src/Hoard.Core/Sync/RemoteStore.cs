@@ -52,21 +52,25 @@ public sealed class FileSystemRemoteStore : IRemoteStore
     {
         var dir = Local(prefix.TrimEnd('/'));
         if (!Directory.Exists(dir)) return Task.FromResult<IReadOnlyList<RemoteObject>>([]);
-        var objects = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+        // Enumerate FileInfos, not paths: the entries the directory walk yields already carry their size,
+        // so Length costs nothing. Re-stating each path (new FileInfo(f).Length) is a separate round trip
+        // per file — thousands of them over SMB, which is most of what made a full listing slow.
+        var objects = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories)
             // Staging temps are invisible (the interface contract): another machine's in-flight upload
             // (or a crash-orphaned one) must never be pulled as junk or abort a sync when its rename wins.
-            .Where(f => !Path.GetFileName(f).Contains(".tmp-", StringComparison.Ordinal))
+            .Where(f => !f.Name.Contains(".tmp-", StringComparison.Ordinal))
             .Select(f => new RemoteObject(
-                Path.GetRelativePath(_root, f).Replace(Path.DirectorySeparatorChar, '/'),
-                new FileInfo(f).Length))
+                Path.GetRelativePath(_root, f.FullName).Replace(Path.DirectorySeparatorChar, '/'),
+                f.Length))
             .ToList();
         return Task.FromResult<IReadOnlyList<RemoteObject>>(objects);
     }
 
     public Task<long?> GetLengthAsync(string relativePath, CancellationToken ct = default)
     {
-        var path = Local(relativePath);
-        return Task.FromResult(File.Exists(path) ? new FileInfo(path).Length : (long?)null);
+        // One stat, not two: FileInfo answers both questions from the same lookup.
+        var info = new FileInfo(Local(relativePath));
+        return Task.FromResult(info.Exists ? info.Length : (long?)null);
     }
 
     public Task DownloadAsync(string relativePath, string localFile, CancellationToken ct = default)

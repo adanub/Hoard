@@ -175,11 +175,61 @@ public static class ArchiveSegments
     /// at the first unparsable line — a torn tail from a crashed append; the authoritative-table flush
     /// re-lands anything beyond the last valid seq.
     /// </summary>
-    public static IReadOnlyList<ArchiveOp> Read(string path, string deviceId)
+    public static IReadOnlyList<ArchiveOp> Read(string path, string deviceId) => ReadFrom(path, deviceId, 0);
+
+    /// <summary>
+    /// The length of a segment's WHOLE-LINE prefix: the byte just past its last newline (0 when it holds
+    /// none). Every complete line is '\n'-terminated, so this is the file's meaningful content length —
+    /// bytes beyond it are a torn tail from a crashed append, which the next append repairs.
+    /// <para>Replication compares copies on this rather than on raw length: a torn tail pushed to a
+    /// remote by an older build would otherwise look "longer" than the repaired local copy forever, and
+    /// the chapter would never converge.</para>
+    /// </summary>
+    public static long ValidLength(string path)
+    {
+        if (!File.Exists(path)) return 0;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (stream.Length == 0) return 0;
+        for (long window = 64 * 1024; ; window *= 8)
+        {
+            var tail = Math.Min(stream.Length, window);
+            var buffer = new byte[tail];
+            stream.Seek(-tail, SeekOrigin.End);
+            stream.ReadExactly(buffer);
+            var lastNewline = Array.LastIndexOf(buffer, (byte)'\n');
+            if (lastNewline >= 0) return stream.Length - tail + lastNewline + 1;
+            if (tail == stream.Length) return 0; // no newline anywhere — the whole file is one torn line
+        }
+    }
+
+    /// <summary>
+    /// Read only the ops stored at or after <paramref name="offset"/> bytes — the delta replicator's
+    /// window ("everything the remote copy of this chapter doesn't have yet"), so a steady-state push
+    /// parses nothing and a growing chapter parses only its new tail.
+    /// <para>The offset comes from ANOTHER copy's length, so it is trusted only when it lands on a line
+    /// boundary: a chapter uploaded with a torn tail the local writer has since repaired past would
+    /// otherwise start the read mid-line. When the byte before the offset isn't a newline the whole
+    /// chapter is read instead — a safe superset (spare work, never a missed op).</para>
+    /// </summary>
+    public static IReadOnlyList<ArchiveOp> ReadFrom(string path, string deviceId, long offset)
     {
         var ops = new List<ArchiveOp>();
         if (!File.Exists(path)) return ops;
-        foreach (var line in File.ReadLines(path))
+
+        // FileShare.ReadWrite, deliberately: Append holds the ACTIVE chapter open (FileAccess.ReadWrite,
+        // FileShare.Read), and a stricter share mode here would fail the read outright mid-flush.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (offset > 0)
+        {
+            if (offset >= stream.Length) return ops;
+            stream.Seek(offset - 1, SeekOrigin.Begin);
+            // Not a line boundary (an offset taken from a copy carrying a torn tail): read the whole
+            // chapter instead of guessing where the next line starts. Spare work, never a missed op.
+            if (stream.ReadByte() != '\n') stream.Seek(0, SeekOrigin.Begin);
+        }
+
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        while (reader.ReadLine() is { } line)
         {
             if (line.Length == 0) continue;
             ArchiveOp op;
