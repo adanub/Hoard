@@ -18,18 +18,46 @@ namespace Hoard.Desktop.Controls;
 /// when the pointer leaves. The pan drives a <see cref="TranslateTransform"/>'s X directly via the
 /// shared <see cref="Tween"/>: never a code-BUILT Animation on a transform (the deferred-throw gotcha
 /// in CLAUDE.md). Timers stop on deactivation AND detach so a recycled/discarded control never ticks.
+/// <para>An overflowing edge doesn't end at a hard cut on the container's boundary — where a rounded
+/// corner would slice the glyphs — but ramps out through a <see cref="FadeWidth"/>-wide alpha gradient
+/// (an <see cref="Visual.OpacityMask"/>), so the text is fully opaque only once it's clear of the
+/// corner. Each side fades ONLY by as much as it currently hides, so a resting label keeps a crisp start
+/// and grows its left fade in as it pans away — never a permanently dimmed first character.</para>
 /// </summary>
 public sealed class Marquee : Decorator
 {
     public static readonly StyledProperty<bool> IsActiveProperty =
         AvaloniaProperty.Register<Marquee, bool>(nameof(IsActive));
 
+    /// <summary>How far an overflowing edge takes to ramp from invisible to fully opaque. Templates bind
+    /// this to the owner's corner radius: the fade should clear the curve, which is exactly where a hard
+    /// crop looks worst.</summary>
+    public static readonly StyledProperty<double> FadeWidthProperty =
+        AvaloniaProperty.Register<Marquee, double>(nameof(FadeWidth), 12);
+
     private const double PixelsPerSecond = 55;   // slow enough to read while it pans
     private const double EndHoldMs = 650;        // pause at each end of the ping-pong
+
+    private static readonly Color Opaque = Colors.White;
+    private static readonly Color Clear = Color.FromArgb(0, 255, 255, 255);
 
     private readonly TranslateTransform _translate = new();
     private readonly Tween _tween = new();
     private readonly DispatcherTimer _hold;
+    // One brush, mutated in place: the fade is re-evaluated every pan tick, and minting a brush per frame
+    // would churn the renderer for no gain.
+    private readonly LinearGradientBrush _fade = new()
+    {
+        StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
+        EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
+        GradientStops =
+        {
+            new GradientStop(Clear, 0),
+            new GradientStop(Opaque, 0),
+            new GradientStop(Opaque, 1),
+            new GradientStop(Clear, 1),
+        },
+    };
     private double _overflow;
     private bool _towardEnd = true;
 
@@ -37,6 +65,12 @@ public sealed class Marquee : Decorator
     {
         get => GetValue(IsActiveProperty);
         set => SetValue(IsActiveProperty, value);
+    }
+
+    public double FadeWidth
+    {
+        get => GetValue(FadeWidthProperty);
+        set => SetValue(FadeWidthProperty, value);
     }
 
     public Marquee()
@@ -79,15 +113,41 @@ public sealed class Marquee : Decorator
             ResetPan();
             if (IsActive && _overflow > 0) StartPanning();
         }
+        UpdateFade(finalSize.Width);
         return finalSize;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+        if (change.Property == FadeWidthProperty)
+        {
+            UpdateFade(Bounds.Width);
+            return;
+        }
         if (change.Property != IsActiveProperty) return;
         if (IsActive && _overflow > 0) StartPanning();
         else StopPanning();
+    }
+
+    /// <summary>
+    /// Re-mask the viewport for the current pan position. Each side's fade is the LESSER of
+    /// <see cref="FadeWidth"/> and how much that side actually hides, so the ramp grows in as content
+    /// slides under the edge and is absent where nothing is cut off — a label at rest keeps a crisp
+    /// first character, and a label that fits is never masked at all.
+    /// </summary>
+    private void UpdateFade(double width)
+    {
+        if (_overflow <= 0 || width <= 0 || FadeWidth <= 0)
+        {
+            OpacityMask = null;
+            return;
+        }
+
+        var (start, end) = EdgeFade.Band(width, FadeWidth, _overflow, _translate.X);
+        _fade.GradientStops[1].Offset = start;
+        _fade.GradientStops[2].Offset = end;
+        OpacityMask = _fade;
     }
 
     protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
@@ -111,7 +171,7 @@ public sealed class Marquee : Decorator
         _tween.Stop();
         _hold.Stop();
         // Snap-with-ease back to the resting crop rather than leaving the label mid-scroll.
-        _tween.Start(_translate.X, 0, 150, new CubicEaseOut(), v => _translate.X = v);
+        _tween.Start(_translate.X, 0, 150, new CubicEaseOut(), Pan);
         _towardEnd = true;
     }
 
@@ -120,13 +180,20 @@ public sealed class Marquee : Decorator
     {
         var target = _towardEnd ? -_overflow : 0;
         var duration = Math.Max(500, Math.Abs(target - _translate.X) / PixelsPerSecond * 1000);
-        _tween.Start(_translate.X, target, duration, new CubicEaseInOut(),
-            v => _translate.X = v,
+        _tween.Start(_translate.X, target, duration, new CubicEaseInOut(), Pan,
             onComplete: () =>
             {
                 _towardEnd = !_towardEnd;
                 if (IsActive) _hold.Start();
             });
+    }
+
+    /// <summary>The one place the pan offset moves: the edge fades track it, so they can never drift out
+    /// of step with what's actually hidden.</summary>
+    private void Pan(double x)
+    {
+        _translate.X = x;
+        UpdateFade(Bounds.Width);
     }
 
     private void ResetPan()

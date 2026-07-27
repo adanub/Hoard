@@ -27,8 +27,12 @@
                  button) is clipped here and pans while the owner's states set IsActive. Hit-transparent
                  like the presenter — the fill Border stays the SINGLE hover/press surface. EVERY theme
                  that uses this template must wire the ':pointerover/:pressed → marquee IsActive' styles
-                 (Button.axaml, ListItem.axaml do) — without them an over-wide label clips with no pan. -->
-            <ctrl:Marquee Name="marquee" IsHitTestVisible="False">
+                 (Button.axaml, ListItem.axaml do) — without them an over-wide label clips with no pan.
+                 FadeWidth follows the surface's own corner radius, so the label ramps out across the
+                 curve instead of being sliced flush against it — and a size class that shrinks the
+                 radius (.sm) tightens the fade with it, no second setter to keep in step. -->
+            <ctrl:Marquee Name="marquee" IsHitTestVisible="False"
+                          FadeWidth="{Binding CornerRadius.TopLeft, RelativeSource={RelativeSource TemplatedParent}}">
                 <ContentPresenter Name="PART_ContentPresenter"
                                   Content="{TemplateBinding Content}"
                                   ContentTemplate="{TemplateBinding ContentTemplate}"
