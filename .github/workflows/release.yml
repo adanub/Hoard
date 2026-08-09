@@ -146,6 +146,20 @@ jobs:
             -p:DebugType=embedded \
             --output publish
 
+      # Hoard is GPL-3.0 and ships the GPL-2.0 gallery-dl binary alongside itself, so both licences have
+      # to travel with the archive — a release that omits them is a licence breach, not a tidiness issue.
+      # gallery-dl's text is fetched at the same pin as the binary above rather than vendored, so it can
+      # never drift from what actually shipped. THIRD-PARTY-NOTICES.md points here by name; keep them in
+      # step if either path changes.
+      - name: Collect licences
+        shell: bash
+        run: |
+          mkdir -p publish/licences
+          cp LICENSE publish/licences/Hoard-LICENSE.txt
+          cp THIRD-PARTY-NOTICES.md publish/licences/THIRD-PARTY-NOTICES.md
+          curl -fsSL --retry 3 -o publish/licences/gallery-dl-LICENSE.txt \
+            https://raw.githubusercontent.com/mikf/gallery-dl/master/LICENSE
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -194,9 +194,11 @@ and it only ever fetches content the account you're signed in as can already see
 
 ## Licence
 
-**Not yet chosen.** Until a `LICENSE` file lands, default copyright applies and nobody else has the right
-to use or redistribute this — so picking one is the last step before the repo goes public.
+**[GPL-3.0](LICENSE)** — free to use, study, change and share. The condition is that it stays that way:
+if you distribute Hoard or a fork of it, you have to ship your source under GPL-3.0 too, and say what you
+changed. You can't take it closed.
 
-Worth knowing when you do: the release assets bundle the gallery-dl binary, which is **GPL-2.0**. Hoard
-only ever runs it as a separate process, so that doesn't dictate what Hoard's own source is licensed as,
-but *distributing* the binary carries GPL-2.0 obligations of its own.
+Hoard bundles the [gallery-dl](https://github.com/mikf/gallery-dl) binary, which is GPL-2.0 and remains
+under its own licence — Hoard runs it as a separate program, so the two are merely distributed together.
+Third-party components and their licences are listed in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
