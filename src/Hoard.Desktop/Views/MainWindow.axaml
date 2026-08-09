@@ -8,7 +8,8 @@
         x:Class="Hoard.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Background="{DynamicResource BackgroundBrush}"
-        Title="Hoard — Media Archive" Width="1100" Height="700">
+        Icon="/Assets/hoard.ico"
+        Title="Hoard — Pinterest archive" Width="1100" Height="700">
 
     <Design.DataContext>
         <vm:MainWindowViewModel/>

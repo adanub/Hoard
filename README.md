@@ -1,138 +1,205 @@
-# Hoard — self-hosted media archive (working name)
+<div align="center">
 
-A locally-owned, cross-platform archive of media saved from the web. Pinterest is the first
-ingestion *connector*; the architecture treats sources as pluggable so more can be added behind the
-same contract. See the design notes in `~/.claude/plans/i-d-like-to-create-ethereal-wall.md`.
+<img src="assets/icon/hoard-128.png" width="96" alt="">
 
-This repo is **Phase 1**: a .NET 10 / Avalonia desktop app that imports a Pinterest board into a
-local content-addressed archive with metadata, and browses it.
+# Hoard
 
-## Architecture
+**Keep your Pinterest boards, on your own disk.**
+
+Hoard downloads the boards you've saved — the full-size images, the titles, the folder structure —
+into a plain folder you own, and gives you a fast local app to browse them in.
+
+[![CI](https://github.com/adanub/Hoard/actions/workflows/ci.yml/badge.svg)](https://github.com/adanub/Hoard/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/adanub/Hoard?display_name=tag&sort=semver)](https://github.com/adanub/Hoard/releases/latest)
+
+</div>
+
+---
+
+## Why
+
+Pins rot. Boards get deleted, accounts get locked, links go dead, and the one image you actually wanted
+turns out to have been a re-pin of something that vanished in 2019. Hoard takes a copy while it's still
+there.
+
+What you end up with is **not** a proprietary library. It's a folder of images and an append-only log of
+what happened to them. You can point Hoard at it, back it up with any tool you like, or ignore Hoard
+entirely and open the files in Explorer or Finder.
+
+## What it does
+
+|  | |
+| --- | --- |
+| **Imports a board** | Paste a board, section or pin URL. Private boards work — pick the browser you're logged into and Hoard borrows its cookies. |
+| **Keeps folders as folders** | Pinterest sections become nested folders, automatically, to any depth. |
+| **Syncs cheaply** | A sync walks a board newest-first and stops as soon as it hits images you already have, so picking up 3 new pins costs a page or two rather than a re-crawl of the whole board. |
+| **Merges boards** | Point several Pinterest boards at one local board; they gather into the same grid. |
+| **Backs itself up** | Point a project at a second folder — an external drive, a NAS share, a synced folder — and reconcile the two. Only the changes move. |
+| **Exports plain files** | Write the whole project out as `Project/Board/Folder/Title [pin id].jpg`. No Hoard needed to read it. |
+| **Browses fast** | Virtualised masonry grid, live search, an inline detail band, and a zoom/pan lightbox. GIFs animate in the grid, capped so memory stays flat. |
+
+## Install
+
+Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releases/latest):
+
+| Platform | Asset |
+| --- | --- |
+| Windows (x64) | `Hoard-<version>-win-x64.zip` |
+| macOS (Apple Silicon) | `Hoard-<version>-osx-arm64.zip` |
+
+Both are self-contained — no .NET install needed — and ship with the downloader bundled. Each asset has a
+`.sha256` beside it and a build-provenance attestation.
+
+> **macOS:** the app is ad-hoc signed, not notarised, so Gatekeeper will object the first time.
+> Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/Hoard.app`.
+>
+> **Intel Macs aren't built.** Apple Silicon only.
+
+## Quick start
+
+1. **Make a project.** On launch you get the project launcher: give it a name, choose where the folder
+   goes. That folder is your archive.
+2. **Import a board.** ＋ → **Import board**, paste the URL. For your own or secret boards, pick the
+   browser you're signed into Pinterest with — Firefox, Zen, LibreWolf, Floorp, Waterfox and the
+   Chromium family are all detected. Public boards need no cookies.
+3. **Wait.** Progress streams into the board card and the grid fills in live as pins land.
+4. **Later, sync.** Open the board, ＋ → **Sync board**. It stops early once it reaches pins you already have.
+   From the board grid, ＋ → **Sync all boards** does every board in the project in turn; one failing
+   board doesn't stop the rest.
+
+**Full sync** (in the same sheet) is the exhaustive version. Use it when a board has gained a *section*
+since your last crawl, when the board isn't sorted newest-first, or to re-fetch a file that's gone
+missing from disk — a quick sync structurally can't see those.
+
+## Where your data lives
+
+A **project** is a folder you choose. Everything durable lives in it, and it travels:
 
 ```
-Hoard.Core (class library)              ← platform-neutral; safe for desktop, server, AND mobile
-  Connectors/ISourceConnector           ← pluggable source abstraction (no impl)
-  Storage/ContentAddressedStore         ← SHA-256 sharded blob store on disk (free dedup)
-  Metadata/HoardDbContext               ← SQLite via EF Core
-  Projects/                             ← project model, manager, project-scoped DB/store
-  Ingest/IngestService                  ← orchestrates download → store → upsert assets/boards/tags
-  Library/LibraryService                ← read-side queries for the UI
-Hoard.Ingest.GalleryDl (class library)  ← DESKTOP/SERVER only — spawns gallery-dl, parses sidecars,
-                                          browser-cookie detection (subprocess → not usable on mobile)
-Hoard.Desktop (Avalonia, MVVM)          ← shell + launcher/library views; hosts Core in-process
-tools/gallery-dl/gallery-dl.exe         ← bundled downloader (copied to app output)
+YourFolder/
+  hoard.project.json   # marker: name, a stable id, the archive format version
+  store/               # your images, content-addressed (identical bytes stored once)
+  ops/                 # append-only history — one file per computer
 ```
 
-`Hoard.Core` deliberately has **no subprocess or platform-specific code**, so a future mobile head
-can reference it directly. gallery-dl ingestion lives in `Hoard.Ingest.GalleryDl` because spawning a
-subprocess is impossible on iOS / restricted on Android — mobile reaches ingestion through the
-planned `Hoard.Server` (which will reference Core + the same ingestion assembly) instead.
+That's the whole archive: immutable images, plus a log of every change ever made. Nothing else in there
+is precious.
 
-## Prerequisites
+Each computer keeps its own **index** — a SQLite database, thumbnails, logs — under `%APPDATA%\Hoard` on
+Windows and `~/.config/Hoard` on macOS. The index is derived: delete it and the next open
+rebuilds it from `ops/`. That's deliberate, and it's what lets the same project folder sit on a NAS and
+be opened from several machines without a database ever being written over the network.
 
-- .NET 10 SDK
-- gallery-dl — **fetched for you**: it's a ~24 MB binary, too big to commit, so building
-  `Hoard.Desktop` downloads the current build for your OS into `tools/gallery-dl/` when it isn't there
-  (from <https://github.com/gdl-org/builds>, the binary channel referenced by gallery-dl's install docs).
-  Released apps ship with it bundled. Run `pwsh tools/fetch-gallery-dl.ps1` to force a **refresh** —
-  the build won't replace a binary that already exists, and Pinterest changes break old ones. Offline?
-  `-p:HoardSkipGalleryDlFetch=true` skips the download.
+<details>
+<summary><b>Backing up, and using two computers</b></summary>
 
-## Build & test
+Inside a project, ＋ → **Backup** points the archive at a second folder and **Sync now** reconciles them:
+it takes changes made elsewhere first, then sends yours.
 
-```pwsh
-dotnet build Hoard.slnx
-dotnet test  tests/Hoard.Core.Tests/Hoard.Core.Tests.csproj
-dotnet run  --project src/Hoard.Desktop
+A sync costs what *changed*, not what the archive holds. The history file already records every image, so
+Hoard moves exactly the new blobs instead of comparing thousands of files — which is the difference
+between a couple of seconds and ten minutes over SMB.
+
+**Repair backup** is the thorough pass. Use it if the backup folder has been altered from outside — files
+deleted, a drive half-restored — since a delta can't see damage nothing logged.
+
+Two folders carrying the same project marker are copies of the *same* archive, not rivals. That's the
+supported way to keep a local working copy and a NAS copy in step, and it's also how a machine heals
+images whose files went missing: they come back from the backup rather than being re-downloaded.
+
+</details>
+
+<details>
+<summary><b>Getting your images out</b></summary>
+
+＋ → **Export project** writes everything to a folder you choose as
+`<Project>/<Board>/<Folder>/<Title [pin id]>.jpg`. A board's own ＋ → **Export** does just that board.
+
+File names are stable per image, so re-running an export is an incremental refresh — it copies what's new
+and leaves the rest alone. The export is read-only against your archive.
+
+</details>
+
+## Build from source
+
+Needs the **.NET 10 SDK**. Nothing else — gallery-dl is fetched by the build.
+
+```bash
+dotnet build Hoard.slnx                   # build everything (the solution is .slnx)
+dotnet test  Hoard.slnx                   # run the test suite
+dotnet run --project src/Hoard.Desktop    # run it (from a terminal, so logs stream)
 ```
 
-## Projects (where your data lives)
+gallery-dl is a ~24 MB third-party binary, too big to commit, so the build downloads the right one for
+your OS into `tools/gallery-dl/` the first time. It only fetches when the file is *absent* — to refresh a
+copy that Pinterest has broken, run `pwsh tools/fetch-gallery-dl.ps1`. Building offline?
+`-p:HoardSkipGalleryDlFetch=true`.
 
-A **project** is a folder *you* choose; all of one archive's data lives inside it and travels with it:
+<details>
+<summary><b>How the code is laid out</b></summary>
 
 ```
-<YourChosenFolder>/
-  hoard.project.json   # marker: project name + stable id + archive format version
-  store/               # the images (content-addressed blobs)
-  ops/                 # the archive's history — append-only op log, one file per computer
+src/Hoard.Core              platform-neutral: domain, SQLite metadata, the content-addressed
+                            store, the project model, ingest + library services, the op log
+src/Hoard.Ingest.GalleryDl  desktop/server only: spawns gallery-dl, parses its sidecars,
+                            finds browser cookies
+src/Hoard.Desktop           the Avalonia app — views, view models, custom controls
 ```
 
-Everything in the folder is static: immutable images plus an append-only history of every change.
-Each computer keeps its own fast metadata index (SQLite) under its app data — alongside its own
-regenerable caches (thumbnails, per-import logs, gallery-dl's fetched-pins record) — all rebuilt from
-the archive, which is why the same project folder can sit on a NAS or synced drive and be opened from
-several computers. Projects created by older versions still hold a `hoard.db` inside the folder;
-opening one offers a one-time storage upgrade (a `hoard.db.pre-v2.bak` backup stays in the folder).
+The split is by *platform reach*, not by layer. `Hoard.Core` holds no subprocess or platform code, so a
+future mobile client or sync server can reference it as-is; anything that shells out lives in
+`Hoard.Ingest.GalleryDl`, because iOS can't spawn processes at all.
 
-**Backing up / syncing between computers:** inside a project, ＋ → **Backup** points the archive at
-another folder (a backup drive, a NAS share, a synced folder) and **Sync now** reconciles the two —
-it first takes changes made elsewhere, then sends yours. A sync costs what *changed*, not what the
-archive holds: the history file already records every image, so Hoard moves exactly the new ones instead
-of re-checking thousands of files each time. **Repair backup** is the thorough pass — use it if the
-backup folder has been altered from outside (files deleted, a drive half-restored); it re-checks every
-file on both sides. Two folders carrying the same project marker are copies of the *same* archive, so
-this is also how a local working copy and a NAS copy stay in step (and how a machine repairs images
-whose files went missing — they're fetched from the backup rather than re-downloaded).
+Deeper notes live in [`CLAUDE.md`](CLAUDE.md) (architecture and the reasoning behind it),
+[`SYNC-DESIGN.md`](SYNC-DESIGN.md) (the archive format and replication) and [`DESIGN.md`](DESIGN.md)
+(the design system). [`ROADMAP.md`](ROADMAP.md) is what's next.
 
-**Getting your images out as ordinary files:** ＋ → **Export project** writes the whole project to a
-folder you choose as `<Project>/<Board>/<Folder>/<Title [pin id]>.jpg` — plain folders and files, no
-Hoard needed to read them. A board's own ＋ → **Export** does just that board. Names are stable, so
-re-running an export only copies what's new.
+</details>
 
-On launch you get a **project launcher**: pick a recent project, **Open existing folder…**, or create
-a **New project** (just type a name + choose a parent location — Hoard creates the folder for you).
-Select a recent project to **Remove from list** (forget it, files untouched) or **Delete from disk…**
-(permanent, with confirmation — guarded to only ever delete a real Hoard project folder). Inside a
-project, **Switch project** returns to the launcher. `%APPDATA%/Hoard` holds only app settings, the
-diagnostic log, and each project's rebuildable per-computer state (index + caches) — your images and
-their history never live there.
+## When something goes wrong
 
-The per-computer metadata index is **SQLite** (in WAL mode on a local disk, so background imports and
-browsing don't block each other) — while the archive itself stays plain, portable files. Full-text
-search (FTS5) and optional vector search (`sqlite-vec`) stay available without leaving the embedded
-model.
+Every run logs to the terminal **and** to a file, so you never have to copy an error out of the UI.
 
-## Logs & debugging
-
-Every run logs to **both** the terminal and a rolling file, so you never have to copy errors out of the UI:
-
-- **Live in your terminal:** launch with `dotnet run --project src/Hoard.Desktop` from a terminal — the
-  app attaches to that console and streams logs (incl. gallery-dl's own output) as you click around.
-- **On disk:** `%APPDATA%/Hoard/logs/hoard.log` (rolls daily, keeps 7 days). Tail it in a second
-  terminal while you use the app:
+- **Live:** launch with `dotnet run --project src/Hoard.Desktop` from a terminal and the app streams its
+  log there, including gallery-dl's own output.
+- **On disk:** `%APPDATA%/Hoard/logs/hoard.log`, rolled daily, 7 days kept.
   ```pwsh
   Get-Content $env:APPDATA\Hoard\logs\hoard.log -Wait -Tail 50
   ```
-- Each import also writes a self-contained `import-<timestamp>.log` under this computer's project
-  state (`%APPDATA%/Hoard/projects/<projectId>/logs/`).
+- Each import also writes its own transcript under
+  `%APPDATA%/Hoard/projects/<projectId>/logs/import-<timestamp>.log`.
 
-## Using it
+If imports start failing across the board, the usual cause is Pinterest having changed something — refresh
+gallery-dl with `pwsh tools/fetch-gallery-dl.ps1` before assuming it's Hoard.
 
-1. Launch the app; on the **project launcher** create a new project (name + location) or open a recent one.
-2. For your own/private boards, pick the browser you're logged into Pinterest with in the
-   **Cookies** dropdown. Firefox-based browsers (Firefox, **Zen**, LibreWolf, Floorp, Waterfox) are
-   detected by profile; Chromium-based ones too. Public boards need no cookies.
-3. Paste a board / section / pin URL and click **Import**. Progress shows in the status bar.
-4. Browse imported images; click a board on the left to filter; **search** by title/description/tags
-   (scoped to the selected board); click a tile for metadata.
-   Re-importing a board is **incremental**: gallery-dl skips pins already recorded in the project's
-   `download-archive.db` (no re-download), and content-hash dedup is a second layer that also catches
-   the same image saved under different pins/boards.
-5. To pick up what a board has gained since, open it and use ＋ → **Sync**. It walks the board (and each
-   of its folders) newest-first and **stops as soon as it reaches images you already have**, so it costs
-   a page or two rather than re-listing the whole board. The same sheet's **Full sync** walks everything
-   to the end — slower, and what to use to pick up a folder added on Pinterest since your last full
-   crawl, or to re-fetch a file that went missing from `store/`.
-6. To update everything at once, use ＋ → **Sync all boards** from the board grid: the same per-board
-   sync, run over every board in the project in turn. A board that fails (a source gone private, say)
-   doesn't stop the others — the toast at the end names any that did.
+## Known limitations
 
-## Notes / known limitations
+- **Pinterest's auto-generated "All Pins" board** often won't enumerate. Import real boards and sections.
+- **Videos** are archived, but tiles show a placeholder rather than a poster frame, and playback opens your
+  system player. Poster frames need an ffmpeg dependency that isn't bundled.
+- **Search is a `LIKE` scan** over titles, descriptions and tags. Fine for thousands of pins; FTS5 is
+  planned for when it isn't.
+- **Recycle-bin deletes are Windows-only.** Elsewhere a delete is permanent, and the confirmation says so.
+- **Tags are usually empty** — Pinterest's sidecars rarely carry any in practice.
+- Interface scale works, but dropdowns and tooltips render in their own popup windows and don't inherit it.
 
-- gallery-dl breaks when Pinterest changes their site — re-run `fetch-gallery-dl.ps1` to update.
-- The auto-generated Pinterest "All Pins" board can fail to enumerate; import real boards/sections.
-- The grid is a virtualizing **masonry** layout (`Controls/MasonryLayout.cs`) — tile heights come from each
-  pin's stored dimensions, so only on-screen tiles are realized. Tag filtering and FTS5 are still pending.
-- **GIFs** animate in the detail panel (custom SkiaSharp player, `Controls/AnimatedImageControl.cs`); the grid
-  shows their static first frame. **Videos** show metadata + an "Open file" button (external player); in-grid
-  video posters (ffmpeg) and grid hover-to-play GIFs are not done yet.
+## Credits
+
+- **[gallery-dl](https://github.com/mikf/gallery-dl)** does the actual downloading. Hoard would be a much
+  larger project without it. Binaries come from [gdl-org/builds](https://github.com/gdl-org/builds).
+- **[Avalonia](https://avaloniaui.net)** for the UI toolkit.
+- **[Lucide](https://lucide.dev)** (ISC) for the icons, embedded as geometries.
+- **[shadcn/ui](https://ui.shadcn.com)** as the design reference — copied in spirit, not taken as a
+  dependency.
+
+Hoard is an independent tool. It isn't affiliated with, endorsed by, or connected to Pinterest in any way,
+and it only ever fetches content the account you're signed in as can already see.
+
+## Licence
+
+**Not yet chosen.** Until a `LICENSE` file lands, default copyright applies and nobody else has the right
+to use or redistribute this — so picking one is the last step before the repo goes public.
+
+Worth knowing when you do: the release assets bundle the gallery-dl binary, which is **GPL-2.0**. Hoard
+only ever runs it as a separate process, so that doesn't dictate what Hoard's own source is licensed as,
+but *distributing* the binary carries GPL-2.0 obligations of its own.

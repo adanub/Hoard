@@ -71,10 +71,12 @@ and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md
   remote.
 - **Phase 4 — mobile**: extract Core behind a `Hoard.Server` (ASP.NET Core minimal API; server-side
   ingestion since mobile can't spawn gallery-dl); Avalonia mobile client with background sync.
-- **Phase 5 — capture + more connectors**: TS browser extension (in-page "save to Hoard"); more
-  sources behind `ISourceConnector`.
+- **Phase 5 — capture**: TS browser extension (in-page "save to Hoard" straight from Pinterest).
 
 ## Shelved / dropped — don't resurrect unprompted
+
+- **Other sources / a generic media archiver** (dropped 2026-08-09, user call): Hoard is a Pinterest
+  archiver. `ISourceConnector` stays as an internal seam, not a plug-in promise — see CLAUDE.md's header.
 
 - **Manual collections** (shelved 2026-07-27, user call: not important). If revived: exclude
   manually-added images from `RemoveSourceAsync`'s last-source sweep.

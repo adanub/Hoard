@@ -112,7 +112,9 @@ public sealed record SourceMediaItem
     public string? RawJson { get; init; }
 }
 
-/// <summary>A pluggable ingestion source (Pinterest first; more to come behind the same contract).</summary>
+/// <summary>An ingestion source. Pinterest is the only one, and the only one planned — this interface
+/// exists to keep subprocess-spawning code out of platform-neutral Core (the real implementation lives in
+/// Hoard.Ingest.GalleryDl) and to give the tests a seam to fake, not as a plug-in contract.</summary>
 public interface ISourceConnector
 {
     string Name { get; }

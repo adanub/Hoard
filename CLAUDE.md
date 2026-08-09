@@ -2,11 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Hoard is a self-hosted, local-first media archiver (.NET 10 + Avalonia). It backs up media + metadata
-from the web into a project-based, content-addressed local archive; Pinterest (via gallery-dl) is the
-first connector. See `README.md` for the user-facing model, project-folder layout, and the GIF/video
-behaviour. The long-term aim is cross-platform (desktop now; mobile + a sync server later) — that goal
-drives the assembly boundaries below, so respect it.
+Hoard is a self-hosted, local-first **Pinterest archiver** (.NET 10 + Avalonia). It backs up your boards —
+images plus their metadata — into a project-based, content-addressed local archive you own, via gallery-dl.
+See `README.md` for the user-facing model, project-folder layout, and the GIF/video behaviour.
+
+**Scope is Pinterest, deliberately.** Hoard was briefly framed as a general "media archiver"; it isn't one,
+and the docs shouldn't imply it. Don't add other sources, and don't describe it as source-agnostic.
+`ISourceConnector` stays — it's the seam the tests fake and the boundary that keeps subprocess code out of
+Core — but it is an internal contract, not a plug-in promise. The long-term aim is cross-platform (desktop
+now; mobile + a sync server later), and *that* is what drives the assembly boundaries below, so respect them.
 
 ## Commands
 

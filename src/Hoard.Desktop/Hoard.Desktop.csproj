@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The Windows shell reads this one out of the .exe itself (taskbar, Explorer, Alt-Tab); the
+         Window's own Icon="/Assets/hoard.ico" is what Avalonia draws in the title bar. Both point at
+         the same file — assets/icon/hoard.svg is the vector it's generated from. -->
+    <ApplicationIcon>Assets\hoard.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 

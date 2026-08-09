@@ -16,6 +16,8 @@
     <string>__VERSION__</string>
     <key>CFBundleExecutable</key>
     <string>Hoard.Desktop</string>
+    <key>CFBundleIconFile</key>
+    <string>Hoard.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>

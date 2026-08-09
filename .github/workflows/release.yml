@@ -162,6 +162,9 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp -R publish/. "$APP/Contents/MacOS/"
           sed "s/__VERSION__/$VERSION/g" tools/packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+          # Must land before codesign — adding a resource afterwards invalidates the signature.
+          # The name has to match CFBundleIconFile in the plist.
+          cp tools/packaging/macos/Hoard.icns "$APP/Contents/Resources/Hoard.icns"
           chmod +x "$APP/Contents/MacOS/Hoard.Desktop"
           [[ -f "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl" ]] && chmod +x "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl"
           # Ad-hoc signature: enough for local Gatekeeper integrity checks.

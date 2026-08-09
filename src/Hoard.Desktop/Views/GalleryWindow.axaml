@@ -114,7 +114,7 @@
                     <TextBlock Classes="h2" Text="Project card"/>
                     <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Left">
                         <!-- Width pinned: outside a FillWrapPanel the cards no longer size themselves. -->
-                        <ctrl:ProjectCard x:Name="DemoProjectCard" Width="240" Title="HoardTest1"
+                        <ctrl:ProjectCard x:Name="DemoProjectCard" Width="240" Title="Reference Photos"
                                           MetaText="78 images · 12 MB cache"/>
                         <!-- Its "+ New project" companion: raised action tile, same footprint. -->
                         <ctrl:NewProjectCard x:Name="DemoNewProjectCard" Width="240" Label="New project"/>
@@ -299,8 +299,8 @@
 
         <!-- Project card's Edit popup (opened by the card's Edit button). -->
         <ctrl:SheetHost x:Name="ProjectEditDemoSheet">
-            <ctrl:ProjectEditSheet x:Name="DemoProjectEditSheet" ProjectName="HoardTest1"
-                                   FolderPath="D:\Archive\HoardTest1"
+            <ctrl:ProjectEditSheet x:Name="DemoProjectEditSheet" ProjectName="Reference Photos"
+                                   FolderPath="D:\Archive\Reference Photos"
                                    CountsText="Images 64   ·   GIFs 9   ·   Videos 5"
                                    BoardsText="Boards 4"
                                    CacheText="Cache 12 MB" OnDiskText="On disk 318 MB"
