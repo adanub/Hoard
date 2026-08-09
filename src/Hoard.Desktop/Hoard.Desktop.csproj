@@ -18,6 +18,54 @@
     <None Include="..\..\tools\gallery-dl\**\*" Link="tools\gallery-dl\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- gallery-dl is a ~24 MB third-party binary, so it's fetched rather than committed (.gitignore).
+       That used to make it a manual post-clone step, which fails LATE and unhelpfully: the app builds and
+       runs perfectly, then the first import dies with "could not start gallery-dl". So the build fetches it
+       when it's missing. GitHub's /releases/latest/download/ redirect lets MSBuild do this natively — no
+       GitHub API call (unauthenticated: 60 requests/hour) and no PowerShell dependency, so it works the same
+       on a Linux or macOS dev machine. -->
+  <PropertyGroup>
+    <GalleryDlFileName Condition="$([MSBuild]::IsOSPlatform('Windows'))">gallery-dl.exe</GalleryDlFileName>
+    <GalleryDlFileName Condition="'$(GalleryDlFileName)' == ''">gallery-dl</GalleryDlFileName>
+    <GalleryDlAsset Condition="$([MSBuild]::IsOSPlatform('Windows'))">gallery-dl_windows.exe</GalleryDlAsset>
+    <GalleryDlAsset Condition="$([MSBuild]::IsOSPlatform('OSX'))">gallery-dl_macos</GalleryDlAsset>
+    <GalleryDlAsset Condition="'$(GalleryDlAsset)' == ''">gallery-dl_linux</GalleryDlAsset>
+    <GalleryDlDir>$(MSBuildThisFileDirectory)..\..\tools\gallery-dl\</GalleryDlDir>
+    <GalleryDlPath>$(GalleryDlDir)$(GalleryDlFileName)</GalleryDlPath>
+  </PropertyGroup>
+
+  <!-- Skipped when it's already there, and in CI: the test workflow never runs it, and the release workflow
+       fetches the right per-OS asset itself before publishing. -p:HoardSkipGalleryDlFetch=true opts out.
+       A download failure WARNS rather than fails — an offline clone still has to compile. -->
+  <Target Name="FetchGalleryDl" BeforeTargets="Build"
+          Condition="!Exists('$(GalleryDlPath)') And '$(CI)' != 'true' And '$(HoardSkipGalleryDlFetch)' != 'true'">
+    <Message Importance="high" Text="gallery-dl is missing — downloading $(GalleryDlAsset) (~24 MB) to tools/gallery-dl/ …" />
+    <!-- Stage under a .tmp name and rename only once the download returned, so an interrupted fetch (flaky
+         network, a cancelled build, a killed CI step) leaves no half-file. The freshness gate is
+         "does it exist", so a truncated binary parked at the real name would be permanent — and would fail as
+         a crash from the subprocess much later. Same temp-then-rename rule the blob store lives by. -->
+    <DownloadFile SourceUrl="https://github.com/gdl-org/builds/releases/latest/download/$(GalleryDlAsset)"
+                  DestinationFolder="$(GalleryDlDir)" DestinationFileName="$(GalleryDlFileName).tmp"
+                  ContinueOnError="WarnAndContinue" />
+    <Move SourceFiles="$(GalleryDlPath).tmp" DestinationFiles="$(GalleryDlPath)"
+          Condition="Exists('$(GalleryDlPath).tmp')" ContinueOnError="WarnAndContinue" />
+    <Exec Command="chmod +x &quot;$(GalleryDlPath)&quot;" ContinueOnError="WarnAndContinue"
+          Condition="Exists('$(GalleryDlPath)') And !$([MSBuild]::IsOSPlatform('Windows'))" />
+    <!-- The <None> glob above was evaluated before this target ran, so the file we just downloaded isn't in
+         the item list for THIS build — copy it across explicitly, or a fresh clone would still start an app
+         with no downloader until someone built a second time. -->
+    <Copy SourceFiles="$(GalleryDlPath)" DestinationFolder="$(OutDir)tools\gallery-dl\" SkipUnchangedFiles="true"
+          Condition="Exists('$(GalleryDlPath)')" />
+  </Target>
+
+  <!-- The same "fails late" trap costs far more in a release: an app published without the downloader
+       installs and opens fine, and every import fails on the user's machine. Publishing is the last moment
+       we can still catch it, so it's an error rather than a warning. -->
+  <Target Name="VerifyGalleryDlPublished" AfterTargets="Publish">
+    <Error Condition="!Exists('$(PublishDir)tools\gallery-dl\$(GalleryDlFileName)')"
+           Text="Published without gallery-dl: '$(PublishDir)tools/gallery-dl/$(GalleryDlFileName)' is missing, so this build could not import anything. Run tools/fetch-gallery-dl.ps1 first, then publish again." />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.4" />
     <PackageReference Include="Avalonia.Controls.ItemsRepeater" Version="12.0.0" />
