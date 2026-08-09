@@ -31,9 +31,12 @@ planned `Hoard.Server` (which will reference Core + the same ingestion assembly)
 ## Prerequisites
 
 - .NET 10 SDK
-- `tools/gallery-dl/gallery-dl.exe` — fetch with `pwsh tools/fetch-gallery-dl.ps1`
-  (downloads from <https://github.com/gdl-org/builds>, the binary channel referenced by gallery-dl's
-  install docs). Verify it before first use: `& tools/gallery-dl/gallery-dl.exe --version`.
+- gallery-dl — **fetched for you**: it's a ~24 MB binary, too big to commit, so building
+  `Hoard.Desktop` downloads the current build for your OS into `tools/gallery-dl/` when it isn't there
+  (from <https://github.com/gdl-org/builds>, the binary channel referenced by gallery-dl's install docs).
+  Released apps ship with it bundled. Run `pwsh tools/fetch-gallery-dl.ps1` to force a **refresh** —
+  the build won't replace a binary that already exists, and Pinterest changes break old ones. Offline?
+  `-p:HoardSkipGalleryDlFetch=true` skips the download.
 
 ## Build & test
 
@@ -115,6 +118,14 @@ Every run logs to **both** the terminal and a rolling file, so you never have to
    Re-importing a board is **incremental**: gallery-dl skips pins already recorded in the project's
    `download-archive.db` (no re-download), and content-hash dedup is a second layer that also catches
    the same image saved under different pins/boards.
+5. To pick up what a board has gained since, open it and use ＋ → **Sync**. It walks the board (and each
+   of its folders) newest-first and **stops as soon as it reaches images you already have**, so it costs
+   a page or two rather than re-listing the whole board. The same sheet's **Full sync** walks everything
+   to the end — slower, and what to use to pick up a folder added on Pinterest since your last full
+   crawl, or to re-fetch a file that went missing from `store/`.
+6. To update everything at once, use ＋ → **Sync all boards** from the board grid: the same per-board
+   sync, run over every board in the project in turn. A board that fails (a source gone private, say)
+   doesn't stop the others — the toast at the end names any that did.
 
 ## Notes / known limitations
 

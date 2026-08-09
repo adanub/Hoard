@@ -16,13 +16,23 @@ dotnet run  --project src/Hoard.Desktop                   # run the app (launche
 dotnet test Hoard.slnx                                    # all tests (Hoard.Core.Tests + Hoard.Desktop.Tests)
 dotnet test tests/Hoard.Core.Tests/Hoard.Core.Tests.csproj          # one project
 dotnet test Hoard.slnx --filter "FullyQualifiedName~Search_filters" # one test / class
-pwsh tools/fetch-gallery-dl.ps1                           # download the bundled gallery-dl binary for this OS (not committed)
+pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bundled gallery-dl (the build fetches it when missing)
 ```
 
 - **The running app locks its output DLLs**, so a full build fails with `MSB3027` while it's open. Build a
   non-Desktop project (`tests/...` or `src/Hoard.Core`) to iterate, or close the app first.
-- **`tools/gallery-dl/gallery-dl.exe` is required at runtime but gitignored** — run the fetch script after a
-  clone. The Desktop csproj copies it next to the app output.
+- **gallery-dl is gitignored (~24 MB) but never a manual step: the `FetchGalleryDl` target in
+  `Hoard.Desktop.csproj` downloads it when missing.** It uses GitHub's
+  `/releases/latest/download/<asset>` redirect via MSBuild's `DownloadFile` — no API call (unauthenticated
+  = 60 requests/hour) and no PowerShell dependency, so a Linux/macOS dev machine behaves the same. Three
+  things about it are load-bearing: it **copies the file to `$(OutDir)` itself**, because the `<None>` glob
+  that normally bundles it was evaluated *before* the target ran and a fresh clone would otherwise build an
+  app with no downloader until the second build; it is **skipped when `CI` is set** (the test workflow never
+  runs it, and the release workflow fetches the right per-OS asset itself) and by
+  `-p:HoardSkipGalleryDlFetch=true` for offline builds; and a download failure **warns rather than fails**.
+  It only fetches when the file is ABSENT, so refreshing a build broken by a Pinterest change still means
+  running the script. `VerifyGalleryDlPublished` then makes shipping without it an **error at publish** —
+  that app would install fine and fail every import on the user's machine.
 
 ## CI & releases
 
@@ -34,8 +44,11 @@ pwsh tools/fetch-gallery-dl.ps1                           # download the bundled
   a release PR open on `main` with the next semver computed from commit types since the last release (feat →
   minor, fix/perf → patch, `feat!`/`BREAKING CHANGE` → major; pre-1.0 the bumps are shifted down one level) plus
   the `CHANGELOG.md` update. **Merging that PR** creates the `vX.Y.Z` tag + GitHub Release, and the build matrix
-  uploads self-contained apps (win-x64 zip; osx-arm64/osx-x64 ad-hoc-signed `.app` zips, template at
-  `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations. The version is
+  uploads self-contained apps (win-x64 zip; osx-arm64 ad-hoc-signed `.app` zip, template at
+  `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations.
+  **The released targets are Windows x64 and Apple Silicon only** — Intel macs (`osx-x64`) are deliberately
+  not built. Each RID publishes on a runner of its own OS, which is what lets the packaging steps and the
+  gallery-dl fetch select by `runner.os`; keep that pairing if a target is ever added. The version is
   stamped at publish time via `-p:Version` — **never hardcode a version in a csproj**, and never hand-edit the
   release-please-owned files (`version.txt`, `.release-please-manifest.json`, `CHANGELOG.md`). To force a
   specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
@@ -290,8 +303,8 @@ Concepts that span multiple files:
   notification.
   **The bar's search state always mirrors the current page's query** (arriving on a page with a query opens the
   field; ✕/Esc-in-field clears the page's filter as it collapses) — a collapsed bar can never hide an active
-  filter. **＋ menu per page:** Projects → New project; Library → Import board + Backup (the remote-sync
-  sheet — see the Backup/replication bullet) + Export project; Board → Sync (hidden until the
+  filter. **＋ menu per page:** Projects → New project; Library → Import board + Sync all boards + Backup
+  (the remote-sync sheet — see the Backup/replication bullet) + Export project; Board → Sync (hidden until the
   async source load proves ≥1 source, disabled while importing) + New folder; the virtual "All images"/results
   board contributes nothing, which hides ＋ entirely. **The whole bar hides while any sheet is open or the
   lightbox is up:** `SheetHost` raises a bubbling `IsOpenChangedEvent` that `MainWindow` folds into
@@ -341,12 +354,74 @@ Concepts that span multiple files:
   (`IngestProgress.ImportedIntoCollectionId`, set per item): a loose pin lands on the board grid, a **sectioned pin
   updates its folder card live** (debounced) instead of flashing on the root grid to be reorganised at the end.
   gallery-dl reports no total mid-stream, so progress is a count + indeterminate bar, never a %.
-- **Syncing a board re-runs the import per source.** The Board screen's **Sync** action (in the floating bar's
-  ＋ menu; visible only for a real board with ≥1 URL'd source) opens a cookie sheet, then `BoardViewModel.SyncAsync` loops the board's
-  `CollectionSource` URLs (`LibraryService.GetBoardSourceUrlsAsync`) through `IngestService.ImportAsync(targetCollectionId)`.
-  No new download logic — it reuses the whole pipeline, so it pulls in missing/new items and **skips already-held
-  AND tombstoned (blacklisted) items** (the `KnownItems` skip-archive includes tombstones, and `ImportAsync`
-  re-checks `DeletedAt`). Progress flows through the same `ImportStatus` (inline strip + live streaming + reload).
+- **Syncing a board re-runs the import — as a DELTA, in ONE crawl of many targets.** The Board screen's
+  **Sync** action (in the floating bar's ＋ menu; visible only for a real board with ≥1 URL'd source) opens a
+  cookie sheet, then `BoardViewModel.RunSyncAsync` hands *every* crawl target of the board to a single
+  `IngestService.ImportAsync(urls, …, targetCollectionId, ImportMode)`. No new download logic — it reuses the
+  whole pipeline, so it pulls in missing/new items and **skips already-held AND tombstoned (blacklisted)
+  items** (the `KnownItems` skip-archive includes tombstones, and `ImportAsync` re-checks `DeletedAt`).
+  Progress flows through the same `ImportStatus` (inline strip + live streaming + reload).
+  **`ImportMode` is the whole point** (`Ingest/ImportMode.cs`): the old sync re-listed the entire board every
+  time — every pin enumerated page-by-page just to be pre-skipped — so wall time scaled with board size, not
+  with what was new. Each listing page costs a `--sleep-request` (1–2s), so a few thousand pins is minutes of
+  paging to discover nothing.
+  - **`Delta` (the ＋ menu's Sync)** passes `ConnectorOptions.StopAfterConsecutiveKnown`
+    (`IngestService.DeltaStopAfterConsecutiveKnown` = 100) → gallery-dl **`--abort N`**: stop a target after N
+    consecutive already-archived items. Sources list newest-first, so what's new front-loads. It also **skips
+    the store walk** in `GetKnownItemsAsync` (see the skip-archive bullet).
+  - **`Full` (the sync sheet's "Full sync", and every first import)** is the old exhaustive crawl, and the
+    only thing that sees what a delta structurally can't: a **section added at the source**, an item that
+    isn't near the front of the listing (a board whose sort order isn't newest-first), or a **blob missing
+    from disk**. Keep it reachable — a delta-only sync would silently stop finding those.
+  - **Sections MUST be crawled as their own targets, and that is load-bearing.** gallery-dl's Pinterest board
+    extractor chains a board's sections **after every one of its pins** (`itertools.chain(pins, sections)`),
+    i.e. beyond where `--abort` stops — so a naive early stop on the board URL would *silently stop syncing
+    every folder*. So `LibraryService.GetSyncTargetsAsync` enumerates board URL + one target per known
+    section, built by `Connectors/PinterestUrls.SectionUrl` as `<boardUrl>/id:<sectionId>` — byte-identical
+    to the URL gallery-dl builds for itself, so it resolves to the same extractor. Which sections exist comes
+    from **indexed provenance** (`Asset.SourceBoardId` + `SourceSectionId`, each attributed to the source
+    board it actually came from, so a merged board asks each source only for its own) plus the folder rows'
+    own `SourceSectionId` when the board has exactly ONE source (unambiguous attribution — that covers a
+    folder whose pins predate provenance or are all deleted). A delta therefore also passes
+    `IncludeSubCollections = false` (`-o extractor.pinterest.sections=false`), or a board short enough not to
+    trigger the stop would crawl its sections twice.
+  - **One gallery-dl process for the whole run.** `ISourceConnector.DownloadAsync` gained an
+    `IReadOnlyList<string> urls` overload (default implementation: run them in order, so existing connectors
+    and test fakes are untouched); `PinterestConnector` overrides it to pass every target to one invocation.
+    gallery-dl runs each input URL as its own extractor — **its own `--abort` budget**, and an exhausted or
+    404ing one moves on to the next — so a board and its 12 sections cost one process start and one cookie
+    extraction, not thirteen. It must be **`--abort`, never `--terminate`**: terminate takes the rest of the
+    run down with it, so one exhausted board would cancel every section after it.
+  - **The whole project syncs from the Library's ＋ menu** ("Sync all boards" → `LibraryViewModel.SyncAllAsync`
+    over `LibraryService.GetProjectSyncPlanAsync` — every top-level board that has a URL'd source, each with
+    its own targets, in ONE query pass). It runs the boards **sequentially** (they share one pipeline and one
+    `ImportStatus`; concurrent boards would just multiply the request rate at the source) and **a board that
+    fails never stops the rest** — failures are collected and named in the closing toast, since not having to
+    visit boards one at a time is the entire point. The shared `ImportStatus` is re-`Begin`-ed per board so
+    each card lights up in turn and an open Board screen still streams its pins, and the run's own
+    "syncing X (3 of 12)" rides in the Library's `CrumbTitle` (the grid has no top bar). **The boards still to
+    come are marked queued** (`BoardCardRef.IsQueued` → `BoardCard.IsQueued`): the SAME accent status line as the
+    running board — one line, `BoardCard.HasStatus` = importing-or-queued, which is also what the metadata
+    line stands down for — but NOT the running `BusyBar`. **Colour says "this board belongs to the run",
+    motion says "it's this one's turn"**; a grid of animated strips would read as "everything is downloading
+    at once" and would leave a dozen indeterminate animations ticking for a queue that is by definition idle.
+    (Muted was tried and is wrong: it's the same class the normal metadata uses, so a queued card looked
+    exactly like an idle one.) The two states are mutually exclusive — a board that starts stops being
+    queued; one that finishes clears both, so only the boards genuinely still waiting stay marked. The `finally` clears the whole queue however the run ends, or boards it
+    never reached would sit there claiming to be waiting for a run that is over. Teardown keeps
+    `ImportAsync`'s ordering: `_importStatus.End()` **before** clearing `_selfImporting`, or the shared-status
+    watcher refreshes the grid a second time.
+  - Two gallery-dl behaviours the error handling depends on: an early stop raises `StopExtraction`, whose
+    **`code = 0`** — so an up-to-date delta is a *clean* exit and still reports "already up to date", not a
+    failure; and a **404 on one target of many is routine** (a section deleted at the source keeps 404ing
+    forever), so "board not found → it's private, pick your cookies" must not fire for it.
+    **The evidence that separates the two is `#` lines on stdout, NOT error lines**: gallery-dl prints
+    `# <path>` per already-archived item, so `skipped > 0` proves a listing was genuinely walked — the
+    credentials work and the archive is current, and any 404 alongside it is a target that has gone. Nothing
+    reached (`skipped == 0`) plus an error is the private-board/cookies case, at any target count. Counting
+    not-found *lines* against the target count was tried and is wrong: one failing target can log several,
+    which reads as "they all failed" and turns a healthy sync into a red failure toast. Same rule guards the
+    generic non-zero-exit throw, so a partial failure can't be swallowed as "up to date" either.
 - **The skip-archive is TARGET-aware and rides each pin's OWN provenance; import re-attaches orphans.**
   Two import-correctness rules that make re-import/sync actually repopulate a board:
   (1) `GetKnownItemsAsync(targetCollectionId)` pre-skips only pins **already held in the target board's
@@ -354,8 +429,11 @@ Concepts that span multiple files:
   the **global tombstone blacklist** (which needs no links at all — a deleted pin never re-fetches even
   after its board went away) — NOT pins merely held in some *other* board, so a live pin missing from the
   target is downloaded and upserted-by-pin instead of skipped globally; a held pin whose blob is
-  missing/torn on disk is deliberately not emitted, so a Sync repairs lost files; a legacy row without
-  provenance re-downloads once and self-heals. (2) After the crawl, `ReattachOrphansAsync` links
+  missing/torn on disk is deliberately not emitted **on a `Full` run**, so a full Sync repairs lost files —
+  that check is ONE walk of the whole store (enumerate `FileInfo`s, never a stat per pin: the length rides
+  along with the directory entry, and the store can be on a NAS), which is precisely why a `Delta` skips it
+  and trusts the index; a missing blob still announces itself on its own tile with a one-click re-download.
+  A legacy row without provenance re-downloads once and self-heals. (2) After the crawl, `ReattachOrphansAsync` links
   **orphaned live assets** (no `CollectionItem` at all) whose `SourceBoardId` matches an imported/recorded
   source — indexed provenance, never a sidecar re-parse, and it works even when the source board is now
   EMPTY at the origin — into the target, re-filing a sectioned orphan into its section folder when that

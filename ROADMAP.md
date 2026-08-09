@@ -4,16 +4,18 @@ What's planned, in rough priority order. **Forward-looking only** — completed 
 and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md` for storage/sync and
 `DESIGN.md` for UI). Keep entries short, and delete them when they land.
 
-## Now — user-reported pain (2026-07-27), highest priority
-
-- **Board Sync is far too slow.** Today a Sync re-runs the full gallery-dl crawl per source: every pin
-  is enumerated page-by-page even though nearly all are pre-skipped by the skip-archive, so wall time
-  scales with board size instead of with what's new. Needs a real incremental design — e.g. stop the
-  crawl once it hits N consecutive already-known pins (newest-first listing means new pins front-load),
-  and/or a listing-only pass that fetches nothing until it knows what's missing — not a per-item check
-  of the entire board every time.
-
 ## Next (unordered, pick by need)
+
+- **Sync follow-ups** (the delta landed — `ImportMode.Delta`, see CLAUDE.md's sync bullet):
+  - **Tune the crawl's politeness for listing requests.** What's left of a delta's cost is
+    `--sleep-request` (1–2s) per listing page — the same interval used between *downloads*. Listing is
+    far cheaper on the source than fetching media, so a shorter interval for extraction alone would cut
+    a delta again. It's a ban-risk call, so it wants the user's say-so, and probably a Settings knob.
+  - **Expose the stop budget** (`DeltaStopAfterConsecutiveKnown`, currently a constant 100) if a board's
+    sort order ever turns out to hide new pins deeper than that.
+  - **Discover new sections without a full crawl.** A delta only knows the sections it already holds
+    pins/folders for; a section added at the source needs "Full sync". A cheap board-metadata-only pass
+    (gallery-dl has no "list sections" mode today) would close it.
 
 - **Emit an op when a refetch returns identical bytes.** `IngestService.RefetchAsync` deliberately
   writes no op when the re-downloaded bytes match (`asset.Sha256 != oldSha` gate). Delta replication
@@ -39,6 +41,13 @@ and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md
   HTML — re-fetch via gallery-dl by pin id if this ever shows up in practice.
 - **Lightbox polish**: cap the decode width (never upscale), pause the band GIF while occluded, busy
   spinner on the GIF path, gallery entry, let `MasonryPacker` own the stacked-vs-wide predicate.
+- **Fold `SyncAllAsync` and `ImportAsync` onto one runner.** They now duplicate the transcript header, the
+  `Progress<IngestProgress>` body, and the `_importStatus.Begin/End` + `_selfImporting` teardown ordering —
+  an ordering that is load-bearing (it decides whether the grid refreshes twice) and currently stated in two
+  comments. One `RunImportAsync(targets, targetId, mode, card, header)` would carry it once.
+- **A separator component (or token).** `<Border Height="1" Background="{DynamicResource LineBrush}"
+  Margin="0,2"/>` is now copy-pasted across four sheets; the brush is a token but the metrics aren't, so a
+  spacing-scale change won't reach them.
 - **Shell-chrome cleanups**: shared card-filter helper (trim→filter→crumb-count is triplicated),
   shared `Debouncer`, `Plural(n, noun)` formatter, atomic `JsonFile.TryLoad/Save`, per-property
   observable `UiSettings`, a `FloatingBarClearance` token for the hardcoded ~96px insets, a single
@@ -46,7 +55,8 @@ and `CHANGELOG.md`; how the app works lives in `CLAUDE.md` (with `SYNC-DESIGN.md
 - **Popup-rooted UI doesn't inherit the interface-scale transform** (ComboBox dropdowns, tooltips at
   non-100% scale) — needs a popup-scaling strategy.
 - **macOS trash implementation** for `IFileRecycler` (recycle is Windows-only; elsewhere deletes are
-  permanent and the wording says so).
+  permanent and the wording says so). Only Apple Silicon is a released target, so this is one
+  implementation, not a portability matrix.
 - **`.editorconfig`** enforcing the C# conventions in CLAUDE.md.
 - Perf notes to revisit at scale: `LibraryService.GetCollectionsAsync` N+1 per board;
   `GifDecoder.Snapshot` double-encodes per frame; gallery-dl archive re-probes never-ingested items
