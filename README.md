@@ -4,10 +4,20 @@
 
 # Hoard
 
-**Keep your Pinterest boards, on your own disk.**
+**Back up your Pinterest boards locally, on your own disk.**
+
+I often found myself wanting a way to keep things I'd saved on Pinterest downloaded locally - this
+was already technically possible by downloading the pins manually, but that didn't seem very fun...
+And I kept getting reminded of this need whenever I'd find a pin got deleted, reported and removed,
+and so on. So I looked around if there were any tools out there that already existed for doing this,
+and it wassurprisingly barren. The only thing out there was **[gallery-dl](https://github.com/mikf/gallery-dl)**,
+but using a CLI tool for an otherwise art/design oriented experience didn't quite feel right. I also
+coincidentally had been experimenting with trying agentic workflows for creating useful side projects
+and tools, so I started hacking away at this problem in my spare time - and Hoard was born 🙂
 
 Hoard downloads the boards you've saved — the full-size images, the titles, the folder structure —
-into a plain folder you own, and gives you a fast local app to browse them in.
+into a plain folder you own, and lets you browse them locally, all through a nice-looking performant
+desktop app.
 
 [![CI](https://github.com/adanub/Hoard/actions/workflows/ci.yml/badge.svg)](https://github.com/adanub/Hoard/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/adanub/Hoard?display_name=tag&sort=semver)](https://github.com/adanub/Hoard/releases/latest)
@@ -15,16 +25,6 @@ into a plain folder you own, and gives you a fast local app to browse them in.
 </div>
 
 ---
-
-## Why
-
-Pins rot. Boards get deleted, accounts get locked, links go dead, and the one image you actually wanted
-turns out to have been a re-pin of something that vanished in 2019. Hoard takes a copy while it's still
-there.
-
-What you end up with is **not** a proprietary library. It's a folder of images and an append-only log of
-what happened to them. You can point Hoard at it, back it up with any tool you like, or ignore Hoard
-entirely and open the files in Explorer or Finder.
 
 ## What it does
 
@@ -47,8 +47,7 @@ Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releas
 | Windows (x64) | `Hoard-<version>-win-x64.zip` |
 | macOS (Apple Silicon) | `Hoard-<version>-osx-arm64.zip` |
 
-Both are self-contained — no .NET install needed — and ship with the downloader bundled. Each asset has a
-`.sha256` beside it and a build-provenance attestation.
+Both are self-contained — no .NET install needed — and ship with the downloader bundled.
 
 > **macOS:** the app is ad-hoc signed, not notarised, so Gatekeeper will object the first time.
 > Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/Hoard.app`.
@@ -189,8 +188,6 @@ gallery-dl with `pwsh tools/fetch-gallery-dl.ps1` before assuming it's Hoard.
   larger project without it. Binaries come from [gdl-org/builds](https://github.com/gdl-org/builds).
 - **[Avalonia](https://avaloniaui.net)** for the UI toolkit.
 - **[Lucide](https://lucide.dev)** (ISC) for the icons, embedded as geometries.
-- **[shadcn/ui](https://ui.shadcn.com)** as the design reference — copied in spirit, not taken as a
-  dependency.
 
 Hoard is an independent tool. It isn't affiliated with, endorsed by, or connected to Pinterest in any way,
 and it only ever fetches content the account you're signed in as can already see.
