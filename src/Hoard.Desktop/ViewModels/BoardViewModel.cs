@@ -521,16 +521,31 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
     private void CloseSyncSheet() => IsSyncSheetOpen = false;
 
     /// <summary>
-    /// Re-fetch this board from each of its sources: the standard import pipeline run per source, so it pulls in
+    /// The everyday sync: an <see cref="ImportMode.Delta"/> crawl that stops at each target once it reaches
+    /// images already held, so it costs a page or two per target instead of walking the whole board.
+    /// </summary>
+    [RelayCommand]
+    private Task SyncAsync() => RunSyncAsync(ImportMode.Delta);
+
+    /// <summary>
+    /// The exhaustive sync: walks every source board to its end and lets the connector find its sections
+    /// itself. Slower by the size of the board, and the way to pick up what a delta structurally can't see —
+    /// a folder added at the source since the last full crawl, an image that isn't near the front of the
+    /// board's listing, or a file gone missing from the store.
+    /// </summary>
+    [RelayCommand]
+    private Task FullSyncAsync() => RunSyncAsync(ImportMode.Full);
+
+    /// <summary>
+    /// Re-fetch this board from each of its sources: the standard import pipeline, so it pulls in
     /// anything missing/new (an interrupted import, lost items, or items the source gained later) while skipping
     /// already-held items and <b>tombstoned (blacklisted) ones</b> — those are never resurrected. Progress flows
     /// through the shared <see cref="ImportStatus"/>, so the inline strip shows it and new pins stream in live;
     /// the grid reloads when it finishes.
     /// </summary>
-    [RelayCommand]
-    private async Task SyncAsync()
+    private async Task RunSyncAsync(ImportMode mode)
     {
-        if (_ingest is null || _collectionId is not int boardId || _sourceUrls.Count == 0) return;
+        if (_ingest is null || _library is null || _collectionId is not int boardId || _sourceUrls.Count == 0) return;
 
         // The whole pipeline shares one ImportStatus; starting a sync while a Library import (or another sync) is
         // mid-flight would clobber its live count + streamed pins. Refuse rather than overlap.
@@ -561,7 +576,10 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
         var progress = new Progress<IngestProgress>(p =>
         {
             if (p.Phase is IngestPhase.Downloading or IngestPhase.Storing)
-                _importStatus.Text = $"Syncing… {processed + p.Processed} so far";
+            {
+                processed = p.Processed; // the whole run is one import, so this is the running total
+                _importStatus.Text = $"Syncing… {processed} so far";
+            }
             if (p.ImportedAsset is { } asset)
             {
                 _importStatus.LastImportedCollectionId = p.ImportedIntoCollectionId; // set first — read on the pin change
@@ -569,23 +587,23 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
             }
         });
 
-        var newCount = 0;
         // Observe the dispose token (like ImportAsync/RefetchTile do) so backing out of the board mid-sync stops the
         // crawl instead of the still-running state machine keeping this whole disposed board graph (Assets + every
         // tile VM) rooted for the duration — the sync belongs to the screen, not the app.
         var ct = _disposeCts.Token;
         try
         {
-            foreach (var url in _sourceUrls)
-            {
-                ct.ThrowIfCancellationRequested();
-                var result = await _ingest.ImportAsync(url, options, progress, boardId, ct);
-                newCount += result.NewAssets;
-                processed += result.TotalItems;
-            }
-            _toasts.Show(newCount == 0
+            // A delta crawls each already-known section as a target of its own (an early stop never reaches
+            // the ones the connector would append after a board's pins); a full crawl walks the source boards
+            // and lets the connector discover their sections itself, which is what finds NEW ones.
+            var targets = mode == ImportMode.Delta
+                ? await _library.GetSyncTargetsAsync(boardId, ct)
+                : _sourceUrls;
+
+            var result = await _ingest.ImportAsync(targets, options, progress, boardId, mode, ct);
+            _toasts.Show(result.NewAssets == 0
                 ? "Sync complete — already up to date."
-                : $"Synced — {newCount} new image(s).");
+                : $"Synced — {result.NewAssets} new image(s).");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

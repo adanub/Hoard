@@ -285,7 +285,7 @@ public class BoardMergeTests : IDisposable
     }
 
     [Fact]
-    public async Task Sync_re_downloads_a_held_pin_whose_blob_went_missing()
+    public async Task A_full_sync_re_downloads_a_held_pin_whose_blob_went_missing()
     {
         var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });
         var boardId = await ingest.CreateBoardAsync("My board", "https://pinterest.com/jane/animals/");
@@ -308,8 +308,61 @@ public class BoardMergeTests : IDisposable
             Assert.Equal(1, await db2.Assets.CountAsync()); // repaired in place, not duplicated
     }
 
+    /// <summary>
+    /// A "sync all" plan is captured up front while the grid stays interactive, so a board can be deleted
+    /// between planning and its turn. Importing into a target that no longer exists must fail loudly: the
+    /// silent fallback is the auto-folder path, which would mint a NEW board per source and re-download the
+    /// lot (the skip-archive is scoped to the subtree of an id that isn't there any more).
+    /// </summary>
     [Fact]
-    public async Task Sync_re_downloads_a_held_pin_whose_blob_is_truncated()
+    public async Task Importing_into_a_board_that_no_longer_exists_fails_instead_of_creating_one()
+    {
+        var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });
+        var boardId = await ingest.CreateBoardAsync("My board", "https://pinterest.com/jane/animals/");
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            db.Collections.Remove(await db.Collections.SingleAsync(c => c.Id == boardId));
+            await db.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ingest.ImportAsync("https://pinterest.com/jane/animals/", new ConnectorOptions(), null, boardId));
+
+        await using var after = _dbFactory.CreateDbContext();
+        Assert.Empty(await after.Collections.ToListAsync()); // no board conjured from the crawl
+        Assert.Empty(await after.Assets.ToListAsync());
+    }
+
+    /// <summary>
+    /// The counterpart to the two tests above, and the cost of the everyday delta being cheap: verifying held
+    /// pins against disk means walking the whole store, which is what a delta exists to avoid — so it trusts
+    /// the index instead, and repairing a lost file is the job of "Full sync" (or the tile's own re-download).
+    /// Pinned so the split stays a decision rather than a regression.
+    /// </summary>
+    [Fact]
+    public async Task A_delta_sync_trusts_the_index_and_leaves_a_missing_blob_to_a_full_sync()
+    {
+        var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });
+        var boardId = await ingest.CreateBoardAsync("My board", "https://pinterest.com/jane/animals/");
+        await ingest.ImportAsync("https://pinterest.com/jane/animals/", new ConnectorOptions(), null, boardId);
+
+        string relativePath;
+        await using (var db = _dbFactory.CreateDbContext())
+            relativePath = (await db.Assets.SingleAsync()).RelativePath;
+        File.Delete(_store.GetAbsolutePath(relativePath));
+
+        var spy = Connector("board-A", "Animals", "a1");
+        await new IngestService(_dbFactory, _store, new[] { spy }).ImportAsync(
+            ["https://pinterest.com/jane/animals/"], new ConnectorOptions(), null, boardId, ImportMode.Delta);
+
+        // Pre-skipped despite the hole on disk — and the crawl was told to stop early, which is the whole point.
+        Assert.Contains(spy.LastOptions!.KnownItems!, k => k.SourceId == "a1");
+        Assert.NotNull(spy.LastOptions!.StopAfterConsecutiveKnown);
+        Assert.False(spy.LastOptions!.IncludeSubCollections);
+    }
+
+    [Fact]
+    public async Task A_full_sync_re_downloads_a_held_pin_whose_blob_is_truncated()
     {
         var ingest = new IngestService(_dbFactory, _store, new[] { Connector("board-A", "Animals", "a1") });
         var boardId = await ingest.CreateBoardAsync("My board", "https://pinterest.com/jane/animals/");

@@ -259,7 +259,7 @@
             <StackPanel Margin="24" Spacing="16">
                 <TextBlock Classes="h2" Text="Sync this board"/>
                 <TextBlock Classes="muted" TextWrapping="Wrap"
-                           Text="Re-fetch this board from its source board(s): pulls in anything missing or newly added, and skips items you've deleted."/>
+                           Text="Re-fetch this board from its source board(s): pulls in anything newly added, and skips items you've deleted. It stops as soon as it reaches images you already have, so it only looks at what's new."/>
                 <StackPanel Spacing="6">
                     <TextBlock Classes="muted" Text="Cookies (for private boards)"/>
                     <ComboBox ItemsSource="{Binding CookieBrowsers}" SelectedItem="{Binding SyncCookiesBrowser}"
@@ -270,6 +270,15 @@
                             Command="{Binding CloseSyncSheetCommand}"/>
                     <Button Theme="{StaticResource HoardButton}" Content="{Binding SyncButtonText}"
                             Command="{Binding SyncCommand}"/>
+                </ctrl:FlexWrapPanel>
+                <!-- The exhaustive crawl: what finds a folder added at the source, or an image that isn't
+                     near the front of the board. Slow by the size of the board, so it's the secondary action. -->
+                <Border Height="1" Background="{DynamicResource LineBrush}" Margin="0,2"/>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Full sync"
+                            Command="{Binding FullSyncCommand}"/>
+                    <TextBlock Classes="muted" TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="300"
+                               Text="Walks every source board to the end. Slower — use it to pick up new folders or repair missing files."/>
                 </ctrl:FlexWrapPanel>
             </StackPanel>
         </ctrl:SheetHost>

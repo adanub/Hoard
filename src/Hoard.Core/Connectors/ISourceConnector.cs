@@ -29,6 +29,27 @@ public sealed record ConnectorOptions
     /// must re-fetch one item regardless of what's recorded).
     /// </summary>
     public IReadOnlyCollection<KnownSourceItem>? KnownItems { get; init; }
+
+    /// <summary>
+    /// Stop crawling a target once this many <b>consecutive</b> items have been pre-skipped as already
+    /// known, instead of enumerating it to the end. Sources list newest-first, so what's new front-loads
+    /// and a run of known items means we've reached the part already archived — the difference between a
+    /// re-sync costing one page and costing the whole board. A fresh item resets the run. Null (the
+    /// default) enumerates everything, which is what a first import and a full re-sync want.
+    /// <para>The trade: a target whose listing <i>isn't</i> newest-first (a source-side custom sort) can
+    /// hide new items behind a longer run of known ones, so this belongs to an incremental sync — never
+    /// to the crawl that has to be exhaustive.</para>
+    /// </summary>
+    public int? StopAfterConsecutiveKnown { get; init; }
+
+    /// <summary>
+    /// Whether the connector should follow a target's <i>sub-collections</i> (for Pinterest, a board's
+    /// sections) on its own. Off when the caller passes each sub-collection as its own crawl target —
+    /// which is what an incremental sync does, because a connector that appends sub-collections after
+    /// the parent's items would have them cut off by <see cref="StopAfterConsecutiveKnown"/>. A connector
+    /// with no such concept ignores this.
+    /// </summary>
+    public bool IncludeSubCollections { get; init; } = true;
 }
 
 /// <summary>One source item the library already knows about, used to rebuild a connector's skip-archive.</summary>
@@ -109,4 +130,27 @@ public interface ISourceConnector
         IProgress<string>? log,
         Func<SourceMediaItem, CancellationToken, Task> onItem,
         CancellationToken ct);
+
+    /// <summary>
+    /// Crawl <b>several</b> targets in one run. A board and each of its sub-collections are separate
+    /// targets, so a sync of one board is one call — and a connector that pays a fixed per-run cost
+    /// (spawning a tool, lifting cookies) pays it once instead of once per target. Each target is
+    /// independent: its own <see cref="ConnectorOptions.StopAfterConsecutiveKnown"/> run, and one target
+    /// finding nothing never stops the next.
+    /// <para>The default implementation just runs them in order, which is exactly right for a connector
+    /// with no per-run overhead to amortise.</para>
+    /// </summary>
+    async Task DownloadAsync(
+        IReadOnlyList<string> urls,
+        ConnectorOptions options,
+        IProgress<string>? log,
+        Func<SourceMediaItem, CancellationToken, Task> onItem,
+        CancellationToken ct)
+    {
+        foreach (var url in urls)
+        {
+            ct.ThrowIfCancellationRequested();
+            await DownloadAsync(url, options, log, onItem, ct).ConfigureAwait(false);
+        }
+    }
 }

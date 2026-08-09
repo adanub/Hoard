@@ -1,3 +1,4 @@
+using Hoard.Core.Connectors;
 using Hoard.Core.Domain;
 using Hoard.Core.Metadata;
 using Hoard.Core.Storage;
@@ -18,6 +19,9 @@ public sealed record AssetDetail(
     IReadOnlyList<string> Boards, bool IsDeleted = false, string? DeletionNote = null);
 
 public sealed record CollectionView(int Id, string Name, int ItemCount, long SizeBytes);
+
+/// <summary>One board's incremental-sync plan: the crawl targets for it, and the name to show while it runs.</summary>
+public sealed record BoardSyncPlan(int CollectionId, string Name, IReadOnlyList<string> Targets);
 
 /// <summary>One Pinterest source board merged into a local board (a row in the board Edit popup's source list).
 /// <paramref name="ImageCount"/> is the board's live images attributed to this source (what un-merging with its
@@ -140,6 +144,113 @@ public sealed class LibraryService
             .Select(s => s.SourceUrl)
             .Distinct()
             .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Every URL an <b>incremental</b> sync of this board has to crawl: each source board, then each
+    /// <i>section</i> of it the board already holds pins from, as its own target.
+    /// <para>Sections need their own targets because a connector that appends them after all of a board's own
+    /// pins puts them beyond where an early stop lands — crawl only the board URL and a delta would silently
+    /// stop syncing every folder. Which sections exist is read from the pins' own indexed provenance
+    /// (<see cref="Domain.Asset.SourceBoardId"/> + <see cref="Domain.Asset.SourceSectionId"/>), never a
+    /// sidecar re-parse, and each is attributed to the source board it actually came from — so a board
+    /// merging several sources asks each source only for its own sections.</para>
+    /// <para>This is by construction the set of sections seen <i>so far</i>: a section added at the source
+    /// since the last full crawl exists neither as a folder nor on a pin here, so it gets no target.
+    /// Discovering those is exactly what <see cref="Ingest.ImportMode.Full"/> is for.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetSyncTargetsAsync(int collectionId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await BuildSyncTargetsAsync(db, collectionId, ct);
+    }
+
+    /// <summary>
+    /// The sync plan for the <b>whole project</b>: every top-level board that has something to crawl, with
+    /// its targets, so a "sync everything" run knows its whole shape up front — and a board with no URL'd
+    /// source (a purely local one) simply isn't in the list rather than being a no-op run.
+    /// <para>It still costs a handful of queries per board (sources, subtree, sections); what it saves is a
+    /// <see cref="HoardDbContext"/> per board, not the round trips. That's fine against a local SQLite index
+    /// at project scale — if a project ever holds boards in the hundreds, batch the per-board queries before
+    /// reaching for anything cleverer.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<BoardSyncPlan>> GetProjectSyncPlanAsync(CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var boards = await db.Collections
+            .Where(c => c.ParentId == null && c.Sources.Any(s => s.SourceUrl != ""))
+            .OrderBy(c => c.Id)
+            .Select(c => new { c.Id, Name = c.DisplayName ?? c.Name })
+            .ToListAsync(ct);
+
+        var plans = new List<BoardSyncPlan>();
+        foreach (var board in boards)
+        {
+            ct.ThrowIfCancellationRequested();
+            var targets = await BuildSyncTargetsAsync(db, board.Id, ct);
+            if (targets.Count > 0) plans.Add(new BoardSyncPlan(board.Id, board.Name, targets));
+        }
+        return plans;
+    }
+
+    private static async Task<IReadOnlyList<string>> BuildSyncTargetsAsync(
+        HoardDbContext db, int collectionId, CancellationToken ct)
+    {
+        var sources = await db.CollectionSources
+            .Where(s => s.CollectionId == collectionId && s.SourceUrl != "")
+            .OrderBy(s => s.Id)
+            .Select(s => new { s.SourceUrl, s.SourceConnector, s.SourceBoardId })
+            .ToListAsync(ct);
+        if (sources.Count == 0) return [];
+
+        var subtreeIds = await CollectionTree.SubtreeIdsAsync(db, collectionId, ct);
+        var sections = (await db.CollectionItems
+                .Where(ci => subtreeIds.Contains(ci.CollectionId)
+                             && ci.Asset.DeletedAt == null
+                             && ci.Asset.SourceBoardId != null
+                             && ci.Asset.SourceSectionId != null)
+                .Select(ci => new { Board = ci.Asset.SourceBoardId!, Section = ci.Asset.SourceSectionId! })
+                .Distinct()
+                .ToListAsync(ct))
+            .Select(s => (s.Board, s.Section))
+            .ToHashSet();
+
+        // The folders themselves are the other half of the answer: one whose pins predate provenance, or
+        // whose pins are all deleted, is still a folder that can gain new items. A folder records only its
+        // section id, not which source board it came from — so this only applies where that's unambiguous.
+        // "Unambiguous" counts ALL of the board's sources, not just the crawlable ones: a second source with
+        // no URL still contributes sections, and attributing those to the one URL'd board would build targets
+        // that 404 on every sync.
+        var totalSources = await db.CollectionSources.CountAsync(s => s.CollectionId == collectionId, ct);
+        if (totalSources == 1 && sources.Count == 1 && sources[0].SourceBoardId is { } onlyBoard)
+        {
+            foreach (var sectionId in await db.Collections
+                         .Where(c => subtreeIds.Contains(c.Id) && c.SourceSectionId != null)
+                         .Select(c => c.SourceSectionId!)
+                         .Distinct()
+                         .ToListAsync(ct))
+                sections.Add((onlyBoard, sectionId));
+        }
+
+        // Distinct, order-preserving: two sources sharing a URL (or a section reachable from both) is one
+        // target, and re-crawling it twice in a run would only re-walk the same pages.
+        var targets = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string? url)
+        {
+            if (!string.IsNullOrWhiteSpace(url) && seen.Add(url)) targets.Add(url);
+        }
+
+        foreach (var source in sources)
+        {
+            Add(source.SourceUrl);
+            // Sub-collection URLs are connector-specific shapes; a second connector adds its own case here.
+            if (source.SourceConnector != PinterestSidecarParser.ConnectorName || source.SourceBoardId is null)
+                continue;
+            foreach (var (_, sectionId) in sections.Where(s => s.Board == source.SourceBoardId).OrderBy(s => s.Section, StringComparer.Ordinal))
+                Add(PinterestUrls.SectionUrl(source.SourceUrl, sectionId));
+        }
+        return targets;
     }
 
     /// <summary>The content hashes of a board's assets <b>across its whole subtree</b> (sections / sub-folders) —

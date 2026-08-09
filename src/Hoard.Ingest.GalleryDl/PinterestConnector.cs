@@ -39,10 +39,22 @@ public sealed partial class PinterestConnector : ISourceConnector
            && (u.Host.Contains("pinterest.", StringComparison.OrdinalIgnoreCase)
                || u.Host.Equals("pin.it", StringComparison.OrdinalIgnoreCase));
 
-    public async Task DownloadAsync(
+    public Task DownloadAsync(
         string url, ConnectorOptions options, IProgress<string>? log,
         Func<SourceMediaItem, CancellationToken, Task> onItem, CancellationToken ct)
+        => DownloadAsync([url], options, log, onItem, ct);
+
+    /// <summary>
+    /// Crawl every target in ONE gallery-dl process. gallery-dl runs each input URL as its own extractor —
+    /// its own early-stop budget, and an empty or failing one never stops the next — so a board and its
+    /// sections cost one process start and one cookie extraction between them rather than one each.
+    /// </summary>
+    public async Task DownloadAsync(
+        IReadOnlyList<string> urls, ConnectorOptions options, IProgress<string>? log,
+        Func<SourceMediaItem, CancellationToken, Task> onItem, CancellationToken ct)
     {
+        if (urls.Count == 0) return;
+
         var tempDir = Path.Combine(Path.GetTempPath(), "hoard-dl", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
 
@@ -55,38 +67,36 @@ public sealed partial class PinterestConnector : ISourceConnector
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
-            psi.ArgumentList.Add("--write-metadata");           // emit <file>.json sidecars
-            psi.ArgumentList.Add("--directory");                // flat output; we group by sidecar metadata, not path
-            psi.ArgumentList.Add(tempDir);
-            AddCookieArgs(psi, options);
-            AddRateLimitArgs(psi, options.RateLimit);
-            if (options.MaxItems is int max and > 0)
-            {
-                psi.ArgumentList.Add("--range");
-                psi.ArgumentList.Add($"1-{max}");
-            }
-            if (!string.IsNullOrWhiteSpace(options.DownloadArchivePath))
-            {
-                // Rebuild the skip-archive from what the library actually tracks (the single source of
-                // truth) so it can't silently drift, then let gallery-dl skip those and append new ones.
-                if (options.KnownItems is { } known)
-                    RegenerateArchive(options.DownloadArchivePath, known);
+            // Rebuild the skip-archive from what the library actually tracks (the single source of truth)
+            // so it can't silently drift, then let gallery-dl skip those and append new ones.
+            if (!string.IsNullOrWhiteSpace(options.DownloadArchivePath) && options.KnownItems is { } known)
+                RegenerateArchive(options.DownloadArchivePath, known);
+            foreach (var arg in BuildArguments(tempDir, urls, options))
+                psi.ArgumentList.Add(arg);
 
-                psi.ArgumentList.Add("--download-archive");
-                psi.ArgumentList.Add(options.DownloadArchivePath);
-            }
-            psi.ArgumentList.Add(url);
+            // Log every target, not just a count: "did this sync even ask for that folder?" is the first
+            // question when a delta looks like it missed something.
+            _logger.LogInformation(
+                "Running gallery-dl for {Count} target(s) into {TempDir}{Stop}: {Targets}",
+                urls.Count, tempDir,
+                options.StopAfterConsecutiveKnown is int n ? $", stopping after {n} consecutive known" : "",
+                string.Join(", ", urls));
 
-            _logger.LogInformation("Running gallery-dl for {Url} into {TempDir}", url, tempDir);
-
-            // Keep a rolling tail of stderr so a failure can report *why*, not just a number.
+            // Keep a rolling tail of stderr so a failure can report *why*, not just a number. The
+            // not-found count is kept separately and UNCAPPED: it's compared against the number of targets,
+            // which a ten-line tail couldn't answer for a board with more sections than that.
             var errorTail = new Queue<string>();
+            var notFound = 0;
+            var skipped = 0;
             using var process = new Process { StartInfo = psi };
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data is null) return;
                 _logger.LogInformation("gallery-dl: {Line}", e.Data);
                 log?.Report(e.Data);
+                // gallery-dl prints "# <path>" for every item it skipped as already-archived. That's the
+                // proof a target's listing was actually reachable — see the diagnosis below.
+                if (e.Data.StartsWith('#')) skipped++;
             };
             process.ErrorDataReceived += (_, e) =>
             {
@@ -95,6 +105,7 @@ public sealed partial class PinterestConnector : ISourceConnector
                 log?.Report(e.Data);
                 errorTail.Enqueue(e.Data);
                 while (errorTail.Count > 10) errorTail.Dequeue();
+                if (IsNotFound(e.Data)) notFound++;
             };
 
             try
@@ -103,8 +114,12 @@ public sealed partial class PinterestConnector : ISourceConnector
             }
             catch (Exception ex)
             {
+                // Name the path we actually looked at and the way to fix it: this is what a clone that never
+                // fetched the binary hits, and "is it installed?" sends you looking in the wrong places.
                 throw new InvalidOperationException(
-                    $"Could not start gallery-dl at '{_galleryDlPath}'. Is it bundled/installed?", ex);
+                    $"Couldn't start the downloader (gallery-dl), looked for it at '{_galleryDlPath}'. " +
+                    "It's bundled next to the app in a release; running from source, building fetches it — " +
+                    "or run tools/fetch-gallery-dl.ps1 to fetch it by hand.", ex);
             }
 
             process.BeginOutputReadLine();
@@ -125,34 +140,53 @@ public sealed partial class PinterestConnector : ISourceConnector
             await exitTask.ConfigureAwait(false);
             count += await ProcessNewAsync(tempDir, handled, onItem, log, ct).ConfigureAwait(false);
 
-            _logger.LogInformation("gallery-dl exit {Code}; produced {Count} media items for {Url}",
-                process.ExitCode, count, url);
+            _logger.LogInformation("gallery-dl exit {Code}; produced {Count} media items for {Count2} target(s)",
+                process.ExitCode, count, urls.Count);
 
             if (count > 0) return;
 
             // Nothing came back. Distinguish a real dead-end from "everything was already archived".
             var detail = errorTail.Count > 0 ? " " + string.Join(" | ", errorTail) : "";
 
-            // A "not found" on a board that exists almost always means it's private and the request
-            // was unauthenticated — point at the cookies, which is the real fix.
-            var looksPrivate = errorTail.Any(l =>
-                l.Contains("NotFoundError", StringComparison.OrdinalIgnoreCase) ||
-                l.Contains("could not be found", StringComparison.OrdinalIgnoreCase));
-            if (looksPrivate)
+            // A "not found" on a board that exists almost always means it's private and the request was
+            // unauthenticated — point at the cookies, which is the real fix. But a run crawls a board AND
+            // each of its sections, and a section deleted at the source 404s on every sync from then on: a
+            // sync that lost one folder must not report itself as a dead board.
+            //
+            // Which of the two it is can't be settled by counting error LINES against targets (one failing
+            // target can log several, which would read as "they all failed"). The reliable evidence is the
+            // opposite thing: a target we DID reach prints "# <path>" per already-archived item. So —
+            //   • skipped > 0  → at least one listing was walked, so the credentials work and the archive is
+            //                    current. Any not-found alongside that is a target that has gone, not a dead
+            //                    board: log it and report up to date.
+            //   • skipped == 0 → nothing was reachable at all. With an error to go with it, that's the
+            //                    private-board/cookies case, whatever the target count.
+            var reachedSomething = skipped > 0;
+            if (notFound > 0 && !reachedSomething)
                 throw new InvalidOperationException(
                     "Pinterest returned \"board not found\". If the board is private, select the browser " +
                     "you're logged into Pinterest with in the Cookies dropdown (Firefox-based browsers " +
                     "like Zen are supported)." + detail);
 
-            if (process.ExitCode != 0)
+            // A non-zero exit with nothing downloaded AND nothing skipped means the run achieved nothing —
+            // report it. If some targets were walked, the failure was partial and the archive is still current.
+            if (process.ExitCode != 0 && !reachedSomething)
                 throw new InvalidOperationException(
                     $"gallery-dl failed (exit {process.ExitCode}) and downloaded nothing.{detail}");
 
-            // Clean exit, no new files: with an archive in use this just means the board is already
-            // fully backed up — a normal, successful re-import, not an error.
+            // Nothing new: with an archive in use this just means the board is already fully backed up — a
+            // normal, successful re-import, not an error.
             if (!string.IsNullOrWhiteSpace(options.DownloadArchivePath))
             {
-                _logger.LogInformation("Nothing new for {Url}; already up to date.", url);
+                if (notFound > 0)
+                    _logger.LogWarning(
+                        "Some of the {Total} target(s) were not found — a section removed at the source? " +
+                        "The rest are up to date ({Skipped} item(s) already held).{Detail}",
+                        urls.Count, skipped, detail);
+                else
+                    _logger.LogInformation(
+                        "Nothing new across {Count} target(s); already up to date ({Skipped} already held).",
+                        urls.Count, skipped);
                 return;
             }
 
@@ -166,21 +200,76 @@ public sealed partial class PinterestConnector : ISourceConnector
         }
     }
 
-    private static void AddCookieArgs(ProcessStartInfo psi, ConnectorOptions options)
+    /// <summary>
+    /// The full gallery-dl command line for one run, as an ordered argument list — pure, so the flags that
+    /// decide how much of a board gets walked are unit-testable without spawning anything.
+    /// </summary>
+    internal static List<string> BuildArguments(string tempDir, IReadOnlyList<string> urls, ConnectorOptions options)
+    {
+        var args = new List<string>
+        {
+            "--write-metadata",  // emit <file>.json sidecars
+            "--directory",       // flat output; we group by sidecar metadata, not path
+            tempDir,
+        };
+        AddCookieArgs(args, options);
+        AddRateLimitArgs(args, options.RateLimit);
+
+        if (options.MaxItems is int max and > 0)
+        {
+            args.Add("--range");
+            args.Add($"1-{max}");
+        }
+
+        // Stop walking a target once this many consecutive items were skipped as already-archived. Scoped to
+        // the CURRENT extractor, so each input URL gets its own budget and an exhausted one simply moves on
+        // to the next target (that's --abort; --terminate would take the rest of the run down with it).
+        if (options.StopAfterConsecutiveKnown is int stopAfter and > 0)
+        {
+            args.Add("--abort");
+            args.Add(stopAfter.ToString(CultureInfo.InvariantCulture));
+        }
+
+        // gallery-dl chains a board's sections AFTER every one of its pins, so they sit beyond where --abort
+        // stops. When the caller is crawling each section as its own target, turn the board's own recursion
+        // off: without this a board short enough not to trigger the stop would crawl them twice.
+        if (!options.IncludeSubCollections)
+        {
+            args.Add("--option");
+            args.Add("extractor.pinterest.sections=false");
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.DownloadArchivePath))
+        {
+            args.Add("--download-archive");
+            args.Add(options.DownloadArchivePath);
+        }
+
+        // Targets last: gallery-dl runs each as its own extractor, in order.
+        args.AddRange(urls);
+        return args;
+    }
+
+    /// <summary>A gallery-dl error line reporting that a target doesn't exist (or isn't visible to us).</summary>
+    private static bool IsNotFound(string line)
+        => line.Contains("NotFoundError", StringComparison.OrdinalIgnoreCase)
+           || line.Contains("could not be found", StringComparison.OrdinalIgnoreCase);
+
+    private static void AddCookieArgs(List<string> args, ConnectorOptions options)
     {
         if (!string.IsNullOrWhiteSpace(options.CookiesFromBrowser))
         {
-            psi.ArgumentList.Add("--cookies-from-browser");
-            psi.ArgumentList.Add(options.CookiesFromBrowser);
+            args.Add("--cookies-from-browser");
+            args.Add(options.CookiesFromBrowser);
         }
         else if (!string.IsNullOrWhiteSpace(options.CookiesFile))
         {
-            psi.ArgumentList.Add("--cookies");
-            psi.ArgumentList.Add(options.CookiesFile);
+            args.Add("--cookies");
+            args.Add(options.CookiesFile);
         }
     }
 
-    private static void AddRateLimitArgs(ProcessStartInfo psi, RateLimitOptions rate)
+    private static void AddRateLimitArgs(List<string> args, RateLimitOptions rate)
     {
         // Emit "min-max" when there's jitter so gallery-dl waits a random time in that range per item
         // (a less robotic cadence); a plain value otherwise.
@@ -190,8 +279,8 @@ public sealed partial class PinterestConnector : ISourceConnector
             var value = jitter > 0
                 ? $"{seconds.ToString(CultureInfo.InvariantCulture)}-{(seconds + jitter).ToString(CultureInfo.InvariantCulture)}"
                 : seconds.ToString(CultureInfo.InvariantCulture);
-            psi.ArgumentList.Add(flag);
-            psi.ArgumentList.Add(value);
+            args.Add(flag);
+            args.Add(value);
         }
 
         AddSleep("--sleep-request", rate.RequestIntervalSeconds, rate.RequestIntervalJitterSeconds);
@@ -199,8 +288,8 @@ public sealed partial class PinterestConnector : ISourceConnector
         AddSleep("--sleep-429", rate.TooManyRequestsBackoffSeconds, jitter: 0);
         if (!string.IsNullOrWhiteSpace(rate.MaxRate))
         {
-            psi.ArgumentList.Add("--limit-rate");
-            psi.ArgumentList.Add(rate.MaxRate);
+            args.Add("--limit-rate");
+            args.Add(rate.MaxRate);
         }
     }
 

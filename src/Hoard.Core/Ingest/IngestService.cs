@@ -74,14 +74,42 @@ public sealed class IngestService
         return collection.Id;
     }
 
+    /// <summary>
+    /// How many consecutive already-held items a <see cref="ImportMode.Delta"/> crawl tolerates before it
+    /// stops walking a target. Sized in <i>pages</i> of the source listing rather than items: a few pages of
+    /// margin still costs seconds, and absorbs a source whose newest-first order is a little untidy (a
+    /// re-saved pin, a small manual re-order) without walking a board of thousands. Anything a delta can't
+    /// see this way is what a full sync is for.
+    /// </summary>
+    private const int DeltaStopAfterConsecutiveKnown = 100;
+
     /// <param name="targetCollectionId">When set, every imported pin is linked into this one board (the board
     /// the user chose/created), instead of auto-foldering by each pin's source board.</param>
-    public async Task<IngestResult> ImportAsync(
+    public Task<IngestResult> ImportAsync(
         string url, ConnectorOptions options, IProgress<IngestProgress>? progress,
         int? targetCollectionId = null, CancellationToken ct = default)
+        => ImportAsync([url], options, progress, targetCollectionId, ImportMode.Full, ct);
+
+    /// <summary>
+    /// Import <b>every</b> crawl target of one board in a single run — its source board(s) and, for a
+    /// <see cref="ImportMode.Delta"/> sync, each of their sections as its own target (see
+    /// <see cref="Library.LibraryService.GetSyncTargetsAsync"/>). One run, so the connector pays its
+    /// per-run cost once and every target lands in the same per-item pipeline, streaming and upserting
+    /// exactly as a single-URL import does.
+    /// </summary>
+    public async Task<IngestResult> ImportAsync(
+        IReadOnlyList<string> urls, ConnectorOptions options, IProgress<IngestProgress>? progress,
+        int? targetCollectionId, ImportMode mode, CancellationToken ct = default)
     {
-        var connector = _connectors.FirstOrDefault(c => c.CanHandle(url))
-            ?? throw new NotSupportedException($"No connector can handle '{url}'.");
+        if (urls.Count == 0) return new IngestResult(0, 0, 0, 0);
+
+        // One connector for the whole run: the targets are one board's sources and their sections, so they
+        // are the same site by construction. Anything else is a caller bug, not a runtime condition.
+        var connector = _connectors.FirstOrDefault(c => c.CanHandle(urls[0]))
+            ?? throw new NotSupportedException($"No connector can handle '{urls[0]}'.");
+        if (urls.FirstOrDefault(u => !connector.CanHandle(u)) is { } foreign)
+            throw new NotSupportedException(
+                $"'{foreign}' can't be crawled by the {connector.Name} connector handling this run.");
 
         progress?.Report(new IngestProgress(IngestPhase.Starting, 0, 0, $"Starting {connector.Name} download…"));
 
@@ -92,6 +120,13 @@ public sealed class IngestService
             // Include the existing sources so EnsureSourceAsync's in-graph check sees them (no per-source query).
             ? await db.Collections.Include(c => c.Sources).FirstOrDefaultAsync(c => c.Id == tid, ct).ConfigureAwait(false)
             : null;
+        // A caller that named a target must get that target. Falling through to the auto-folder path here
+        // would quietly MINT a board per source and re-download the lot, because the skip-archive is scoped to
+        // the subtree of an id that no longer exists — the shape of a board deleted mid-run (a "sync all" plan
+        // is captured up front, and the grid stays interactive while it works).
+        if (targetCollectionId is int missing && targetCollection is null)
+            throw new InvalidOperationException(
+                $"The board this import targets (#{missing}) no longer exists — it was probably deleted after the run started.");
 
         // Local caches so repeated keys within a single import resolve before SaveChanges.
         var assetsByIdentity = new Dictionary<string, Asset>();
@@ -116,11 +151,19 @@ public sealed class IngestService
         // Hand the connector what to pre-skip, rebuilt from the DB so its archive never drifts. For a targeted
         // import this is what's already in THAT board (+ blacklisted tombstones) — NOT pins merely held in some
         // other board — so a re-import/sync re-links pins the target is missing instead of skipping them.
-        var effectiveOptions = options with { KnownItems = await GetKnownItemsAsync(db, _store, targetCollectionId, ct).ConfigureAwait(false) };
+        // A delta run also tells the connector to stop early on a run of those, and leaves sub-collections to
+        // the caller's own targets (the connector appends them after the parent's items, where an early stop
+        // would never reach them).
+        var effectiveOptions = options with
+        {
+            KnownItems = await GetKnownItemsAsync(db, _store, targetCollectionId, mode, ct).ConfigureAwait(false),
+            StopAfterConsecutiveKnown = mode == ImportMode.Delta ? DeltaStopAfterConsecutiveKnown : null,
+            IncludeSubCollections = mode != ImportMode.Delta,
+        };
 
         // Each item is ingested the moment the connector finishes downloading it, and the freshly
         // imported asset is reported so the UI can show it immediately (not after the whole batch).
-        await connector.DownloadAsync(url, effectiveOptions, downloadLog, async (item, itemCt) =>
+        await connector.DownloadAsync(urls, effectiveOptions, downloadLog, async (item, itemCt) =>
         {
             // Each item is ATOMIC once its blob lands: cancellation (backing out of a board mid-sync, closing the
             // Library mid-import) is honoured between items — up to and including PutAsync — but never inside the
@@ -181,7 +224,9 @@ public sealed class IngestService
                 var key = (connector.Name, item.BoardId);
                 if (!sourceByBoard.TryGetValue(key, out source))
                 {
-                    source = await GetOrAddSourceAsync(db, collection, connector.Name, item, item.BoardUrl ?? url, committed).ConfigureAwait(false);
+                    // The fallback is the run's primary target (a board URL); a section target would record a
+                    // source that re-syncs only that section.
+                    source = await GetOrAddSourceAsync(db, collection, connector.Name, item, item.BoardUrl ?? urls[0], committed).ConfigureAwait(false);
                     sourceByBoard[key] = source;
                 }
                 // Keep the denormalised primary pointer seeded from the first source seen.
@@ -468,23 +513,28 @@ public sealed class IngestService
     ///     into the target, which is what lets a re-import/Sync repopulate a board), and
     ///   • every <b>tombstoned (blacklisted)</b> pin, globally and regardless of links (a deleted pin
     ///     never re-fetches, even after its board went away).
-    /// A held live pin whose <b>blob is missing/torn on disk</b> is deliberately NOT emitted, so a Sync
-    /// repairs lost files by re-downloading them (belt-and-braces: <see cref="ImportAsync"/> re-checks
-    /// <c>DeletedAt</c> after download). A legacy row not yet carrying provenance can't pre-skip — its
+    /// In <see cref="ImportMode.Full"/> a held live pin whose <b>blob is missing/torn on disk</b> is
+    /// deliberately NOT emitted, so a Sync repairs lost files by re-downloading them (belt-and-braces:
+    /// <see cref="ImportAsync"/> re-checks <c>DeletedAt</c> after download). <see cref="ImportMode.Delta"/>
+    /// skips that check and trusts the index: the walk is the store's whole file set, which on a NAS-hosted
+    /// project costs far more than the crawl it was protecting, and a missing blob still shows up on its own
+    /// tile with a one-click re-download. A legacy row not yet carrying provenance can't pre-skip — its
     /// pin re-downloads once and the pin-keyed upsert stamps it (self-heal). A null target keeps the
     /// whole-project behaviour for the auto-folder path.
     /// </summary>
     private static async Task<IReadOnlyCollection<KnownSourceItem>> GetKnownItemsAsync(
-        HoardDbContext db, IMediaStore store, int? targetCollectionId, CancellationToken ct)
+        HoardDbContext db, IMediaStore store, int? targetCollectionId, ImportMode mode, CancellationToken ct)
     {
-        // Presence + length come from ONE store walk, not a stat per pin — the store may live on a
-        // network share where per-file round-trips cost milliseconds each.
+        // Presence + length come from ONE store walk, not a stat per pin — the store may live on a network
+        // share where per-file round-trips cost milliseconds each. Enumerating FileInfos (not paths) keeps it
+        // to that one walk: the length rides along with each directory entry, where re-opening a path by name
+        // would put the per-file round-trip straight back.
         Dictionary<string, long>? blobLengths = null;
         bool HasIntactBlob(string relativePath, long bytes)
         {
             blobLengths ??= Directory.Exists(store.Root)
-                ? Directory.EnumerateFiles(store.Root, "*", SearchOption.AllDirectories)
-                    .ToDictionary(Path.GetFullPath, f => new FileInfo(f).Length, StringComparer.OrdinalIgnoreCase)
+                ? new DirectoryInfo(store.Root).EnumerateFiles("*", SearchOption.AllDirectories)
+                    .ToDictionary(f => Path.GetFullPath(f.FullName), f => f.Length, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             return blobLengths.TryGetValue(Path.GetFullPath(store.GetAbsolutePath(relativePath)), out var length)
                    && length == bytes;
@@ -502,10 +552,12 @@ public sealed class IngestService
             .Distinct()
             .ToListAsync(ct).ConfigureAwait(false);
 
+        var verifyBlobs = mode == ImportMode.Full;
         var known = new HashSet<KnownSourceItem>();
         foreach (var row in rows)
         {
-            if (!HasIntactBlob(row.RelativePath, row.Bytes)) continue; // lost blob → let the crawl repair it
+            // lost blob → let the crawl repair it (full runs only; a delta trusts the index)
+            if (verifyBlobs && !HasIntactBlob(row.RelativePath, row.Bytes)) continue;
             known.Add(new KnownSourceItem(row.Board, row.Source));
         }
 
