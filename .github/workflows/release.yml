@@ -55,6 +55,9 @@ jobs:
     permissions:
       contents: write        # create the tag + release
       pull-requests: write   # maintain the release PR
+      issues: write          # release-please labels the PR ("autorelease: pending" → "tagged"), and
+                             # labels are the issues API — without this the run dies on the label call
+                             # even when the release itself was created.
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -65,6 +68,10 @@ jobs:
         if: github.event_name == 'push'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          # Falls back to the built-in GITHUB_TOKEN, so this is inert until a RELEASE_PLEASE_TOKEN secret
+          # exists. Adding one buys two things: it survives an org/repo policy that caps GITHUB_TOKEN, and
+          # events it raises DO start other workflows — which is what gets CI to run on the release PR.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
@@ -77,6 +84,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.publish
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
