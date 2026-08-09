@@ -1,26 +1,40 @@
 name: Release
 
-# Versioning + releases are fully automated from Conventional Commits:
-#  1. release-please watches main, works out the next semver from the commit
-#     types since the last release (feat → minor, fix → patch, feat!/BREAKING
-#     CHANGE → major; pre-1.0 the bumps are shifted down one level), and keeps
-#     a "release PR" up to date with the version bump + CHANGELOG.md.
-#  2. Merging that PR makes release-please create the vX.Y.Z tag + GitHub
-#     Release, and the build matrix below publishes the Windows x64 and Apple
-#     Silicon apps and uploads them (plus checksums + build provenance) to that
-#     release.
+# Versioning is automated from Conventional Commits; PUBLISHING IS NOT.
+# Nothing is ever released as a side effect of pushing or merging — cutting a
+# release is always a deliberate "Run workflow" click:
+#  1. On every push to main, release-please works out the next semver from the
+#     commit types since the last release (feat → minor, fix → patch,
+#     feat!/BREAKING CHANGE → major; pre-1.0 the bumps are shifted down one
+#     level) and keeps a "release PR" up to date with the version bump +
+#     CHANGELOG.md. skip-github-release makes this step PR-only, so merging
+#     that PR publishes nothing by itself — it just lands the version bump.
+#  2. When you actually want to ship, run this workflow manually with
+#     publish = true. release-please then creates the vX.Y.Z tag + GitHub
+#     Release for the merged release commit (skip-github-pull-request, so this
+#     leg never touches the PR), and the build matrix publishes the Windows x64
+#     and Apple Silicon apps and uploads them (plus checksums + build
+#     provenance) to that release.
+# Order matters: merge the release PR first, then dispatch. Dispatching with no
+# release commit waiting simply finds nothing to release and falls back to the
+# dry run below.
 #
 # The build jobs chain off the release-please job (needs:) rather than
 # triggering on the release event, because events created with the workflow's
 # own GITHUB_TOKEN never start other workflows.
 #
-# workflow_dispatch runs the build matrix as a dry run (artifacts only, no
+# A manual run with publish = false is a packaging dry run (artifacts only, no
 # release), so packaging changes can be tested without cutting a version.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Cut the release for the merged release PR and upload the builds. Off = packaging dry run (artifacts only)."
+        type: boolean
+        default: false
 
 # Least privilege by default; each job asks for exactly what it needs.
 permissions: {}
@@ -45,18 +59,34 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - name: Run release-please
-        id: release
+      # Push leg: keep the release PR current, and NEVER create a release —
+      # that's what makes merging it safe rather than a publish trigger.
+      - name: Update the release PR
         if: github.event_name == 'push'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          skip-github-release: true
+
+      # Manual leg: tag + release the merged release commit. Outputs stay on the
+      # `release` id, so everything downstream is unchanged; when this is skipped
+      # (a push, or publish = false) they're empty and the build runs as a dry run.
+      - name: Create the release
+        id: release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
 
   build:
     needs: release-please
-    # Build on a real release, or on a manual dispatch as a packaging dry run.
-    if: needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch'
+    # Only ever on a manual run: with a release cut it packages and uploads to it,
+    # otherwise it's the dry run. A push can no longer reach this — nothing on the
+    # push leg creates a release, which is the whole point.
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       # Supported targets: Windows x64 and Apple Silicon. Intel macs (osx-x64) are deliberately NOT
