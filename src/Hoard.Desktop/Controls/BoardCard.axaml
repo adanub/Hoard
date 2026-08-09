@@ -85,11 +85,15 @@
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="14,0">
             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                 <TextBlock Text="{Binding #Root.Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                <!-- Meta normally; the live import count replaces it (in accent) while importing. -->
+                <!-- Meta normally; ONE accent status line replaces it whenever this board is part of a run —
+                     the live import count while it's the one downloading, "Queued to sync" while it's waiting
+                     its turn. Same accent either way: the colour says "this board belongs to the sync", and
+                     the strip above (which only the running board gets) is what says "…and it's this one's
+                     turn". Muted here would be indistinguishable from the metadata it replaces. -->
                 <TextBlock Classes="muted" Text="{Binding #Root.MetaText}"
-                           IsVisible="{Binding !#Root.IsImporting}"/>
+                           IsVisible="{Binding !#Root.HasStatus}"/>
                 <TextBlock Classes="accent" FontSize="{DynamicResource FontSizeSm}"
-                           Text="{Binding #Root.ImportStatusText}" IsVisible="{Binding #Root.IsImporting}"/>
+                           Text="{Binding #Root.ImportStatusText}" IsVisible="{Binding #Root.HasStatus}"/>
             </StackPanel>
             <Button Grid.Column="1" Theme="{StaticResource HoardButton}" Classes="secondary"
                     Width="40" Height="40" Padding="0" VerticalAlignment="Center"

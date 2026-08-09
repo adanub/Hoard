@@ -44,7 +44,8 @@
                         <ctrl:BoardCard IsVisible="{Binding !IsFilteredOut}"
                                         Title="{Binding Name}" MetaText="{Binding MetaText}"
                                         Thumb0="{Binding Thumb0}" Thumb1="{Binding Thumb1}" Thumb2="{Binding Thumb2}"
-                                        IsImporting="{Binding IsImporting}" ImportStatusText="{Binding ImportStatusText}"
+                                        IsImporting="{Binding IsImporting}" IsQueued="{Binding IsQueued}"
+                                        ImportStatusText="{Binding ImportStatusText}"
                                         OpenCommand="{Binding OpenCommand}" EditCommand="{Binding EditCommand}"/>
                     </DataTemplate>
                 </ItemsControl.DataTemplates>
@@ -87,6 +88,26 @@
                             Command="{Binding CloseImportSheetCommand}"/>
                     <Button Theme="{StaticResource HoardButton}" Content="Import"
                             Command="{Binding ImportCommand}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </ctrl:SheetHost>
+
+        <!-- Sync-all sheet: one cookie choice, then every board in the project is re-fetched in turn. -->
+        <ctrl:SheetHost IsOpen="{Binding IsSyncAllSheetOpen}" DismissCommand="{Binding CloseSyncAllSheetCommand}">
+            <StackPanel Margin="24" Spacing="16" Width="380">
+                <TextBlock Classes="h2" Text="Sync all boards"/>
+                <TextBlock Classes="muted" TextWrapping="Wrap"
+                           Text="Re-fetches every board in this project from its source, one after another — pulling in anything newly added and skipping items you've deleted. Each board stops as soon as it reaches images you already have. A board that fails won't stop the others."/>
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="muted" Text="Cookies (for private boards)"/>
+                    <ComboBox ItemsSource="{Binding CookieBrowsers}" SelectedItem="{Binding SyncAllCookiesBrowser}"
+                              HorizontalAlignment="Stretch"/>
+                </StackPanel>
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="ghost" Content="Cancel"
+                            Command="{Binding CloseSyncAllSheetCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Sync all boards"
+                            Command="{Binding SyncAllCommand}"/>
                 </ctrl:FlexWrapPanel>
             </StackPanel>
         </ctrl:SheetHost>

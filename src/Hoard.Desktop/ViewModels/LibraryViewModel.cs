@@ -67,6 +67,12 @@ public partial class BoardCardRef : ViewModelBase, IDisposable
 
     // While this board is being imported into, the card shows a pinned progress strip + live count.
     [ObservableProperty] private bool _isImporting;
+
+    /// <summary>Waiting its turn in a "sync all boards" run — see <see cref="Controls.BoardCard.IsQueued"/>.
+    /// Never true at the same time as <see cref="IsImporting"/>: a board that starts stops being queued, and
+    /// one that finishes clears both (only the boards still to come stay marked).</summary>
+    [ObservableProperty] private bool _isQueued;
+
     [ObservableProperty] private string _importStatusText = "";
 
     /// <summary>True when the card doesn't match the floating bar's live board-name filter — hidden
@@ -149,6 +155,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         PlusActions = new[]
         {
             new PlusAction("Import board", OpenImportSheetCommand),
+            new PlusAction("Sync all boards", OpenSyncAllSheetCommand),
             new PlusAction("Backup", OpenRemoteSheetCommand),
             new PlusAction("Export project", OpenExportSheetCommand),
         };
@@ -216,11 +223,14 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
     // ── Shell chrome (breadcrumb + floating bar) ─────────────────────────────
 
     /// <summary>The crumb carries the live match count while the board-name filter is active. The virtual
-    /// "All images" card is exempt from the filter (a navigation staple, not a board), so it isn't counted.</summary>
+    /// "All images" card is exempt from the filter (a navigation staple, not a board), so it isn't counted.
+    /// A "sync all" run takes it over: the per-board strips say what each board is doing, and this is the
+    /// only place that can say how far through the <i>project</i> the run is (the grid has no top bar).</summary>
     public string CrumbTitle
     {
         get
         {
+            if (SyncAllStatusText.Length > 0) return $"{ProjectName} ({SyncAllStatusText})";
             if (SearchText.Trim().Length == 0) return ProjectName;
             var n = Tiles.OfType<BoardCardRef>().Count(r => r.CollectionId is not null && !r.IsFilteredOut);
             return $"{ProjectName} ({(n == 1 ? "1 board" : $"{n} boards")} found)";
@@ -270,13 +280,17 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         {
             var count = c.ItemCount == 1 ? "1 image" : $"{c.ItemCount} images";
             // Seed the importing strip if a sync/import is in flight for this board (e.g. rebuilt on return to the
-            // Library while a board Sync is still running), so the card doesn't briefly drop its progress.
+            // Library while a board Sync is still running), so the card doesn't briefly drop its progress. A
+            // "sync all" run's remaining boards are re-seeded the same way — the grid can be rebuilt from under
+            // a run (returning from a board, a delete), and a card that lost its mark would look done.
             var importing = _importStatus.IsImporting && _importStatus.CollectionId == c.Id;
+            var queued = !importing && _pendingSyncBoardIds.Contains(c.Id);
             Tiles.Add(new BoardCardRef(c.Id, c.Name, OpenBoardRef, BoardEditor.Begin)
             {
                 MetaText = $"{count} · {ByteFormat.Format(c.SizeBytes)}",
                 IsImporting = importing,
-                ImportStatusText = importing ? _importStatus.Text : "",
+                IsQueued = queued,
+                ImportStatusText = importing ? _importStatus.Text : queued ? QueuedText : "",
             });
         }
 
@@ -536,6 +550,234 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         Tiles.Insert(Math.Min(2, Tiles.Count), card); // after "+ New board" + "All images"
         return (card, newId, true);
     }
+
+    // ── Sync every board in the project ────────────────────────────────────────────
+
+    [ObservableProperty] private bool _isSyncAllSheetOpen;
+    [ObservableProperty] private string _syncAllCookiesBrowser = BrowserCookies.None;
+
+    private const string QueuedText = "Queued to sync";
+
+    /// <summary>Boards a "sync all" run still has to reach. IDs, not cards: the grid is disposed and rebuilt
+    /// on every <see cref="RefreshAsync"/> (returning from a board, a delete, an external import finishing),
+    /// so a run holding card instances would be marking objects that have left the screen. Kept here so a
+    /// rebuild mid-run can re-apply the marks.</summary>
+    private readonly HashSet<int> _pendingSyncBoardIds = [];
+
+    /// <summary>The live card for a board id, or null if the grid no longer has one.</summary>
+    private BoardCardRef? Card(int collectionId)
+        => Tiles.OfType<BoardCardRef>().FirstOrDefault(r => r.CollectionId == collectionId);
+
+    private void ApplyQueuedMarks()
+    {
+        foreach (var id in _pendingSyncBoardIds)
+        {
+            if (Card(id) is not { IsImporting: false } c) continue;
+            c.IsQueued = true;
+            c.ImportStatusText = QueuedText;
+        }
+    }
+
+    [RelayCommand]
+    private void OpenSyncAllSheet()
+    {
+        SyncAllCookiesBrowser = BrowserCookies.NormaliseChoice(_uiSettings?.Settings.DefaultCookiesBrowser);
+        IsSyncAllSheetOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseSyncAllSheet() => IsSyncAllSheetOpen = false;
+
+    /// <summary>
+    /// Sync every board in the project, one after another — the same per-board delta the Board screen's Sync
+    /// runs, so it stops at each target as soon as it reaches images already held. Sequential on purpose:
+    /// they share one gallery-dl-shaped pipeline and one <see cref="ImportStatus"/>, and running boards
+    /// concurrently would multiply the request rate at the source for no wall-clock certainty.
+    /// <para>One board failing (a source gone private, a deleted board) <b>never</b> stops the rest — the
+    /// whole point is not to have to visit boards one at a time — so failures are collected and reported at
+    /// the end instead of aborting the run.</para>
+    /// </summary>
+    [RelayCommand]
+    private async Task SyncAllAsync()
+    {
+        if (_projects.Current is null) return;
+        if (_importStatus.IsImporting) { _toasts.Show("An import is already running — wait for it to finish."); return; }
+        if (_importStatus.IsRemoteSyncing) { _toasts.Show("A backup sync is running — wait for it to finish."); return; }
+
+        var cookies = BrowserCookies.Resolve(SyncAllCookiesBrowser);
+        if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
+
+        var token = _disposeCts.Token; // captured before any await, like ImportAsync
+        IsSyncAllSheetOpen = false;
+
+        // Claim the run BEFORE the plan query: that query is an await, and until something is flagged the
+        // Backup sheet's guard sees an idle app and would start replicating the very files this is about to
+        // write. IsImporting is what CanSyncRemote (and CanImport) consult.
+        IsImporting = true;
+        IReadOnlyList<BoardSyncPlan> plans;
+        try
+        {
+            plans = await _library.GetProjectSyncPlanAsync(token);
+        }
+        catch
+        {
+            IsImporting = false;
+            throw;
+        }
+        if (plans.Count == 0)
+        {
+            IsImporting = false;
+            _toasts.Show("No boards to sync — none of them have a source to re-fetch from.");
+            return;
+        }
+
+        _selfImporting = true; // we drive the cards + the final refresh ourselves
+        var options = new ConnectorOptions
+        {
+            CookiesFromBrowser = cookies.Spec,
+            DownloadArchivePath = _projects.DownloadArchivePathFor(_projects.Current),
+        };
+
+        var transcript = new StringBuilder();
+        transcript.AppendLine($"Sync all boards {DateTime.Now:O}");
+        transcript.AppendLine($"Project: {ProjectName} ({_projects.Current.Root})");
+        transcript.AppendLine($"Boards: {plans.Count}   Cookies: {SyncAllCookiesBrowser}");
+        transcript.AppendLine(new string('-', 60));
+
+        int done = 0, newTotal = 0;
+        var failures = new List<string>();
+        var cancelled = false;
+
+        // Mark the whole queue up front, so the grid shows what this run is going to do rather than one card
+        // lighting up at a time with no sign the rest are coming. The pending set is board IDS, never card
+        // objects: RefreshAsync disposes and rebuilds every card (returning from a board, a delete), and a run
+        // holding the old instances would be marking cards that are no longer on screen. Each board leaves the
+        // set as its turn comes, so a card is only ever "queued" while it genuinely still has a turn to come.
+        _pendingSyncBoardIds.Clear();
+        foreach (var plan in plans) _pendingSyncBoardIds.Add(plan.CollectionId);
+        ApplyQueuedMarks();
+
+        try
+        {
+            foreach (var plan in plans)
+            {
+                token.ThrowIfCancellationRequested();
+                // Point the shared status at THIS board so its card shows the strip and an open Board screen
+                // streams its pins — the same handover a single board's Sync does, once per board.
+                _pendingSyncBoardIds.Remove(plan.CollectionId); // its turn came — no longer waiting
+                var card = Card(plan.CollectionId);
+                _importStatus.Begin(plan.CollectionId);
+                if (card is not null)
+                {
+                    card.IsQueued = false; // the running bar replaces the still line
+                    card.IsImporting = true;
+                    card.ImportStatusText = "Syncing… starting";
+                }
+                SyncAllStatusText = $"syncing “{plan.Name}” ({done + 1} of {plans.Count})";
+                transcript.AppendLine($"=== {plan.Name} (#{plan.CollectionId}) — {plan.Targets.Count} target(s)");
+
+                // Per board, so a progress callback that lands after we've moved on can't write its count onto
+                // the NEXT board's card (Progress<T> posts to the UI thread, so it always can). Both writes are
+                // guarded: the card is re-resolved by id (the grid can be rebuilt mid-run), and the shared
+                // status is only touched while it still points here — the watcher fans it out by CollectionId,
+                // which would land a stale count on the next board's card just as surely.
+                var boardId = plan.CollectionId;
+                var progress = new Progress<IngestProgress>(p =>
+                {
+                    if (p.Message is not null) transcript.AppendLine($"[{p.Phase}] {p.Message}");
+                    if (p.Phase is IngestPhase.Downloading or IngestPhase.Storing)
+                    {
+                        var text = $"Syncing… {p.Processed} so far";
+                        if (Card(boardId) is { } live) live.ImportStatusText = text;
+                        if (_importStatus.CollectionId == boardId) _importStatus.Text = text;
+                    }
+                    if (p.ImportedAsset is { } asset)
+                    {
+                        _importStatus.LastImportedCollectionId = p.ImportedIntoCollectionId; // set first — read on the pin change
+                        _importStatus.LastImported = asset;
+                    }
+                });
+
+                try
+                {
+                    var result = await _ingest.ImportAsync(
+                        plan.Targets, options, progress, plan.CollectionId, ImportMode.Delta, token);
+                    newTotal += result.NewAssets;
+                    done++; // synced — a board that threw is counted as a failure, never as done
+                    transcript.AppendLine($"RESULT: {result.NewAssets} new, {result.DuplicateAssets} already had.");
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw; // leaving the Library cancels the whole run, not just this board
+                }
+                catch (Exception ex)
+                {
+                    // The whole point is not having to visit boards one at a time, so one bad source (gone
+                    // private, deleted) is collected and reported at the end, never a reason to stop.
+                    failures.Add(plan.Name);
+                    transcript.AppendLine($"FAILED: {ex}");
+                }
+                finally
+                {
+                    // Finished (or failed) — this board is neither running nor waiting, so its card drops the
+                    // status line and goes back to showing its metadata. Re-resolved, not the instance captured
+                    // above: a refresh during this board's crawl would have replaced it.
+                    if (Card(boardId) is { } finished)
+                    {
+                        finished.IsImporting = false;
+                        finished.IsQueued = false;
+                        finished.ImportStatusText = "";
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            cancelled = true; // navigated away from the Library mid-run
+        }
+        finally
+        {
+            SyncAllStatusText = "";
+            // Whatever ended the run — finished, cancelled, or a throw the per-board catch didn't cover — no
+            // board is queued any more. Left set, the boards it never reached would sit there claiming to be
+            // waiting for a run that is over (and a later refresh would re-seed the mark from the stale set).
+            _pendingSyncBoardIds.Clear();
+            foreach (var c in Tiles.OfType<BoardCardRef>().Where(r => r.IsQueued))
+            {
+                c.IsQueued = false;
+                c.ImportStatusText = "";
+            }
+            // End() BEFORE clearing _selfImporting: it flips the shared IsImporting, and the watcher refreshes
+            // the grid unless this run still claims ownership — the ImportAsync ordering, for the same reason.
+            _importStatus.End();
+            IsImporting = false;
+            _selfImporting = false;
+        }
+
+        WriteImportLog(transcript);
+        if (cancelled)
+        {
+            // A re-run picks up from wherever each board stands, so say how far it got rather than letting the
+            // strips just vanish (which reads as "finished"). The shell owns the toast host, so this shows
+            // over whatever screen the user is on now.
+            _toasts.Show($"Sync stopped — {done} of {plans.Count} board(s) done before you left.");
+            return;
+        }
+        await RefreshAsync();
+
+        var summary = newTotal == 0
+            ? $"Synced {done} board(s) — already up to date."
+            : $"Synced {done} board(s) — {newTotal} new image(s).";
+        if (failures.Count > 0)
+            summary += $"  {failures.Count} failed: {string.Join(", ", failures.Take(3))}"
+                       + (failures.Count > 3 ? "…" : "") + " (see the log).";
+        _toasts.Show(summary, isError: failures.Count > 0);
+    }
+
+    /// <summary>How far a "sync all" run has got, surfaced through <see cref="CrumbTitle"/>.</summary>
+    [ObservableProperty] private string _syncAllStatusText = "";
+
+    partial void OnSyncAllStatusTextChanged(string value) => OnPropertyChanged(nameof(CrumbTitle));
 
     // Block while THIS grid is importing, and also while any other import/sync owns the single shared ImportStatus
     // (a board Sync sets only the shared flag, not this VM's IsImporting) — overlapping runs clobber its state.

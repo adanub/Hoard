@@ -39,8 +39,23 @@ public partial class BoardCard : UserControl
     public static readonly StyledProperty<bool> IsImportingProperty =
         AvaloniaProperty.Register<BoardCard, bool>(nameof(IsImporting));
 
+    /// <summary>
+    /// While true, this board is <i>waiting its turn</i> in a multi-board sync. It gets the same accent status
+    /// line as the running board — it belongs to the same run — but not the animated strip: motion is what
+    /// separates "downloading now" from "queued", and a grid full of running bars would read as "everything is
+    /// downloading at once" (leaving a dozen indeterminate animations ticking for a queue that is by
+    /// definition idle). Mutually exclusive with <see cref="IsImporting"/> — the board that starts stops
+    /// being queued.
+    /// </summary>
+    public static readonly StyledProperty<bool> IsQueuedProperty =
+        AvaloniaProperty.Register<BoardCard, bool>(nameof(IsQueued));
+
     public static readonly StyledProperty<string?> ImportStatusTextProperty =
         AvaloniaProperty.Register<BoardCard, string?>(nameof(ImportStatusText));
+
+    /// <summary>Either state occupies the meta row, so the normal metadata stands down for both.</summary>
+    public static readonly DirectProperty<BoardCard, bool> HasStatusProperty =
+        AvaloniaProperty.RegisterDirect<BoardCard, bool>(nameof(HasStatus), o => o.HasStatus);
 
     public string? Title { get => GetValue(TitleProperty); set => SetValue(TitleProperty, value); }
     public string? MetaText { get => GetValue(MetaTextProperty); set => SetValue(MetaTextProperty, value); }
@@ -50,11 +65,22 @@ public partial class BoardCard : UserControl
     public ICommand? OpenCommand { get => GetValue(OpenCommandProperty); set => SetValue(OpenCommandProperty, value); }
     public ICommand? EditCommand { get => GetValue(EditCommandProperty); set => SetValue(EditCommandProperty, value); }
     public bool IsImporting { get => GetValue(IsImportingProperty); set => SetValue(IsImportingProperty, value); }
+    public bool IsQueued { get => GetValue(IsQueuedProperty); set => SetValue(IsQueuedProperty, value); }
     public string? ImportStatusText { get => GetValue(ImportStatusTextProperty); set => SetValue(ImportStatusTextProperty, value); }
+
+    private bool _hasStatus;
+    public bool HasStatus { get => _hasStatus; private set => SetAndRaise(HasStatusProperty, ref _hasStatus, value); }
 
     public BoardCard()
     {
         InitializeComponent();
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == IsImportingProperty || change.Property == IsQueuedProperty)
+            HasStatus = IsImporting || IsQueued;
     }
 
     // True while the in-progress press is the primary (left) button — so only a primary click opens the card,
