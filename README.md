@@ -8,9 +8,9 @@
 
 I often found myself wanting a way to keep things I'd saved on Pinterest downloaded locally - this
 was already technically possible by downloading the pins manually, but that didn't seem very fun...
-And I kept getting reminded of this need whenever I'd find a pin got deleted, reported and removed,
-and so on. So I looked around if there were any tools out there that already existed for doing this,
-and it wassurprisingly barren. The only thing out there was **[gallery-dl](https://github.com/mikf/gallery-dl)**,
+
+So I looked around if there were any tools out there that already existed for doing this,
+and it was surprisingly barren. The only thing out there was **[gallery-dl](https://github.com/mikf/gallery-dl)**,
 but using a CLI tool for an otherwise art/design oriented experience didn't quite feel right. I also
 coincidentally had been experimenting with trying agentic workflows for creating useful side projects
 and tools, so I started hacking away at this problem in my spare time - and Hoard was born 🙂
