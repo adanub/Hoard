@@ -6,8 +6,9 @@ name: Release
 #     CHANGE → major; pre-1.0 the bumps are shifted down one level), and keeps
 #     a "release PR" up to date with the version bump + CHANGELOG.md.
 #  2. Merging that PR makes release-please create the vX.Y.Z tag + GitHub
-#     Release, and the build matrix below publishes the Windows/macOS apps
-#     and uploads them (plus checksums + build provenance) to that release.
+#     Release, and the build matrix below publishes the Windows x64 and Apple
+#     Silicon apps and uploads them (plus checksums + build provenance) to that
+#     release.
 #
 # The build jobs chain off the release-please job (needs:) rather than
 # triggering on the release event, because events created with the workflow's
@@ -58,13 +59,14 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
+      # Supported targets: Windows x64 and Apple Silicon. Intel macs (osx-x64) are deliberately NOT
+      # released. Each RID is published on a runner of its own OS, which is what lets the packaging steps
+      # and the gallery-dl fetch below pick the right per-OS binary by runner rather than by RID.
       matrix:
         include:
           - rid: win-x64
             os: windows-latest
           - rid: osx-arm64
-            os: macos-latest
-          - rid: osx-x64
             os: macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
