@@ -174,6 +174,12 @@ jobs:
         run: |
           if [[ -n "$TAG" ]]; then
             echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            # A dry run dispatched ON a tag (gh workflow run release.yml --ref vX.Y.Z -f dry_run=true)
+            # rebuilds that release's assets with its real version — the checkout above lands on the
+            # tag's commit automatically (empty ref = the SHA that triggered the run). This is how the
+            # zips of an existing release are remade, e.g. after a failed upload.
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
             echo "VERSION=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           fi
