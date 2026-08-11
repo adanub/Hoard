@@ -85,6 +85,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      gallery_dl_tag: ${{ steps.gdl.outputs.tag }}
     steps:
       - name: Create the release
         id: release
@@ -94,6 +95,36 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
+
+      # "Latest" is resolved to a concrete gdl-org/builds tag exactly ONCE per release, here, and both
+      # build legs download that tag — resolving per-leg would let an upstream release landing mid-run
+      # ship two different gallery-dl builds under one Hoard version. The redirect (not the API) keeps
+      # this off the unauthenticated rate limit, same as the fetch script itself.
+      - name: Resolve the gallery-dl build to bundle
+        id: gdl
+        if: steps.release.outputs.release_created == 'true'
+        shell: bash
+        run: |
+          tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            https://github.com/gdl-org/builds/releases/latest | sed 's#.*/tag/##')
+          [[ -n "$tag" && "$tag" != *"://"* ]] || { echo "could not resolve a gallery-dl tag (got '$tag')"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Bundling gallery-dl build \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Answerable later without an affected user's About sheet: which gallery-dl did vX.Y.Z ship?
+      - name: Record the bundled gallery-dl in the release notes
+        if: steps.release.outputs.release_created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+          GDL_TAG: ${{ steps.gdl.outputs.tag }}
+        run: |
+          body=$(gh release view "$TAG_NAME" --json body -q .body)
+          gh release edit "$TAG_NAME" --notes "$body
+
+          Bundled gallery-dl: [$GDL_TAG](https://github.com/gdl-org/builds/releases/tag/$GDL_TAG)"
 
   build:
     needs: release
@@ -124,6 +155,7 @@ jobs:
       attestations: write    # store the provenance attestation
     env:
       TAG: ${{ needs.release.outputs.tag_name }}
+      GDL_TAG: ${{ needs.release.outputs.gallery_dl_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,12 +178,25 @@ jobs:
             echo "VERSION=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           fi
 
-      # Latest build on purpose — Pinterest changes break old gallery-dl builds
-      # (see tools/fetch-gallery-dl.ps1). The zip checksum + provenance below
-      # cover what was actually shipped.
+      # Latest-at-release on purpose — Pinterest changes break old gallery-dl builds, and pinning
+      # wouldn't make users any fresher: the zip freezes a version either way, a pin just adds a bump
+      # chore that ships STALE binaries when neglected. But "latest" here is the ONE tag the release job
+      # resolved, so both OS legs of a release bundle the identical build. Only a dry run (no release
+      # job, GDL_TAG empty) falls back to whatever is latest at that moment.
       - name: Fetch gallery-dl
         shell: pwsh
-        run: ./tools/fetch-gallery-dl.ps1
+        run: ./tools/fetch-gallery-dl.ps1 -Tag $env:GDL_TAG
+
+      # A binary that can't even print its version must not ship — a torn download or a broken upstream
+      # build would otherwise be discovered by some user's first import. Also puts the self-reported
+      # version next to the resolved tag in the run summary.
+      - name: Smoke-test gallery-dl
+        shell: bash
+        run: |
+          exe=tools/gallery-dl/gallery-dl
+          [[ "$RUNNER_OS" == "Windows" ]] && exe+=".exe"
+          v=$("$exe" --version)
+          echo "gallery-dl --version → \`$v\` (${{ matrix.rid }})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish
         shell: bash
@@ -166,9 +211,10 @@ jobs:
 
       # Hoard is GPL-3.0 and ships the GPL-2.0 gallery-dl binary alongside itself, so both licences have
       # to travel with the archive — a release that omits them is a licence breach, not a tidiness issue.
-      # gallery-dl's text is fetched at the same pin as the binary above rather than vendored, so it can
-      # never drift from what actually shipped. THIRD-PARTY-NOTICES.md points here by name; keep them in
-      # step if either path changes.
+      # The licence text is pinned to a commit (the file hasn't changed since gallery-dl's 2014 initial
+      # commit, and GPL-2.0's text is immutable) — fetching a branch here would mean an upstream licence
+      # CHANGE silently propagates into our zips, which is exactly the kind of thing that shouldn't
+      # happen unreviewed. THIRD-PARTY-NOTICES.md points here by name; keep them in step if paths change.
       - name: Collect licences
         shell: bash
         run: |
@@ -176,7 +222,7 @@ jobs:
           cp LICENSE publish/licences/Hoard-LICENSE.txt
           cp THIRD-PARTY-NOTICES.md publish/licences/THIRD-PARTY-NOTICES.md
           curl -fsSL --retry 3 -o publish/licences/gallery-dl-LICENSE.txt \
-            https://raw.githubusercontent.com/mikf/gallery-dl/master/LICENSE
+            https://raw.githubusercontent.com/mikf/gallery-dl/d2c6b7298c9cccb21d421784df58131b3b48a391/LICENSE
 
       - name: Package (Windows)
         if: runner.os == 'Windows'

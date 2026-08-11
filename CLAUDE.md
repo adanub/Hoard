@@ -65,7 +65,17 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   refresh, no release).
   **The released targets are Windows x64 and Apple Silicon only** — Intel macs (`osx-x64`) are deliberately
   not built. Each RID publishes on a runner of its own OS, which is what lets the packaging steps and the
-  gallery-dl fetch select by `runner.os`; keep that pairing if a target is ever added. The version is
+  gallery-dl fetch select by `runner.os`; keep that pairing if a target is ever added. **The bundled
+  gallery-dl is latest-at-release, resolved to ONE concrete gdl-org/builds tag per run** (the `release`
+  job follows the /releases/latest redirect once and both build legs download that tag via
+  `fetch-gallery-dl.ps1 -Tag`, so one release can't ship two different builds across OSes; a dry run has
+  no resolved tag and falls back to latest). Deliberately NOT version-pinned in the repo: the zip freezes
+  a version for users either way, and a pin only adds a bump chore that ships stale binaries when
+  neglected — while Pinterest changes actively break old builds. Each build **smoke-tests the binary**
+  (`--version`, fails the leg on a torn download) and the resolved tag is **appended to the release
+  notes**, so "which gallery-dl did vX.Y.Z ship?" stays answerable. The GPL-2.0 licence text in the zip
+  is pinned to a mikf/gallery-dl commit (unchanged since 2014) — an upstream licence change must never
+  propagate into releases unreviewed. The version is
   stamped at publish time via `-p:Version` — **never hardcode a version in a csproj**, and never hand-edit the
   release-please-owned files (`version.txt`, `.release-please-manifest.json`, `CHANGELOG.md`). To force a
   specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
