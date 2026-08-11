@@ -44,20 +44,25 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   (ubuntu), so tests must stay platform-neutral — validate against fixed cross-platform rules (e.g.
   `HoardProject.ValidateName` applies the Windows-invalid filename set on every OS), never
   `Path.GetInvalidFileNameChars()`-style current-OS behaviour.
-- **Versioning is automated from Conventional Commits; PUBLISHING IS MANUAL** (`.github/workflows/release.yml`).
-  Nothing ships as a side effect of pushing or merging — the two legs are split with release-please's own
-  `skip-github-release` / `skip-github-pull-request`:
-  1. **On push to `main`** it keeps a release PR open with the next semver computed from commit types since
-     the last release (feat → minor, fix/perf → patch, `feat!`/`BREAKING CHANGE` → major; pre-1.0 the bumps
-     are shifted down one level) plus the `CHANGELOG.md` update. `skip-github-release` makes this leg
-     PR-only, so **merging that PR lands the version bump and publishes nothing**.
-  2. **Run the workflow manually with `publish = true`** to ship: release-please tags the merged release
-     commit + creates the GitHub Release (`skip-github-pull-request`, so this leg never touches the PR), and
-     the build matrix uploads self-contained apps (win-x64 zip; osx-arm64 ad-hoc-signed `.app` zip, template
-     at `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations.
-  **Merge the release PR first, then dispatch** — dispatching with no release commit waiting finds nothing to
-  release and falls through to the dry run. The `build` job is `workflow_dispatch`-only for the same reason
-  the split exists: a push must not be able to reach it.
+- **Versioning is automated from Conventional Commits; MERGING THE RELEASE PR IS THE RELEASE**
+  (`.github/workflows/release.yml`). One manual lever per release, pulled in two steps, split with
+  release-please's own `skip-github-release` / `skip-github-pull-request`:
+  1. **Dispatch the workflow manually** (`dry_run` off) when getting ready to ship: it opens/refreshes the
+     release PR with the next semver computed from commit types since the last release (feat → minor,
+     fix/perf → patch, `feat!`/`BREAKING CHANGE` → major) plus the `CHANGELOG.md` update.
+     `skip-github-release` makes this leg PR-only — it can never publish. **Nothing release-related runs on
+     ordinary pushes** (deliberate, user call: refreshing a PR nobody is about to merge just spends runner
+     minutes; the PR needs to be current exactly once, right before merging).
+  2. **Merging that PR ships it.** The merge's push to `main` is recognised by commit message — a job-level
+     `if` matching "release-please--branches--main" or a "chore(main): release" prefix, so the
+     auto-generated merge AND squash messages both fire it while every other push skips at zero runner
+     cost. release-please tags the merge + creates the GitHub Release, then the build matrix uploads
+     self-contained apps (win-x64 zip; osx-arm64 ad-hoc-signed `.app` zip, template at
+     `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations
+     (attestations only work on a public repo). **Keep the default merge message** — hand-editing it so
+     neither marker survives means the release leg never fires for that merge.
+  A manual run with **`dry_run = true`** is a packaging dry run (build matrix → artifacts only, no PR
+  refresh, no release).
   **The released targets are Windows x64 and Apple Silicon only** — Intel macs (`osx-x64`) are deliberately
   not built. Each RID publishes on a runner of its own OS, which is what lets the packaging steps and the
   gallery-dl fetch select by `runner.os`; keep that pairing if a target is ever added. The version is
@@ -66,12 +71,14 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
   changelog starts fresh at pipeline adoption — `bootstrap-sha` in the config excludes all earlier history
   (it's only consulted until the first release; harmless after that).
-- The build jobs chain off the release-please job via `needs` because events created with the workflow's own
-  `GITHUB_TOKEN` never trigger other workflows; for the same reason the release PR gets no CI checks unless a
-  PAT is configured. A manual run with **`publish = false`** is a packaging dry run (artifacts only, no
-  release) — the same thing a `publish = true` run degrades to when no release commit is waiting. All actions
-  are pinned to full commit SHAs; Dependabot (`.github/dependabot.yml`) refreshes the pins
-  weekly — keep new actions pinned the same way.
+- The build jobs chain off the `release` job via `needs` because events created with the workflow's own
+  `GITHUB_TOKEN` never trigger other workflows. release-please runs with the **`RELEASE_PLEASE_TOKEN`
+  secret** — a fine-grained PAT (Contents/Pull requests/Issues, RW, this repo only) — because the default
+  `GITHUB_TOKEN` hit "Resource not accessible by integration" here, and because a PAT's events DO trigger
+  workflows, which is what gets CI running on the release PR. **When that PAT expires, releases fail with
+  `401 Bad credentials`** (the `|| github.token` fallback does NOT kick in — the secret still exists);
+  the fix is a fresh token pasted into the secret's value. All actions are pinned to full commit SHAs;
+  Dependabot (`.github/dependabot.yml`) refreshes the pins weekly — keep new actions pinned the same way.
 
 ## Architecture
 

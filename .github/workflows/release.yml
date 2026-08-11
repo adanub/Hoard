@@ -1,38 +1,35 @@
 name: Release
 
-# Versioning is automated from Conventional Commits; PUBLISHING IS NOT.
-# Nothing is ever released as a side effect of pushing or merging — cutting a
-# release is always a deliberate "Run workflow" click:
-#  1. On every push to main, release-please works out the next semver from the
-#     commit types since the last release (feat → minor, fix → patch,
-#     feat!/BREAKING CHANGE → major; pre-1.0 the bumps are shifted down one
-#     level) and keeps a "release PR" up to date with the version bump +
-#     CHANGELOG.md. skip-github-release makes this step PR-only, so merging
-#     that PR publishes nothing by itself — it just lands the version bump.
-#  2. When you actually want to ship, run this workflow manually with
-#     publish = true. release-please then creates the vX.Y.Z tag + GitHub
-#     Release for the merged release commit (skip-github-pull-request, so this
-#     leg never touches the PR), and the build matrix publishes the Windows x64
-#     and Apple Silicon apps and uploads them (plus checksums + build
-#     provenance) to that release.
-# Order matters: merge the release PR first, then dispatch. Dispatching with no
-# release commit waiting simply finds nothing to release and falls back to the
-# dry run below.
+# Versioning is automated from Conventional Commits; the MERGE of the release PR is the release
+# decision. One manual lever, pulled once per release:
+#  1. When you're getting ready to ship, run this workflow manually ("Run workflow"). release-please
+#     computes the next semver from the commit types since the last release (feat → minor, fix/perf →
+#     patch, feat!/BREAKING CHANGE → major) and opens or refreshes the release PR with the version bump
+#     + CHANGELOG.md. Nothing release-related runs on ordinary pushes — the PR only needs to be current
+#     once, right before it's merged, so refreshing it per-push would just spend runner minutes.
+#  2. Merging that PR IS the release. The merge's push to main is recognised by its commit message
+#     (job-level `if`, below); release-please tags vX.Y.Z + creates the GitHub Release, and the build
+#     matrix packages the Windows x64 and Apple Silicon apps and uploads them (with checksums + build
+#     provenance) to it — all automatically. Every other push to main skips at the `if`, which costs
+#     zero runner minutes (a skipped job never starts a runner; only a grey "skipped" run entry
+#     appears in the Actions tab).
+#  CAVEAT the trigger depends on: the merge must keep its default commit message (auto-generated
+#  "Merge pull request … from …/release-please--branches--main", or the PR title for a squash). If the
+#  message is hand-edited so neither marker survives, the release leg won't fire for that merge.
 #
-# The build jobs chain off the release-please job (needs:) rather than
-# triggering on the release event, because events created with the workflow's
-# own GITHUB_TOKEN never start other workflows.
+# The build jobs chain off the release job (needs:) rather than triggering on the release event,
+# because events created with the workflow's own token never start other workflows.
 #
-# A manual run with publish = false is a packaging dry run (artifacts only, no
-# release), so packaging changes can be tested without cutting a version.
+# A manual run with dry_run = true is a packaging dry run: build matrix only, artifacts only —
+# no PR refresh, no release — so packaging changes can be tested without touching versioning.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
-      publish:
-        description: "Cut the release for the merged release PR and upload the builds. Off = packaging dry run (artifacts only)."
+      dry_run:
+        description: "Packaging dry run: build the apps as workflow artifacts only. Off = open/refresh the release PR."
         type: boolean
         default: false
 
@@ -49,23 +46,18 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  release-please:
+  # Manual leg: open/refresh the release PR. skip-github-release means this can NEVER create a
+  # release, whatever state it finds — it only proposes.
+  release-pr:
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write        # create the tag + release
-      pull-requests: write   # maintain the release PR
-      issues: write          # release-please labels the PR ("autorelease: pending" → "tagged"), and
-                             # labels are the issues API — without this the run dies on the label call
-                             # even when the release itself was created.
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      contents: write        # push the release branch
+      pull-requests: write   # open/refresh the release PR
+      issues: write          # the "autorelease: pending" label rides the issues API
     steps:
-      # Push leg: keep the release PR current, and NEVER create a release —
-      # that's what makes merging it safe rather than a publish trigger.
-      - name: Update the release PR
-        if: github.event_name == 'push'
+      - name: Open or refresh the release PR
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           # Falls back to the built-in GITHUB_TOKEN, so this is inert until a RELEASE_PLEASE_TOKEN secret
@@ -76,12 +68,26 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-release: true
 
-      # Manual leg: tag + release the merged release commit. Outputs stay on the
-      # `release` id, so everything downstream is unchanged; when this is skipped
-      # (a push, or publish = false) they're empty and the build runs as a dry run.
+  # Automatic leg: fires only for the push that merges the release PR (see the message test), finds the
+  # merged PR by its "autorelease: pending" label, and turns it into the vX.Y.Z tag + GitHub Release.
+  # skip-github-pull-request means it never touches the PR itself.
+  release:
+    if: >-
+      github.event_name == 'push' &&
+      (contains(github.event.head_commit.message, 'release-please--branches--main') ||
+       startsWith(github.event.head_commit.message, 'chore(main): release'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # create the tag + release
+      pull-requests: write   # release-please updates the merged PR's state
+      issues: write          # flip "autorelease: pending" → "autorelease: tagged" (labels = issues API)
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
       - name: Create the release
         id: release
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
@@ -90,11 +96,15 @@ jobs:
           skip-github-pull-request: true
 
   build:
-    needs: release-please
-    # Only ever on a manual run: with a release cut it packages and uploads to it,
-    # otherwise it's the dry run. A push can no longer reach this — nothing on the
-    # push leg creates a release, which is the whole point.
-    if: github.event_name == 'workflow_dispatch'
+    needs: release
+    # Two ways in: a release was just created (upload to it), or an explicit dry run (artifacts only).
+    # The !cancelled() is load-bearing: on a dry-run dispatch the `release` job is SKIPPED, and a
+    # skipped dependency skips dependants too unless their condition opts out of that default.
+    # A failed `release` job still blocks the build (release_created stays empty).
+    if: >-
+      !cancelled() &&
+      (needs.release.outputs.release_created == 'true' ||
+       (github.event_name == 'workflow_dispatch' && inputs.dry_run))
     strategy:
       fail-fast: false
       # Supported targets: Windows x64 and Apple Silicon. Intel macs (osx-x64) are deliberately NOT
@@ -113,13 +123,13 @@ jobs:
       id-token: write        # sign the provenance attestation
       attestations: write    # store the provenance attestation
     env:
-      TAG: ${{ needs.release-please.outputs.tag_name }}
+      TAG: ${{ needs.release.outputs.tag_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Build exactly the released commit; empty ref = default branch on dry runs.
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release.outputs.tag_name }}
           persist-credentials: false
 
       - name: Set up .NET
@@ -203,13 +213,13 @@ jobs:
             Out-File -Encoding ascii "$($zip.Name).sha256"
 
       - name: Attest build provenance
-        if: needs.release-please.outputs.release_created == 'true'
+        if: needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip
 
       - name: Upload release assets
-        if: needs.release-please.outputs.release_created == 'true'
+        if: needs.release.outputs.release_created == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -220,7 +230,7 @@ jobs:
             --clobber
 
       - name: Upload dry-run artifact
-        if: needs.release-please.outputs.release_created != 'true'
+        if: needs.release.outputs.release_created != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Hoard-${{ env.VERSION }}-${{ matrix.rid }}
