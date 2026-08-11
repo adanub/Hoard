@@ -30,7 +30,7 @@ desktop app.
 
 |  | |
 | --- | --- |
-| **Imports a board** | Paste a board, section or pin URL. Private boards work — pick the browser you're logged into and Hoard borrows its cookies. |
+| **Imports a board** | Paste a board, section or pin URL. For private boards, pick the browser you're logged into and Hoard borrows its cookies. |
 | **Keeps folders as folders** | Pinterest sections become nested folders, automatically, to any depth. |
 | **Syncs cheaply** | A sync walks a board newest-first and stops as soon as it hits images you already have, so picking up 3 new pins costs a page or two rather than a re-crawl of the whole board. |
 | **Merges boards** | Point several Pinterest boards at one local board; they gather into the same grid. |
@@ -47,12 +47,10 @@ Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releas
 | Windows (x64) | `Hoard-<version>-win-x64.zip` |
 | macOS (Apple Silicon) | `Hoard-<version>-osx-arm64.zip` |
 
-Both are self-contained — no .NET install needed — and ship with the downloader bundled.
-
 > **macOS:** the app is ad-hoc signed, not notarised, so Gatekeeper will object the first time.
 > Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/Hoard.app`.
 >
-> **Intel Macs aren't built.** Apple Silicon only.
+> **Intel Macs aren't built.** I intend to support Apple Silicon (M1 or newer) only; although you are welcome to try building it yourself using the source.
 
 ## Quick start
 
@@ -72,7 +70,7 @@ missing from disk — a quick sync structurally can't see those.
 
 ## Where your data lives
 
-A **project** is a folder you choose. Everything durable lives in it, and it travels:
+A **project** is a folder you choose.
 
 ```
 YourFolder/
@@ -81,8 +79,7 @@ YourFolder/
   ops/                 # append-only history — one file per computer
 ```
 
-That's the whole archive: immutable images, plus a log of every change ever made. Nothing else in there
-is precious.
+That's the whole archive: immutable images, plus a log of every change ever made.
 
 Each computer keeps its own **index** — a SQLite database, thumbnails, logs — under `%APPDATA%\Hoard` on
 Windows and `~/.config/Hoard` on macOS. The index is derived: delete it and the next open
@@ -97,10 +94,10 @@ it takes changes made elsewhere first, then sends yours.
 
 A sync costs what *changed*, not what the archive holds. The history file already records every image, so
 Hoard moves exactly the new blobs instead of comparing thousands of files — which is the difference
-between a couple of seconds and ten minutes over SMB.
+between a couple of seconds and ten minutes over SMB. A full sync option is still provided though, just in case.
 
 **Repair backup** is the thorough pass. Use it if the backup folder has been altered from outside — files
-deleted, a drive half-restored — since a delta can't see damage nothing logged.
+deleted, a drive half-restored, etc. since a delta can't see damage nothing logged.
 
 Two folders carrying the same project marker are copies of the *same* archive, not rivals. That's the
 supported way to keep a local working copy and a NAS copy in step, and it's also how a machine heals
@@ -121,7 +118,7 @@ and leaves the rest alone. The export is read-only against your archive.
 
 ## Build from source
 
-Needs the **.NET 10 SDK**. Nothing else — gallery-dl is fetched by the build.
+Needs the **.NET 10 SDK**. gallery-dl is fetched by the build.
 
 ```bash
 dotnet build Hoard.slnx                   # build everything (the solution is .slnx)
