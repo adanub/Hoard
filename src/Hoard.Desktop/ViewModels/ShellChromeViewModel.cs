@@ -50,13 +50,21 @@ public partial class ShellChromeViewModel : ViewModelBase
     public IReadOnlyList<Crumb> Crumbs { get; private set; } = Array.Empty<Crumb>();
 
     /// <summary>An ancestor crumb was clicked: step Back to that page (forward history keeps the hops).
-    /// Gated on <see cref="IsBarVisible"/> — the strip is docked ABOVE the page, so no page-level sheet scrim
-    /// (or the lightbox) covers it; without the gate a crumb click would pop and dispose the page underneath
-    /// an open modal, bypassing the modal-first contract every other back gesture keeps.</summary>
+    /// <para>
+    /// Gated on <see cref="IsModalOpen"/> ONLY — deliberately NOT on <see cref="IsBarVisible"/>, which also
+    /// covers immersion. The two cases are opposites here: a MODAL must block, because the strip is docked
+    /// above the page and no sheet scrim reaches it, so an ungated click would pop and dispose the page out
+    /// from under an open sheet, bypassing the modal-first contract every other back gesture keeps. The
+    /// LIGHTBOX must not: it's a history <i>state step</i>, not a modal, and <see cref="NavigationService.BackTo"/>
+    /// reverts open states on its way out — the designed path. It doesn't cover the strip either, so gating
+    /// on it left the crumbs plainly visible and completely dead while the viewer was up.
+    /// </para>
+    /// (The launcher is immersive while a project opens, but it's the ROOT — its trail is one non-clickable
+    /// current crumb — so no reachable crumb was ever protected by the immersion half of the old gate.)</summary>
     [RelayCommand]
     private void NavigateToCrumb(Crumb crumb)
     {
-        if (!IsBarVisible) return; // a sheet is open, or the page is immersive (zoom / project opening)
+        if (IsModalOpen) return; // a sheet is open; the lightbox is navigable, not modal
         IsPlusMenuOpen = false;
         _nav.BackTo(crumb.Page);
     }

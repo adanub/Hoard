@@ -236,8 +236,10 @@ public partial class ProjectLauncherViewModel : ViewModelBase, IResumable, ICrum
     [ObservableProperty] private bool _isOpening;
 
     /// <summary>The busy overlay (project opening/creating) is a page-LOCAL scrim, so it can't cover the
-    /// shell's floating bar — surfacing it as "immersive" hides the bar (and gates crumb clicks) for the
-    /// duration, otherwise ＋ → New project could start a second concurrent open over the first.</summary>
+    /// shell's floating bar — surfacing it as "immersive" hides the bar for the duration, otherwise
+    /// ＋ → New project could start a second concurrent open over the first. It does NOT gate crumb clicks
+    /// (those go by <c>IsModalOpen</c> alone); moot here anyway, since the launcher is the root and its trail
+    /// is a single non-clickable current crumb.</summary>
     public bool IsImmersive => IsOpening;
 
     partial void OnIsOpeningChanged(bool value) => OnPropertyChanged(nameof(IsImmersive));

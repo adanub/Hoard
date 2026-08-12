@@ -83,6 +83,42 @@ public class ShellChromeViewModelTests
     }
 
     [Fact]
+    public void An_immersive_page_does_not_block_a_crumb_jump()
+    {
+        // The fullscreen viewer is a history STATE, not a modal, and it doesn't cover the breadcrumb strip
+        // (docked above the page) — so the crumbs must stay live. Gating these on IsBarVisible, which also
+        // falls for immersion, left them visible and dead while the lightbox was open.
+        var root = new FakePage("Projects");
+        var (nav, chrome) = NewShell(root);
+        nav.Push(new FakePage("Library"));
+        var board = new FakePage("Board");
+        nav.Push(board);
+        board.IsImmersive = true;
+        Assert.False(chrome.IsBarVisible); // the floating bar still hides — that part was right
+
+        chrome.NavigateToCrumbCommand.Execute(chrome.Crumbs[0]);
+
+        Assert.Same(root, nav.Current);
+    }
+
+    [Fact]
+    public void An_open_modal_still_blocks_a_crumb_jump()
+    {
+        // The other half of the same gate, and the reason it exists: no sheet scrim reaches the strip, so an
+        // ungated crumb would pop and dispose the page out from under an open sheet.
+        var root = new FakePage("Projects");
+        var (nav, chrome) = NewShell(root);
+        nav.Push(new FakePage("Library"));
+        var board = new FakePage("Board");
+        nav.Push(board);
+        chrome.IsModalOpen = true;
+
+        chrome.NavigateToCrumbCommand.Execute(chrome.Crumbs[0]);
+
+        Assert.Same(board, nav.Current);
+    }
+
+    [Fact]
     public void Search_text_proxies_live_to_the_page_and_back()
     {
         var page = new FakePage();
