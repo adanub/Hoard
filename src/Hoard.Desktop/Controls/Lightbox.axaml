@@ -12,6 +12,14 @@
              x:Class="Hoard.Desktop.Controls.Lightbox"
              IsVisible="False">
 
+    <!-- The lightbox is ALWAYS a dark surface (a ~90% black scrim in both themes), so everything inside it
+         must resolve DARK tokens regardless of the app theme. Without this scope the chrome mixes the two:
+         the ✕ is the theme-independent near-white LightboxForegroundBrush, but a ghost Button's hover/press
+         fill is the theme-DEPENDENT SecondaryGradientBrush — near-white in light mode, so hovering close
+         turned the button into a white square with an invisible ✕ on it (the BusyBar spinner had the same
+         mismatch). Scoping the subtree fixes the whole class of bug rather than one control, and anything
+         added in here later inherits the right palette. -->
+    <ThemeVariantScope RequestedThemeVariant="Dark">
     <Panel>
         <!-- Scrim: the click-away surface (margin around the image). Near-black so the media pops. -->
         <Border x:Name="Scrim" Background="{DynamicResource LightboxScrimBrush}"/>
@@ -44,4 +52,5 @@
                    Foreground="{DynamicResource LightboxForegroundBrush}"
                    HorizontalAlignment="Center" VerticalAlignment="Bottom" IsHitTestVisible="False"/>
     </Panel>
+    </ThemeVariantScope>
 </UserControl>

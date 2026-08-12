@@ -77,6 +77,14 @@ not pure black/white) with a single indigo **accent**.
 
 The **accent is one token** (`PrimaryBrush` + `AccentBrush` + `RingBrush`) — change the indigo in `Tokens.axaml` to recolour the whole UI.
 
+**An always-dark surface needs a `ThemeVariantScope`, not theme-independent tokens.** `LightboxScrimBrush`
+/ `LightboxForegroundBrush` hold the same value in both dictionaries because the fullscreen viewer is a
+~90% black surface whatever the app theme is. That is *not enough on its own*: a control placed on it still
+resolves every OTHER token from the live theme, so in light mode the ghost close button hovered to the
+near-white `SecondaryGradientBrush` under its near-white ✕ and vanished. Wrap the whole subtree in
+`<ThemeVariantScope RequestedThemeVariant="Dark">` (see `Controls/Lightbox.axaml`) so its states, spinners
+and anything added later all resolve the dark palette — fixing the class of bug, not the one control.
+
 - **Radius:** `RadiusSm` 6 · `RadiusMd` 10 · `RadiusLg` 14 · `RadiusLgTop` (lg on top corners only — card covers) · `RadiusXl` 18 (RadiusLg scaled to the floating bar's height) · `RadiusFull`. Buttons/cards use `RadiusLg`, list rows `RadiusMd`, pills/badges `RadiusFull`.
 - **Control heights** (the explicit size metric for buttons): `ControlHeight` 38 (default) · `ControlHeightSm` 28 · `ControlHeightLg` 48; the `sm`/`lg` classes set `Height`, the icon button is square at `ControlHeight`.
 - **Spacing:** 4 / 8 / 12 / 16 / 24 / 32 (`Space1`…`Space8`).
