@@ -20,9 +20,18 @@ namespace Hoard.Desktop.Controls;
 /// <c>:indeterminate</c> pseudo-class while the control is still attached, which stops the style animation — so a
 /// hidden spinner costs nothing and a detached page stops re-registering and gets collected.
 ///
-/// Contract: bind/set the BusyBar's <b>own</b> <see cref="Control.IsVisible"/> to the busy condition — do not rely
-/// on hiding an ancestor (effective visibility has no change notification, so an ancestor-only gate would leave the
-/// animation running invisibly). <c>IsIndeterminate</c> is owned by this class and follows automatically.
+/// Contract: bind/set the BusyBar's <b>own</b> <see cref="Control.IsVisible"/> so that it is false whenever the bar
+/// is off-screen <b>for any reason — including a hidden ancestor</b>. This class cannot see effective visibility
+/// (it has no change notification), so an ancestor-only gate leaves the animation running invisibly.
+/// <c>IsIndeterminate</c> is owned by this class and follows automatically.
+///
+/// <para>
+/// The trap that phrasing exists for: binding <c>IsVisible</c> to a bare "is something running" flag looks like it
+/// honours the contract, but a bar inside a sheet is ALSO hidden by its <c>SheetHost</c> closing — and the shell's
+/// <c>SheetHost</c>s stay attached when closed. So a sheet-hosted bar must gate on <i>busy AND that sheet is
+/// open</i> (<c>UpdateViewModel.IsPromptBusy</c>, <c>SettingsViewModel.ShowUpdateBusy</c>; pinned by
+/// <c>BusyGateTests</c>), never on the busy flag alone.
+/// </para>
 /// </summary>
 public class BusyBar : ProgressBar
 {

@@ -312,8 +312,13 @@ Concepts that span multiple files:
   hold — with two deliberate twists: **it IGNORES `IAbsorbsBack`** (absorption protects a single-step gesture
   from popping a page mid-band-collapse; a crumb jump LEAVES the page like a `Push`, whose leave path abandons
   the animation — honouring the absorb stalled the jump after the band closed), and **crumb clicks are gated on
-  `Chrome.IsBarVisible`** — the strip is docked ABOVE the page, so no page-level sheet scrim (or the lightbox)
-  covers it; ungated it could pop a page out from under an open modal. The **floating bar** (`Controls/FloatingBar` bound to
+  `Chrome.IsModalOpen` — deliberately NOT `IsBarVisible`.** The strip is docked ABOVE the page, so nothing
+  page-level covers it: an open *sheet* must block (its scrim doesn't reach the strip, so an ungated click
+  would pop and dispose the page out from under the modal), but the *lightbox* must not — it's a history
+  `StateStep`, and `BackTo` reverts open states on the way out, which is the designed path. Gating on
+  `IsBarVisible` (which also falls for immersion) left the crumbs visible and completely dead while the
+  fullscreen viewer was open. The launcher's `IsImmersive` (project opening) is moot here — it's the root, so
+  its trail is one non-clickable current crumb. The **floating bar** (`Controls/FloatingBar` bound to
   `ViewModels/ShellChromeViewModel`, both shell-lifetime) is a bottom-centre pill: **← back** (plain
   `Navigation.Back`, disabled at the root), **🔍 search** (the pill *morphs into the input*), and **＋** (a
   context-menu card rendered ABOVE the pill in the same visual tree — token styles apply, no `Popup` root —
@@ -682,6 +687,35 @@ Concepts that span multiple files:
   **styles** (a local Dock/Width would beat the style), via a `bandstacked` class bound to `BoardViewModel.IsBandStacked`
   (the view sets it from the grid width using the packer's own breakpoint, so the layout matches the band-height math).
   The outer fade Border is untouched; the old `RailColumnWidth` `GridLength` is gone.
+- **Installer + auto-update is Velopack (MIT), Windows only, and entirely opt-in.** `Program.Main` calls
+  `VelopackApp.Build().Run()` **as its very first statement** — the installer re-launches the same exe with
+  hook arguments, so anything before it runs during every install/update (and anything that opens a window
+  would flash one). `Services/UpdateService` wraps `UpdateManager` over a `GithubSource` on this repo's
+  Releases and **no-ops entirely unless `IsInstalled`** — a `dotnet run` build and the portable zip have no
+  install to replace, and the Settings section says so rather than offering dead buttons. The rules live in
+  the pure `UpdatePolicy` (unit-tested, no Velopack/Avalonia): check at startup only when supported ＋
+  opted in; a found update **prompts** (`Controls/UpdateSheet`, a second shell-level `SheetHost`) unless
+  "install automatically" is on, in which case it downloads quietly and `WaitExitThenApplyUpdates` applies
+  it on exit rather than yanking the app out from under the user. **Applying is gated on
+  `ImportStatus.IsImporting`/`IsRemoteSyncing`** — it swaps the whole app directory, so it's subject to the
+  same interlock as every other archive-writing path, and the gate is re-checked **immediately before the
+  apply**, not only before the download: a download runs for minutes and an import can start inside that
+  window. Three more invariants, each of which was a real bug first: **`IsBusy` spans BOTH install paths**
+  (the quiet auto-install holds it too, or the Settings button starts a second download + apply against the
+  same staging directory); **the busy bars are gated on their own sheet being open**, never on `IsBusy`
+  alone — the shell `SheetHost`s stay attached when closed and `BusyBar` keys off its OWN `IsVisible`, so an
+  ancestor-only gate runs the infinite animation invisibly for the whole download; and **a failed check must
+  not clear `UpdateService.Pending`** (assign it only on success), or a blip while re-checking throws away an
+  update the user was already offered. Two `UiSettings` keys drive it: `AutoCheckUpdates`
+  (default **on**) and `AutoInstallUpdates` (default **off**). A dev build can't self-update, so
+  **`HOARD_UPDATE_DEMO=1`** (same spirit as `HOARD_GALLERY=1`) drives the prompt + Settings rows with a
+  pretend update from `dotnet run` — VM-only, it never downloads or applies anything.
+  **The `vpk` tool version in `release.yml`,
+  the `Velopack` PackageReference, and the pinned licence commit must move together.** The macOS leg
+  deliberately keeps its hand-rolled ad-hoc-signed `.app` zip (unverified on a real Mac here; an arm64
+  bundle that loses its ad-hoc signature won't launch at all) — the app-side code is cross-platform and
+  simply reports "doesn't update itself" there. If macOS is ever added, use `--noInst`: a root-owned `.pkg`
+  install makes every future update prompt for a password, while a user-owned `.app` updates silently.
 - **Logging.** Serilog → the launching terminal (the WinExe attaches to the parent console) **and**
   `%APPDATA%/Hoard/logs/hoard.log` (rolled daily: `hoardYYYYMMDD.log`). `App` hooks `AppDomain.UnhandledException`
   + `TaskScheduler.UnobservedTaskException` and `Log.CloseAndFlush()`es so an otherwise-silent UI-thread crash
@@ -759,6 +793,14 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   behaviour (scroll feel, GIF playback, memory) must be confirmed by the user — point them at `hoard.log`.
 - **The sandbox may block executing the bundled `gallery-dl.exe`** (third-party binary), including via the test
   runner. Direct diagnostic runs are sometimes allowed; don't tunnel execution through tests to get around a block.
+- **`gh` is NOT installed on this machine** — surprising, given how much of the release section above is
+  written around it. Those commands are for CI runners, where it's present. Locally, read GitHub through
+  unauthenticated `https://api.github.com/...` (issues, tags, releases, file contents) with WebFetch; that
+  works fine for public repos and needs no token.
+- **`python` with `pyyaml` is available, and nothing else validates the workflows.** After editing
+  `.github/workflows/*.yml`, parse it —
+  `python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml', encoding='utf-8'))"` — because
+  a YAML mistake there otherwise surfaces at release time, on the one run that matters.
 - **Avalonia 12 gotchas already hit:** `ItemsRepeater` is a separate NuGet package; the clipboard API changed to
   `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); a templated
   control's visual state lives on its template parts, so restyle
