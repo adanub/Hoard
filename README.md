@@ -3,6 +3,8 @@
 <img src="assets/icon/hoard-128.png" width="96" alt="">
 
 # Hoard
+[![CI](https://github.com/adanub/Hoard/actions/workflows/ci.yml/badge.svg)](https://github.com/adanub/Hoard/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/adanub/Hoard?display_name=tag&sort=semver)](https://github.com/adanub/Hoard/releases/latest)
 
 **Back up your Pinterest boards locally, on your own disk.**
 
@@ -11,16 +13,12 @@ was already technically possible by downloading the pins manually, but that didn
 
 So I looked around if there were any tools out there that already existed for doing this,
 and it was surprisingly barren. The only thing out there was **[gallery-dl](https://github.com/mikf/gallery-dl)**,
-but using a CLI tool for an otherwise art/design oriented experience didn't quite feel right. I also
+but using a CLI tool for an otherwise art/design-oriented experience didn't quite feel right. I also
 coincidentally had been experimenting with trying agentic workflows for creating useful side projects
-and tools, so I started hacking away at this problem in my spare time - and Hoard was born 🙂
+and tools, so I started hacking away at this problem in my spare time - and thus, Hoard was born 🙂
 
-Hoard downloads the boards you've saved — the full-size images, the titles, the folder structure —
-into a plain folder you own, and lets you browse them locally, all through a nice-looking performant
-desktop app.
-
-[![CI](https://github.com/adanub/Hoard/actions/workflows/ci.yml/badge.svg)](https://github.com/adanub/Hoard/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/adanub/Hoard?display_name=tag&sort=semver)](https://github.com/adanub/Hoard/releases/latest)
+Hoard lets you select a board from Pinterest that you can access, and saves them into a "project"; a
+local folder created on your machine. More details below 👇
 
 </div>
 
@@ -31,12 +29,12 @@ desktop app.
 |  | |
 | --- | --- |
 | **Imports a board** | Paste a board, section or pin URL. For private boards, pick the browser you're logged into and Hoard borrows its cookies. |
-| **Keeps folders as folders** | Pinterest sections become nested folders, automatically, to any depth. |
-| **Syncs cheaply** | A sync walks a board newest-first and stops as soon as it hits images you already have, so picking up 3 new pins costs a page or two rather than a re-crawl of the whole board. |
+| **Keeps folders as folders** | Pinterest sections within a board become nested folders in the saved board.  |
+| **Syncs cheaply** | A sync walks a board newest-first and stops as soon as it hits images you already have, so picking up 3 new pins costs a page or two rather than a re-crawl of the whole board. Or at least it tries to, anyways - if you've moved stuff around on Pinterest after the sync for example, then it might miss some things on the next sync. A full-sync option is provided just in case, for edge cases like that. |
 | **Merges boards** | Point several Pinterest boards at one local board; they gather into the same grid. |
-| **Backs itself up** | Point a project at a second folder — an external drive, a NAS share, a synced folder — and reconcile the two. Only the changes move. |
-| **Exports plain files** | Write the whole project out as `Project/Board/Folder/Title [pin id].jpg`. No Hoard needed to read it. |
-| **Browses fast** | Virtualised masonry grid, live search, an inline detail band, and a zoom/pan lightbox. GIFs animate in the grid, capped so memory stays flat. |
+| **Backs itself up** | Point a project at a second folder — an external drive, a NAS share, a network-synced folder. After the initial backup sync, only the changes move on following attempts. A backup for your backup 🤯 |
+| **Exports to plain folder** | By default, Hoard keeps the project files and folders organised in a way where it can read and write them in an optimised, performant way, so browsing the items is fast and responsive. This structure isn't very intuitive or navigable for a human though, so the app offers an export button that spits out a copy of the files organised in a way where it does make sense for someone to easily navigate in their OS's file explorer, no Hoard app needed.
+| **Browses fast** | Virtualised masonry grid, live search, an inline detail band, and a zoom/pan lightbox. GIFs animate in the grid, capped so memory stays flat. All in a nice UI that feels somewhat reminiscent of Pinterest but with my own touches that I subjectively find better 🙈|
 
 ## Install
 
