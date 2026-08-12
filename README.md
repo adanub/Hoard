@@ -110,7 +110,7 @@ YourFolder/
 That's the whole archive: immutable images, plus a log of every change ever made.
 
 Each computer keeps its own **index** — a SQLite database, thumbnails, logs — under `%APPDATA%\Hoard` on
-Windows and `~/.config/Hoard` on macOS. The index is derived: delete it and the next open
+Windows and `~/Library/Application Support/Hoard` on macOS. The index is derived: delete it and the next open
 rebuilds it from `ops/`. That's deliberate, and it's what lets the same project folder sit on a NAS and
 be opened from several machines without a database ever being written over the network.
 
