@@ -108,7 +108,19 @@ public partial class GalleryWindow : Window
         // The Settings sheet over a design-time VM: nothing persists, but the theme choice really applies.
         // The host follows the VM's IsOpen so the sheet's own Done button (CloseCommand → IsOpen=false)
         // actually closes it, like the shell's bound SheetHost.
-        _demoSettings = new SettingsViewModel();
+        // The update VM carries no update service, so nothing is ever checked, downloaded or applied — it just
+        // renders. It also feeds the Settings sheet's Updates section (without one that section hides itself).
+        // With no service IsSupported is false, so the section shows its "this build doesn't update itself"
+        // note; run the gallery with HOARD_UPDATE_DEMO=1 as well to see the toggles and buttons instead.
+        _demoUpdate = new UpdateViewModel { AvailableVersion = "1.4.0" };
+        DemoUpdateSheet.DataContext = _demoUpdate;
+        _demoUpdate.PropertyChanged += (_, ev) =>
+        {
+            if (ev.PropertyName == nameof(UpdateViewModel.IsOpen)) UpdateDemoSheet.IsOpen = _demoUpdate.IsOpen;
+        };
+        UpdateDemoSheet.DismissCommand = new RelayCommand(() => _demoUpdate.IsOpen = false);
+
+        _demoSettings = new SettingsViewModel(null, null, null, _demoUpdate);
         DemoSettingsSheet.DataContext = _demoSettings;
         _demoSettings.PropertyChanged += (_, ev) =>
         {
@@ -118,10 +130,16 @@ public partial class GalleryWindow : Window
     }
 
     private SettingsViewModel? _demoSettings;
+    private UpdateViewModel? _demoUpdate;
 
     private void OpenSettingsDemo()
     {
         if (_demoSettings is not null) _demoSettings.IsOpen = true;
+    }
+
+    private void OpenUpdateDemo()
+    {
+        if (_demoUpdate is not null) _demoUpdate.IsOpen = true;
     }
 
     /// <summary>A sample page for the shell-chrome demos: breadcrumb-titled, searchable, with ＋ actions.</summary>
@@ -172,6 +190,7 @@ public partial class GalleryWindow : Window
     private void OnOpenSheet(object? sender, RoutedEventArgs e) => DemoSheet.IsOpen = true;
     private void OnCloseSheet(object? sender, RoutedEventArgs e) => DemoSheet.IsOpen = false;
     private void OnOpenSettingsDemo(object? sender, RoutedEventArgs e) => OpenSettingsDemo();
+    private void OnOpenUpdateDemo(object? sender, RoutedEventArgs e) => OpenUpdateDemo();
 
     private void OnShowToast(object? sender, RoutedEventArgs e) => _toasts.Show("Saved your changes.");
     private void OnShowErrorToast(object? sender, RoutedEventArgs e) => _toasts.Show("Something went wrong.", isError: true);

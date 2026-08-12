@@ -25,11 +25,23 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ProjectManager? _projects;
     private readonly AppPaths? _appPaths;
 
-    public SettingsViewModel(UiSettingsStore? store, ProjectManager? projects, AppPaths? appPaths)
+    /// <summary>The update section's check/install commands and status; shell-owned, shared with the prompt
+    /// sheet so a check started here reveals the same pending update the prompt offers.</summary>
+    public UpdateViewModel? Update { get; }
+
+    public SettingsViewModel(UiSettingsStore? store, ProjectManager? projects, AppPaths? appPaths,
+                             UpdateViewModel? update = null)
     {
         _store = store;
         _projects = projects;
         _appPaths = appPaths;
+        Update = update;
+        // Both are shell-lifetime singletons, so this subscription lives as long as the app — nothing to detach.
+        if (update is not null)
+            update.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(UpdateViewModel.IsBusy)) OnPropertyChanged(nameof(ShowUpdateBusy));
+            };
 
         var s = store?.Settings ?? new UiSettings();
         _themeChoice = s.Theme switch { "light" => "Light", "dark" => "Dark", _ => "System" };
@@ -37,6 +49,8 @@ public partial class SettingsViewModel : ViewModelBase
         _defaultCookiesBrowser = BrowserCookies.NormaliseChoice(s.DefaultCookiesBrowser);
         _gifAutoplay = s.GifAutoplay;
         _maxPlayingGifs = MaxPlayingGifsChoices.Contains(s.MaxPlayingGifs) ? s.MaxPlayingGifs : 12;
+        _autoCheckUpdates = s.AutoCheckUpdates;
+        _autoInstallUpdates = s.AutoInstallUpdates;
 
         // PERSIST the snap-backs: consumers read the raw shared UiSettings live (the GIF budget, cookie
         // defaults), so a stored out-of-choice value the sheet merely displayed differently would be silently
@@ -58,7 +72,7 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     // Design-time constructor for the XAML previewer.
-    public SettingsViewModel() : this(null, null, null) { }
+    public SettingsViewModel() : this(null, null, null, null) { }
 
     [ObservableProperty] private bool _isOpen;
 
@@ -125,6 +139,36 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private int _maxPlayingGifs;
 
     partial void OnMaxPlayingGifsChanged(int value) => Persist(s => s.MaxPlayingGifs = value);
+
+    // ── Updates ───────────────────────────────────────────────────────────────
+
+    /// <summary>Look for a new release at startup. On by default — finding one only ever offers it.</summary>
+    [ObservableProperty] private bool _autoCheckUpdates;
+
+    partial void OnAutoCheckUpdatesChanged(bool value) => Persist(s => s.AutoCheckUpdates = value);
+
+    /// <summary>Install a found update without asking. OFF by default: updating is the user's call.</summary>
+    [ObservableProperty] private bool _autoInstallUpdates;
+
+    partial void OnAutoInstallUpdatesChanged(bool value) => Persist(s => s.AutoInstallUpdates = value);
+
+    /// <summary>Whether to render the Updates section at all — false only in the previewer/gallery, which has
+    /// no update service, and where the heading would otherwise sit alone between two dividers.</summary>
+    public bool HasUpdates => Update is not null;
+
+    /// <summary>Show the update toggles/buttons — only for a build that can actually replace itself.</summary>
+    public bool ShowUpdateControls => Update?.IsSupported == true;
+
+    /// <summary>Show "this build doesn't update itself" instead (the portable zip, a dev run).</summary>
+    public bool ShowUpdateUnsupportedNote => Update is { IsSupported: false };
+
+    /// <summary>The Settings busy bar's gate: an update op is running AND this sheet is on screen. The second
+    /// half is load-bearing — the shell's Settings <c>SheetHost</c> stays attached when closed, and a
+    /// <c>BusyBar</c> keyed only off <c>Update.IsBusy</c> would run its infinite animation invisibly for a
+    /// whole download (the leak the control exists to prevent).</summary>
+    public bool ShowUpdateBusy => IsOpen && Update?.IsBusy == true;
+
+    partial void OnIsOpenChanged(bool value) => OnPropertyChanged(nameof(ShowUpdateBusy));
 
     // ── Diagnostics / about ───────────────────────────────────────────────────
 

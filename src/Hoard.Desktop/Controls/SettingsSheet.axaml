@@ -56,6 +56,55 @@
 
         <Border Height="1" Background="{DynamicResource LineBrush}" Margin="0,2"/>
 
+        <!-- Updates. Switches rather than checkboxes: booleans are switches throughout Hoard (DESIGN.md),
+             and the theme has no CheckBox template — an unthemed stock control renders nothing. -->
+        <StackPanel Spacing="12" IsVisible="{Binding HasUpdates}">
+            <TextBlock Text="Updates"/>
+
+            <TextBlock Classes="muted" TextWrapping="Wrap" IsVisible="{Binding ShowUpdateUnsupportedNote}"
+                       FontSize="{DynamicResource FontSizeXs}"
+                       Text="This copy of Hoard doesn't update itself — it was unzipped rather than installed. Download the latest release from GitHub to update."/>
+
+            <StackPanel Spacing="12" IsVisible="{Binding ShowUpdateControls}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Check for updates automatically"/>
+                        <TextBlock Classes="muted" FontSize="{DynamicResource FontSizeXs}" TextWrapping="Wrap"
+                                   Text="Look for a new version at startup. Hoard asks before installing anything."/>
+                    </StackPanel>
+                    <ToggleButton Grid.Column="1" Theme="{StaticResource HoardSwitch}"
+                                  IsChecked="{Binding AutoCheckUpdates}" VerticalAlignment="Center"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Install updates automatically"/>
+                        <TextBlock Classes="muted" FontSize="{DynamicResource FontSizeXs}" TextWrapping="Wrap"
+                                   Text="Download updates without asking and apply them the next time Hoard closes."/>
+                    </StackPanel>
+                    <ToggleButton Grid.Column="1" Theme="{StaticResource HoardSwitch}"
+                                  IsChecked="{Binding AutoInstallUpdates}" VerticalAlignment="Center"/>
+                </Grid>
+
+                <!-- ShowUpdateBusy = this sheet is open AND an update op is running. Not Update.IsBusy alone:
+                     the shell's Settings SheetHost is always attached, so BusyBar (which keys off its OWN
+                     IsVisible) would animate invisibly whenever a download runs with Settings closed. -->
+                <ctrl:BusyBar IsVisible="{Binding ShowUpdateBusy}"/>
+                <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding Update.SettingsStatusText}"
+                           IsVisible="{Binding Update.SettingsStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                <ctrl:FlexWrapPanel Spacing="8">
+                    <Button Theme="{StaticResource HoardButton}" Classes="outline" Content="Check for updates"
+                            Command="{Binding Update.CheckNowCommand}"/>
+                    <Button Theme="{StaticResource HoardButton}" Content="Install update"
+                            Command="{Binding Update.InstallCommand}"
+                            IsVisible="{Binding Update.IsUpdateAvailable}"/>
+                </ctrl:FlexWrapPanel>
+            </StackPanel>
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource LineBrush}" Margin="0,2"/>
+
         <!-- About / diagnostics -->
         <StackPanel Spacing="4">
             <Grid ColumnDefinitions="*,Auto">

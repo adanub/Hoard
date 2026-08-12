@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Hoard.Desktop.ViewModels"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             x:Class="Hoard.Desktop.Controls.UpdateSheet"
+             x:DataType="vm:UpdateViewModel">
+
+    <Design.DataContext>
+        <vm:UpdateViewModel/>
+    </Design.DataContext>
+
+    <!-- The "a new version is available" prompt (shell-level SheetHost, opened by the startup check when
+         automatic installing is off). Updating is always the user's call: "Not now" just dismisses, and the
+         same update stays on offer in Settings. -->
+    <StackPanel Margin="24" Spacing="16" MaxWidth="420">
+        <TextBlock Classes="h2" Text="Update available"/>
+
+        <TextBlock TextWrapping="Wrap" Text="{Binding PromptMessage}"
+                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+
+        <!-- IsPromptBusy, not IsBusy: this sheet's SheetHost is shell-level and ALWAYS attached, and BusyBar
+             keys its animation off its OWN IsVisible — bound to IsBusy alone it would tick invisibly through
+             a download started from Settings. See UpdateViewModel.IsPromptBusy. -->
+        <ctrl:BusyBar IsVisible="{Binding IsPromptBusy}"/>
+        <!-- Visible whenever there's something to say — NOT gated on IsBusy, which is already false by the
+             time a failure message is written, so the error landed in an invisible control. -->
+        <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding StatusText}"
+                   IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+        <ctrl:FlexWrapPanel Spacing="8">
+            <!-- "Not now" → "Cancel" once a download starts: the same command, but it stops an install in
+                 flight, and a button that doesn't say so is an escape hatch nobody can find. -->
+            <Button Theme="{StaticResource HoardButton}" Classes="ghost lg" Content="{Binding DismissLabel}"
+                    Command="{Binding CloseCommand}"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="lg" Content="Update now"
+                    Command="{Binding InstallCommand}"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

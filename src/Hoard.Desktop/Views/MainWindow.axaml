@@ -43,6 +43,12 @@
                 <ctrl:SettingsSheet DataContext="{Binding Settings}"/>
             </ctrl:SheetHost>
 
+            <!-- The "update available" prompt. Declared after Settings so it floats above it if a check
+                 finishes while Settings is open; dismissing is "not now", never an install. -->
+            <ctrl:SheetHost IsOpen="{Binding Update.IsOpen}" DismissCommand="{Binding Update.CloseCommand}">
+                <ctrl:UpdateSheet DataContext="{Binding Update}"/>
+            </ctrl:SheetHost>
+
             <ctrl:ToastHost DataContext="{Binding ToastService}"/>
         </Panel>
     </LayoutTransformControl>

@@ -35,6 +35,9 @@ public partial class MainWindowViewModel : ViewModelBase
     /// <summary>The Settings sheet's state (opened from the bar's ⚙; hosted in a shell-level SheetHost).</summary>
     public SettingsViewModel Settings { get; }
 
+    /// <summary>Update checking + the "update available" prompt (a second shell-level SheetHost).</summary>
+    public UpdateViewModel Update { get; }
+
     /// <summary>App-wide transient toasts; the shell overlays a <c>ToastHost</c> bound to this.</summary>
     public ToastService ToastService { get; } = new();
 
@@ -45,7 +48,8 @@ public partial class MainWindowViewModel : ViewModelBase
         IngestService ingest, LibraryService library, CurationService curation,
         ProjectManager projects, ProjectDbContextFactory dbFactory,
         UiSettingsStore? uiSettings = null, AppPaths? appPaths = null,
-        Hoard.Core.Sync.ArchiveLog? archive = null, BoardExporter? exporter = null)
+        Hoard.Core.Sync.ArchiveLog? archive = null, BoardExporter? exporter = null,
+        UpdateService? updates = null)
     {
         _ingest = ingest;
         _library = library;
@@ -55,9 +59,25 @@ public partial class MainWindowViewModel : ViewModelBase
         _uiSettings = uiSettings;
         _archive = archive;
         _exporter = exporter;
-        Settings = new SettingsViewModel(uiSettings, projects, appPaths);
+        // No update service on the design-time path (projects is null): constructing one builds a Velopack
+        // UpdateManager, which probes the disk for install metadata — not something the XAML previewer should
+        // do to render a sheet. A null service reads as "this build can't update itself", which is true there.
+        Update = new UpdateViewModel(
+            updates ?? (projects is null ? null : new UpdateService()),
+            uiSettings?.Settings ?? new UiSettings(), ImportStatus, ToastService,
+            // Chrome is assigned just below (it can't be built first — it needs Settings, which needs this
+            // Update). The predicate isn't invoked until the startup check fires seconds later, by which
+            // point it's set; the pattern keeps that provably safe rather than merely true in practice.
+            isModalOpen: () => Chrome is { IsModalOpen: true });
+        Settings = new SettingsViewModel(uiSettings, projects, appPaths, Update);
         Chrome = new ShellChromeViewModel(Navigation, openSettings: Settings.Open);
-        if (projects is not null) ShowLauncher(); // skip in the design-time (null) ctor
+        if (projects is not null)
+        {
+            ShowLauncher(); // skip in the design-time (null) ctor
+            // Fire-and-forget: the check waits a few seconds, then either prompts or (if the user opted in)
+            // installs quietly. Failures are logged, never surfaced — an offline launch must not nag.
+            _ = Update.RunStartupCheckAsync();
+        }
     }
 
     // Design-time constructor for the XAML previewer.

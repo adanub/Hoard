@@ -15,6 +15,7 @@
 using Avalonia;
 using System;
 using System.Runtime.InteropServices;
+using Velopack;
 
 namespace Hoard.Desktop;
 
@@ -26,6 +27,26 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // MUST be the very first thing that runs. The installer/updater re-launches this same exe with
+        // hook arguments (--veloapp-install, --veloapp-updated, …); VelopackApp handles those and exits
+        // the process. Anything before it would run during every install/update hook, and anything that
+        // opens a window would flash one. Inert (returns immediately) for a normal launch, and for a
+        // portable/zip/`dotnet run` build that Velopack never installed.
+        //
+        // Guarded, because being first also means being BEFORE Serilog and the unhandled-exception hook
+        // (App.OnFrameworkInitializationCompleted): a throw here — corrupt install metadata, an unreadable
+        // app directory — would otherwise kill the process with no window and nothing in hoard.log. Same
+        // principle UpdateService holds to: the updater must never be the reason the app won't start. The
+        // exception is stashed and logged once the logger exists.
+        try
+        {
+            VelopackApp.Build().Run();
+        }
+        catch (Exception ex)
+        {
+            App.StartupUpdaterError = ex;
+        }
+
         // A WinExe has no console of its own. When launched from a terminal (e.g. `dotnet run`),
         // attach to that terminal so Serilog's console sink shows logs live. No-op when launched
         // with no parent console (double-click).

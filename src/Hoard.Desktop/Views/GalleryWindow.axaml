@@ -280,6 +280,8 @@
 
                     <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open the Settings sheet"
                             Click="OnOpenSettingsDemo"/>
+                    <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open the update prompt"
+                            Click="OnOpenUpdateDemo"/>
                 </StackPanel>
 
             </StackPanel>
@@ -319,6 +321,12 @@
              choice really applies, like the header toggle). -->
         <ctrl:SheetHost x:Name="SettingsDemoSheet">
             <ctrl:SettingsSheet x:Name="DemoSettingsSheet"/>
+        </ctrl:SheetHost>
+
+        <!-- The "update available" prompt, over a design-time UpdateViewModel (no update service, so nothing
+             is ever checked, downloaded or applied). -->
+        <ctrl:SheetHost x:Name="UpdateDemoSheet">
+            <ctrl:UpdateSheet x:Name="DemoUpdateSheet"/>
         </ctrl:SheetHost>
 
         <!-- Confirmation popup — opened ON TOP of an Edit popup by any destructive action (must be last so it

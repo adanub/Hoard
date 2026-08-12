@@ -16,6 +16,10 @@ namespace Hoard.Desktop;
 
 public partial class App : Application
 {
+    /// <summary>Set by <c>Program.Main</c> when Velopack's startup hooks threw. Logged as soon as Serilog
+    /// exists — the failure happens before any logger does, so it has nowhere else to go.</summary>
+    internal static Exception? StartupUpdaterError;
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
@@ -39,6 +43,11 @@ public partial class App : Application
 
         Log.Information("Hoard starting. App data: {AppData}", appPaths.AppDataRoot);
 
+        // Velopack's hook processing runs before any of this exists (see Program.Main), so a failure there
+        // can only be reported now. The app is running regardless — this is diagnostics, not a fatal path.
+        if (StartupUpdaterError is { } updaterError)
+            Log.Error(updaterError, "Velopack startup hooks failed — the app started anyway, but updating may not work");
+
         // Capture otherwise-silent crashes (an unhandled UI-thread exception terminates the process before
         // anything is written), and flush the file sink so the stack trace actually lands in hoard.log.
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
@@ -60,6 +69,7 @@ public partial class App : Application
         if (OperatingSystem.IsWindows())
             services.AddSingleton<Hoard.Core.Storage.IFileRecycler, Services.WindowsFileRecycler>();
         services.AddSingleton<Services.UiSettingsStore>(); // desktop-head preferences (theme/scale/GIFs/cookies)
+        services.AddSingleton<Services.UpdateService>();   // Velopack installer/auto-update (inert for a zip build)
         services.AddHoardCore(appPaths);
         services.AddGalleryDlConnectors(ResolveGalleryDlPath()); // desktop-only ingestion
         services.AddTransient<MainWindowViewModel>();

@@ -229,6 +229,12 @@ jobs:
           cp THIRD-PARTY-NOTICES.md publish/licences/THIRD-PARTY-NOTICES.md
           curl -fsSL --retry 3 -o publish/licences/gallery-dl-LICENSE.txt \
             https://raw.githubusercontent.com/mikf/gallery-dl/d2c6b7298c9cccb21d421784df58131b3b48a391/LICENSE
+          # Velopack (MIT) — its managed assembly ships in every build and its native Setup/Update binaries
+          # ship inside the Windows installer, so the notice travels with both. Pinned to the 1.2.0 tag's
+          # commit for the same reason as gallery-dl's: an upstream licence change must not reach a release
+          # unreviewed. Bump this alongside the vpk tool + PackageReference versions.
+          curl -fsSL --retry 3 -o publish/licences/velopack-LICENSE.txt \
+            https://raw.githubusercontent.com/velopack/velopack/f2edcbcafb81da5b3c884aaea330e225ad91d8b6/LICENSE
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -237,6 +243,68 @@ jobs:
           New-Item -ItemType Directory out | Out-Null
           Move-Item publish out/Hoard
           Compress-Archive -Path out/Hoard -DestinationPath "Hoard-$env:VERSION-${{ matrix.rid }}.zip"
+
+      # ── Self-updating installer (Velopack) ─────────────────────────────────────────────────────────
+      # ADDITIVE: the portable zip above is untouched, so anyone who prefers unzipping still can. Setup.exe
+      # is the one that installs per-user (no admin prompt) and can auto-update itself afterwards.
+      #
+      # WINDOWS ONLY, deliberately. The macOS leg keeps its hand-rolled ad-hoc-signed .app zip: packing that
+      # with Velopack is unverified here (no Mac to test on), and on Apple Silicon a bundle that ends up
+      # without even an ad-hoc signature won't launch at all — a worse failure than having no installer.
+      # Adding it later is `vpk pack --plist <the templated Info.plist> --icon … --noInst` on the macOS leg;
+      # --noInst matters (a root-owned .pkg install makes every future update prompt for a password, while a
+      # user-owned .app dragged from a zip updates silently).
+      #
+      # The vpk tool version MUST match the Velopack PackageReference in Hoard.Desktop.csproj — bump both
+      # together or the installed app and its updater disagree about the package format.
+      - name: Install vpk
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dotnet tool install -g vpk --version 1.2.0
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      # Deltas are computed against the previous release's package, so pull it down first. Best-effort: the
+      # first Velopack release (and every dry run) has nothing to fetch, which just means full-only updates
+      # for that version rather than a failed build.
+      #
+      # It REPORTS whether it found a base, and that reporting is the point. By the time this runs,
+      # release-please has already created the vX.Y.Z release — which has no Velopack assets yet, since this
+      # job is what uploads them. If `vpk download` resolves that empty newest release instead of walking back
+      # to the last one with a feed, it finds nothing, every single release silently ships full-only, and the
+      # README's "updates download only what changed" quietly stops being true. A swallowed error that
+      # degrades a feature forever must not be invisible, so the outcome lands in the run summary either way.
+      - name: Fetch the previous release for delta generation
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          vpk download github --repoUrl "https://github.com/$GITHUB_REPOSITORY" --token "$GH_TOKEN" --outputDir Releases || true
+          if compgen -G "Releases/*.nupkg" > /dev/null; then
+            echo "Delta base found: $(ls Releases/*.nupkg | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ No delta base found — this release will ship FULL-ONLY update packages." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # --noPortable: we already ship one above, and two near-identical zips on the release page where only
+      # one of them self-updates is a trap. Unsigned — see the note in README about the one-off SmartScreen
+      # prompt; signing would slot in here as --signParams.
+      - name: Pack the installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          vpk pack \
+            --packId Hoard \
+            --packTitle Hoard \
+            --packAuthors "Hoard contributors" \
+            --packVersion "$VERSION" \
+            --packDir out/Hoard \
+            --mainExe Hoard.Desktop.exe \
+            --icon src/Hoard.Desktop/Assets/hoard.ico \
+            --outputDir Releases \
+            --noPortable
 
       - name: Package (macOS .app)
         if: runner.os == 'macOS'
@@ -264,11 +332,28 @@ jobs:
           "$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())  $($zip.Name)" |
             Out-File -Encoding ascii "$($zip.Name).sha256"
 
+      - name: Checksum the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem Releases/*Setup.exe | ForEach-Object {
+            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" |
+              Out-File -Encoding ascii "Releases/$($_.Name).sha256"
+          }
+
       - name: Attest build provenance
         if: needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip
+
+      # The installer is what most people will actually run, so it gets provenance too. Its own step because
+      # the packaging above is Windows-only.
+      - name: Attest installer provenance
+        if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: Releases/*Setup.exe
 
       - name: Upload release assets
         if: needs.release.outputs.release_created == 'true'
@@ -281,10 +366,23 @@ jobs:
             "Hoard-$VERSION-${{ matrix.rid }}.zip.sha256" \
             --clobber
 
+      # The installer plus the update feed. releases.win.json is what an installed app reads to discover
+      # this release, and the -full/-delta packages are what it downloads — a release missing any of them
+      # simply never shows up as an update, silently. The previous version's full package is re-uploaded
+      # unchanged (it's the base of the delta chain); --clobber makes that a no-op.
+      - name: Upload installer assets
+        if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" Releases/*Setup.exe Releases/*Setup.exe.sha256 Releases/*.nupkg Releases/releases.*.json --clobber
+
       - name: Upload dry-run artifact
         if: needs.release.outputs.release_created != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Hoard-${{ env.VERSION }}-${{ matrix.rid }}
-          path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip*
+          path: |
+            Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip*
+            Releases/*Setup.exe*
           retention-days: 7

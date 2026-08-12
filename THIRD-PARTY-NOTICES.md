@@ -15,6 +15,14 @@ archive, and its source is available at <https://github.com/mikf/gallery-dl>.
 
 Binaries are taken from [gdl-org/builds](https://github.com/gdl-org/builds).
 
+### Velopack — MIT
+
+The Windows installer (`Hoard-win-Setup.exe`) and the app it installs are built with
+[Velopack](https://github.com/velopack/velopack), copyright Caelan Sayler and Velopack Ltd., licensed
+under the MIT Licence. Its managed assembly is linked into the app (so it travels in every build,
+portable zips included) and its native binaries (`Setup.exe`, `Update.exe`) are redistributed inside the
+Windows installer. Its licence text ships in `licences/velopack-LICENSE.txt` in every release archive.
+
 ## Referenced as dependencies
 
 Resolved from NuGet at build time and not redistributed as source by this repository.

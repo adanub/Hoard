@@ -32,6 +32,14 @@ public sealed class UiSettings
     /// <summary>The playing-GIF LRU bound (was a hardcoded 12): how many GIFs may animate at once before the
     /// least-recently-played one stops.</summary>
     [JsonPropertyName("maxPlayingGifs")] public int MaxPlayingGifs { get; set; } = 12;
+
+    /// <summary>Look for a new release at startup (default on). Finding one only ever <i>offers</i> the
+    /// update — see <see cref="AutoInstallUpdates"/> for the hands-off variant.</summary>
+    [JsonPropertyName("autoCheckUpdates")] public bool AutoCheckUpdates { get; set; } = true;
+
+    /// <summary>Install a found update without asking (default OFF): download quietly and apply it the next
+    /// time Hoard closes. Off, an update is offered in a prompt the user can decline.</summary>
+    [JsonPropertyName("autoInstallUpdates")] public bool AutoInstallUpdates { get; set; }
 }
 
 /// <summary>
