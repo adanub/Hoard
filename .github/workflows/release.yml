@@ -169,8 +169,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # A dry run is a PREVIEW of the next release, so it builds under a real version and produces the
+      # real asset names — no placeholder, no "dry-run" marker anywhere in a file name. What it's
+      # previewing is exactly what you'd be shipping, which is the only way the names themselves can be
+      # part of what gets checked.
       - name: Work out version
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ -n "$TAG" ]]; then
             echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
@@ -181,11 +187,16 @@ jobs:
             # zips of an existing release are remade, e.g. after a failed upload.
             echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            # A dry run has no version to state, and the asset NAMES are part of what a packaging dry run
-            # exists to check — so it uses a fixed placeholder rather than folding the CI run number into
-            # every file name (that number means nothing to whoever ends up holding the file, and the run
-            # it came from is already on the artifact page). 0.0.1-dev, not 0.0.0: vpk rejects 0.0.0.
-            echo "VERSION=0.0.1-dev" >> "$GITHUB_ENV"
+            # An ordinary dry run: take the version the NEXT release will carry from release-please's own
+            # manifest on its release branch — that branch holds the computed bump, so while a release PR
+            # is open the preview is exact. With no PR open there is nothing to preview yet, so it falls
+            # back to the current released version from version.txt (also release-please-owned): the names
+            # are still right in shape, just a release behind.
+            next=$(gh api "repos/$GITHUB_REPOSITORY/contents/.release-please-manifest.json?ref=release-please--branches--main" \
+                     -H "Accept: application/vnd.github.raw" -q '."."' 2>/dev/null || true)
+            [[ -n "$next" && "$next" != "null" ]] || next=$(tr -d '[:space:]' < version.txt)
+            echo "VERSION=$next" >> "$GITHUB_ENV"
+            echo "Dry run — previewing the assets for **$next**." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Latest-at-release on purpose — Pinterest changes break old gallery-dl builds, and pinning
@@ -389,6 +400,18 @@ jobs:
               Out-File -Encoding ascii "dist/$($asset.Name).sha256"
           }
 
+      # Puts the finished asset names in the run summary, so a dry run can be read as a preview without
+      # downloading anything — which is most of what one is for.
+      - name: List the assets
+        shell: bash
+        run: |
+          {
+            echo "### Assets (${{ matrix.rid }})"
+            echo '```'
+            ls -1 dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Attest build provenance
         if: needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -423,10 +446,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" Releases/*.nupkg Releases/releases.*.json --clobber
 
+      # The same dist/ that a real release uploads, so the artifact IS the preview: the names inside it are
+      # the names that would appear on the release page. The artifact's own name is a container GitHub wraps
+      # around them and follows the same scheme rather than announcing itself as a dry run — the run it
+      # belongs to already says that, and a marker in the name would be the one thing the preview got wrong.
       - name: Upload dry-run artifact
         if: needs.release.outputs.release_created != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: Hoard-dry-run-${{ matrix.rid }}
+          name: Hoard-${{ env.VERSION }}-${{ matrix.rid }}
           path: dist/*
           retention-days: 7

@@ -82,10 +82,16 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   changelog starts fresh at pipeline adoption — `bootstrap-sha` in the config excludes all earlier history
   (it's only consulted until the first release; harmless after that).
 - **Release assets are `Hoard-<version>-<kind>-<platform>`** (`kind` = `portable` | `installer`), collected
-  into `dist/` by the packaging steps — that is the whole naming rule, and a CI run number is deliberately
-  not part of it (a dry run uses the fixed `0.0.1-dev`; **vpk rejects `0.0.0`**). The **Velopack feed files
-  in `Releases/` keep vpk's own names** — `releases.<channel>.json` references its `.nupkg`s BY FILE NAME,
-  so renaming one silently breaks updating; only the two files a human downloads get renamed into `dist/`.
+  into `dist/` by the packaging steps — that is the whole naming rule; nothing else (a CI run number least
+  of all) belongs in it. The **Velopack feed files in `Releases/` keep vpk's own names** —
+  `releases.<channel>.json` references its `.nupkg`s BY FILE NAME, so renaming one silently breaks
+  updating; only the two files a human downloads get renamed into `dist/`.
+- **A dry run is a PREVIEW of the next release, so it carries no placeholder version and no `dry-run`
+  marker anywhere** — the point is that the names it produces are the names that would ship, so the naming
+  itself is what's being checked. Its version comes from **release-please's manifest on the
+  `release-please--branches--main` branch** (the computed bump — exact while a release PR is open), falling
+  back to `version.txt` when there's no PR to preview. `dist/` is listed into the run summary, so the
+  preview reads without downloading. (Never reach for `0.0.0` as a placeholder here: **vpk rejects it**.)
 - **The app's assembly name is `Hoard`, not the project name `Hoard.Desktop`** (`<AssemblyName>`), so the
   exe/taskbar/bundle say "Hoard". Namespaces are unchanged. Two things key off the assembly name and break
   silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong one throws at
