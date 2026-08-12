@@ -17,11 +17,12 @@ Binaries are taken from [gdl-org/builds](https://github.com/gdl-org/builds).
 
 ### Velopack — MIT
 
-The Windows installer (`Hoard-win-Setup.exe`) and the app it installs are built with
-[Velopack](https://github.com/velopack/velopack), copyright Caelan Sayler and Velopack Ltd., licensed
-under the MIT Licence. Its managed assembly is linked into the app (so it travels in every build,
-portable zips included) and its native binaries (`Setup.exe`, `Update.exe`) are redistributed inside the
-Windows installer. Its licence text ships in `licences/velopack-LICENSE.txt` in every release archive.
+The Windows installer (`Hoard-win-Setup.exe`), the app it installs, and the macOS
+`Hoard.app` are built with [Velopack](https://github.com/velopack/velopack), copyright Caelan Sayler and
+Velopack Ltd., licensed under the MIT Licence. Its managed assembly is linked into the app (so it travels
+in every build, portable zips included) and its native binaries (`Setup.exe` and `Update.exe` on Windows,
+`UpdateMac` inside the macOS bundle) are redistributed with those builds. Its licence text ships in
+`licences/velopack-LICENSE.txt` in every release archive.
 
 ## Referenced as dependencies
 

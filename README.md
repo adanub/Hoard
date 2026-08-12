@@ -46,7 +46,7 @@ Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releas
 | --- | --- | --- |
 | Windows (x64) | `Hoard-win-Setup.exe` | **Recommended** — installs for your user only (no admin prompt) and updates itself |
 | Windows (x64) | `Hoard-<version>-win-x64.zip` | Portable: unzip and run, no installer, no self-updating |
-| macOS (Apple Silicon) | `Hoard-<version>-osx-arm64.zip` | Unzip and drag to Applications |
+| macOS (Apple Silicon) | `Hoard-<version>-osx-arm64.zip` | Unzip and drag `Hoard.app` to Applications — it updates itself from there |
 
 > **Windows:** the installer isn't code-signed, so SmartScreen shows "Windows protected your PC" the
 > first time you run it — **More info → Run anyway**. That's once per download; updates installed from
@@ -54,14 +54,19 @@ Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releas
 >
 > **macOS:** the app is ad-hoc signed, not notarised, so Gatekeeper will object the first time.
 > Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/Hoard.app`. On macOS 15 and newer,
-> use System Settings → Privacy & Security → **Open Anyway**.
+> use System Settings → Privacy & Security → **Open Anyway**. Unzip it in Finder (or with `ditto -x -k`) —
+> command-line `unzip` drops the signature and macOS then calls the app damaged.
+>
+> There's no macOS installer on purpose: a `.pkg` would put Hoard in `/Applications` owned by root, and
+> every update after that would ask for your password. The app you drag out of the zip updates silently.
 >
 > **Intel Macs aren't built.** I intend to support Apple Silicon (M1 or newer) only; although you are welcome to try building it yourself using the source.
 
 ### Updating
 
-The installed Windows build checks for a new release at startup and **asks** before installing anything —
-declining leaves it alone. Both behaviours are yours to change in **⚙ Settings → Updates**:
+The Windows installer build and the macOS app check for a new release at startup and **ask** before
+installing anything — declining leaves it alone. Both behaviours are yours to change in
+**⚙ Settings → Updates**:
 
 - **Check for updates automatically** (on by default) — turn it off and Hoard never phones home.
 - **Install updates automatically** (off by default) — download quietly and apply the update the next time
@@ -69,8 +74,9 @@ declining leaves it alone. Both behaviours are yours to change in **⚙ Settings
 - **Check for updates** / **Install update** — do it by hand, whenever.
 
 Updates download only what changed between versions, so they're a fraction of the full download. An
-update is never applied while an import or a backup sync is running. The portable zip and the macOS build
-don't self-update — for those, download the new release over the old one.
+update is never applied while an import or a backup sync is running. The **Windows portable zip** is the
+one build that doesn't self-update — for that one, download the new release over the old one; Settings
+says so rather than offering buttons that can't work.
 
 ## Quick start
 

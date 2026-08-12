@@ -229,8 +229,8 @@ jobs:
           cp THIRD-PARTY-NOTICES.md publish/licences/THIRD-PARTY-NOTICES.md
           curl -fsSL --retry 3 -o publish/licences/gallery-dl-LICENSE.txt \
             https://raw.githubusercontent.com/mikf/gallery-dl/d2c6b7298c9cccb21d421784df58131b3b48a391/LICENSE
-          # Velopack (MIT) — its managed assembly ships in every build and its native Setup/Update binaries
-          # ship inside the Windows installer, so the notice travels with both. Pinned to the 1.2.0 tag's
+          # Velopack (MIT) — its managed assembly ships in every build, and its native binaries ship inside
+          # the Windows installer and the macOS bundle, so the notice travels with all of them. Pinned to the 1.2.0 tag's
           # commit for the same reason as gallery-dl's: an upstream licence change must not reach a release
           # unreviewed. Bump this alongside the vpk tool + PackageReference versions.
           curl -fsSL --retry 3 -o publish/licences/velopack-LICENSE.txt \
@@ -244,25 +244,39 @@ jobs:
           Move-Item publish out/Hoard
           Compress-Archive -Path out/Hoard -DestinationPath "Hoard-$env:VERSION-${{ matrix.rid }}.zip"
 
-      # ── Self-updating installer (Velopack) ─────────────────────────────────────────────────────────
-      # ADDITIVE: the portable zip above is untouched, so anyone who prefers unzipping still can. Setup.exe
-      # is the one that installs per-user (no admin prompt) and can auto-update itself afterwards.
+      # ── Self-updating packages (Velopack) ──────────────────────────────────────────────────────────
+      # Both platforms. Windows gets Setup.exe — a per-user install, no admin prompt — ALONGSIDE the
+      # portable zip above, so anyone who prefers unzipping still can.
       #
-      # WINDOWS ONLY, deliberately. The macOS leg keeps its hand-rolled ad-hoc-signed .app zip: packing that
-      # with Velopack is unverified here (no Mac to test on), and on Apple Silicon a bundle that ends up
-      # without even an ad-hoc signature won't launch at all — a worse failure than having no installer.
-      # Adding it later is `vpk pack --plist <the templated Info.plist> --icon … --noInst` on the macOS leg;
-      # --noInst matters (a root-owned .pkg install makes every future update prompt for a password, while a
-      # user-owned .app dragged from a zip updates silently).
+      # macOS gets the .app zip itself: vpk-packed, so the bundle carries Velopack's UpdateMac and updates
+      # itself in place, and it REPLACES the hand-rolled zip rather than sitting next to it (two
+      # near-identical zips where only one self-updates is exactly the trap --noPortable avoids on Windows).
+      # --noInst is the deliberate part: vpk's macOS installer is a .pkg, which lands a root-owned bundle in
+      # /Applications, and every later update would then need a password — while a user-owned .app dragged
+      # out of a zip updates silently. So macOS has no "installer" asset by design.
       #
       # The vpk tool version MUST match the Velopack PackageReference in Hoard.Desktop.csproj — bump both
       # together or the installed app and its updater disagree about the package format.
       - name: Install vpk
-        if: runner.os == 'Windows'
         shell: bash
         run: |
           dotnet tool install -g vpk --version 1.2.0
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      # vpk builds deltas with zstd when it's on PATH and otherwise falls back to bsdiff, which it warns is
+      # "a lot slower and more prone to breaking". The Windows build carries its own; the macOS runner may
+      # not, and a silent fallback would quietly make every macOS delta the fragile kind. A failed install
+      # is not worth failing a release over — but it IS worth saying out loud, same as the delta base below.
+      - name: Ensure zstd is available (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          command -v zstd > /dev/null || brew install zstd || true
+          if command -v zstd > /dev/null; then
+            echo "Delta compression: zstd ($(zstd --version))" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ zstd unavailable — macOS deltas fall back to the legacy bsdiff format." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Deltas are computed against the previous release's package, so pull it down first. Best-effort: the
       # first Velopack release (and every dry run) has nothing to fetch, which just means full-only updates
@@ -275,7 +289,6 @@ jobs:
       # README's "updates download only what changed" quietly stops being true. A swallowed error that
       # degrades a feature forever must not be invisible, so the outcome lands in the run summary either way.
       - name: Fetch the previous release for delta generation
-        if: runner.os == 'Windows'
         continue-on-error: true
         shell: bash
         env:
@@ -283,15 +296,15 @@ jobs:
         run: |
           vpk download github --repoUrl "https://github.com/$GITHUB_REPOSITORY" --token "$GH_TOKEN" --outputDir Releases || true
           if compgen -G "Releases/*.nupkg" > /dev/null; then
-            echo "Delta base found: $(ls Releases/*.nupkg | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
+            echo "Delta base found (${{ matrix.rid }}): $(ls Releases/*.nupkg | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "⚠️ No delta base found — this release will ship FULL-ONLY update packages." >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ No delta base found (${{ matrix.rid }}) — this release will ship FULL-ONLY update packages." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # --noPortable: we already ship one above, and two near-identical zips on the release page where only
       # one of them self-updates is a trap. Unsigned — see the note in README about the one-off SmartScreen
       # prompt; signing would slot in here as --signParams.
-      - name: Pack the installer
+      - name: Pack the installer (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -306,24 +319,45 @@ jobs:
             --outputDir Releases \
             --noPortable
 
-      - name: Package (macOS .app)
+      # The .app bundle, built and signed by vpk instead of by hand. Three parts are load-bearing:
+      #
+      #   --plist   our template, with the version substituted first — vpk uses it verbatim rather than
+      #             generating one, which is what keeps CFBundleIdentifier/LSMinimumSystemVersion/the icon
+      #             name ours. --icon copies the .icns in under the name CFBundleIconFile expects.
+      #   --mainExe the assembly name, which is Hoard (NOT the project name) — see Hoard.Desktop.csproj.
+      #   --signAppIdentity -   an ad-hoc signature, and it must happen HERE, inside pack, so the sealed
+      #             bundle is what goes into both the zip and the .nupkg an update installs. Without any
+      #             bundle signature macOS assesses the app as broken ("code has no resources but signature
+      #             indicates they must be present" → the "damaged, move to Trash" dialog), because the
+      #             .NET apphost is itself ad-hoc signed and declares a bundle that must seal its resources.
+      #             With it, a fresh download gets the ordinary unidentified-developer prompt the README
+      #             documents. Known and accepted: deep signing stores signatures for the managed .dlls in
+      #             extended attributes, the zip carries those (it's AppleDouble — extract with Finder or
+      #             `ditto -x -k`, NOT `unzip`, which drops them) but a .nupkg cannot, so after an update
+      #             applies, the bundle seal no longer verifies. It still launches — verified end to end on
+      #             an Apple Silicon machine — because nothing re-quarantines an updated bundle, and the
+      #             main executable's own signature is embedded in the Mach-O and stays intact.
+      #
+      # Real Developer ID signing + notarisation (which would remove the first-run prompt entirely) needs
+      # Apple secrets: --signAppIdentity "Developer ID Application: …" plus --notaryProfile.
+      - name: Pack the app (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          APP="out/Hoard.app"
-          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp -R publish/. "$APP/Contents/MacOS/"
-          sed "s/__VERSION__/$VERSION/g" tools/packaging/macos/Info.plist > "$APP/Contents/Info.plist"
-          # Must land before codesign — adding a resource afterwards invalidates the signature.
-          # The name has to match CFBundleIconFile in the plist.
-          cp tools/packaging/macos/Hoard.icns "$APP/Contents/Resources/Hoard.icns"
-          chmod +x "$APP/Contents/MacOS/Hoard"
-          [[ -f "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl" ]] && chmod +x "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl"
-          # Ad-hoc signature: enough for local Gatekeeper integrity checks.
-          # Real Developer ID signing + notarisation needs Apple secrets — see
-          # the workflow README note before adding them.
-          codesign --force --deep --sign - "$APP"
-          ditto -c -k --keepParent "$APP" "Hoard-$VERSION-${{ matrix.rid }}.zip"
+          sed "s/__VERSION__/$VERSION/g" tools/packaging/macos/Info.plist > "$RUNNER_TEMP/Info.plist"
+          vpk pack \
+            --packId Hoard \
+            --packTitle Hoard \
+            --packAuthors "Hoard contributors" \
+            --packVersion "$VERSION" \
+            --packDir publish \
+            --mainExe Hoard \
+            --icon tools/packaging/macos/Hoard.icns \
+            --plist "$RUNNER_TEMP/Info.plist" \
+            --outputDir Releases \
+            --noInst \
+            --signAppIdentity -
+          mv Releases/Hoard-osx-Portable.zip "Hoard-$VERSION-${{ matrix.rid }}.zip"
 
       - name: Checksum
         shell: pwsh
@@ -348,7 +382,7 @@ jobs:
           subject-path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip
 
       # The installer is what most people will actually run, so it gets provenance too. Its own step because
-      # the packaging above is Windows-only.
+      # only Windows has one (macOS ships the self-updating app zip instead — see the pack steps above).
       - name: Attest installer provenance
         if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -366,16 +400,25 @@ jobs:
             "Hoard-$VERSION-${{ matrix.rid }}.zip.sha256" \
             --clobber
 
-      # The installer plus the update feed. releases.win.json is what an installed app reads to discover
-      # this release, and the -full/-delta packages are what it downloads — a release missing any of them
-      # simply never shows up as an update, silently. The previous version's full package is re-uploaded
-      # unchanged (it's the base of the delta chain); --clobber makes that a no-op.
-      - name: Upload installer assets
+      - name: Upload the installer
         if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" Releases/*Setup.exe Releases/*Setup.exe.sha256 Releases/*.nupkg Releases/releases.*.json --clobber
+        run: gh release upload "$TAG" Releases/*Setup.exe Releases/*Setup.exe.sha256 --clobber
+
+      # The update feed, uploaded under vpk's own names. releases.<channel>.json is what an installed app
+      # reads to discover this release, and the -full/-delta packages are what it downloads — a release
+      # missing any of them simply never shows up as an update, silently. Both platforms have their own
+      # channel (releases.win.json / releases.osx.json), so the two legs never overwrite each other. The
+      # previous version's full package is re-uploaded unchanged (it's the base of the delta chain);
+      # --clobber makes that a no-op.
+      - name: Upload the update feed
+        if: needs.release.outputs.release_created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" Releases/*.nupkg Releases/releases.*.json --clobber
 
       - name: Upload dry-run artifact
         if: needs.release.outputs.release_created != 'true'

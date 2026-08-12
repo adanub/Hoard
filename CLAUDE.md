@@ -85,6 +85,20 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   exe/taskbar/bundle say "Hoard". Namespaces are unchanged. Two things key off the assembly name and break
   silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong one throws at
   startup, not at build), and the **`--mainExe`** argument in the release workflow's vpk steps.
+- **The installer/updater (Velopack) covers Windows AND macOS.** Windows: `Setup.exe` (per-user, no admin
+  prompt) beside a non-updating portable zip. macOS: `vpk pack --noInst` builds the `.app` itself and its zip
+  **replaces** the old hand-rolled one — so the mac "portable" download self-updates. No `.pkg` on purpose (a
+  root-owned `/Applications` install would need a password for every update). Load-bearing on the mac leg:
+  **`--signAppIdentity -` must happen inside `vpk pack`**, so the sealed bundle is what goes into both the zip
+  and the `.nupkg` an update installs — with no bundle signature at all macOS calls the app *damaged* (the
+  .NET apphost is ad-hoc signed and declares a bundle whose resources must be sealed). Accepted consequence:
+  deep signing stores the managed DLLs' signatures in **extended attributes**, which the zip carries
+  (AppleDouble — extract in Finder or with `ditto -x -k`, never `unzip`) but a `.nupkg` cannot, so the seal
+  stops verifying after an update applies; it still launches (verified end to end on Apple Silicon) because
+  nothing re-quarantines an updated bundle. `--plist` takes our version-substituted template verbatim.
+  `HOARD_UPDATE_FEED=<a vpk output dir>` points the updater at a local folder instead of GitHub — that is how
+  the whole download/apply path gets exercised before a release carrying the feed exists (`HOARD_UPDATE_DEMO=1`
+  only fakes the UI).
 - The build jobs chain off the `release` job via `needs` because events created with the workflow's own
   `GITHUB_TOKEN` never trigger other workflows. release-please runs with the **`RELEASE_PLEASE_TOKEN`
   secret** — a fine-grained PAT (Contents/Pull requests/Issues, RW, this repo only) — because the default

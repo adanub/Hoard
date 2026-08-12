@@ -59,6 +59,14 @@ public sealed class UpdateService
 {
     private const string RepositoryUrl = "https://github.com/adanub/Hoard";
 
+    /// <summary>
+    /// Dev-only (same spirit as <c>HOARD_UPDATE_DEMO</c>, one step more real): a folder of Velopack packages
+    /// to update from instead of GitHub Releases — a <c>vpk pack --outputDir</c> directory. Demo mode fakes
+    /// the UI; this one genuinely downloads and applies, which is the only way to exercise the whole path on
+    /// a platform before a release carrying its feed exists. That is how the macOS leg was verified.
+    /// </summary>
+    private const string LocalFeedVariable = "HOARD_UPDATE_FEED";
+
     // Null when Velopack couldn't initialise at all (no install metadata, unreadable app dir). Treated the
     // same as "not installed" — the updater must never be the reason the app fails to start.
     private readonly UpdateManager? _manager;
@@ -67,10 +75,15 @@ public sealed class UpdateService
     {
         try
         {
+            var localFeed = Environment.GetEnvironmentVariable(LocalFeedVariable);
             // prerelease: false — the stable channel only. The channel itself is whatever the app was
-            // packed/installed with (win-x64 / osx-arm64), so the two OS legs of one GitHub Release read
-            // their own feed file and never see each other's builds.
-            _manager = new UpdateManager(new GithubSource(RepositoryUrl, accessToken: null, prerelease: false));
+            // packed/installed with (win / osx), so the two OS legs of one GitHub Release read their own
+            // feed file (releases.win.json / releases.osx.json) and never see each other's builds.
+            _manager = string.IsNullOrWhiteSpace(localFeed)
+                ? new UpdateManager(new GithubSource(RepositoryUrl, accessToken: null, prerelease: false))
+                : new UpdateManager(localFeed);
+            if (!string.IsNullOrWhiteSpace(localFeed))
+                Log.Warning("Updates are pointed at the local feed {Feed} ({Variable})", localFeed, LocalFeedVariable);
         }
         catch (Exception ex)
         {
