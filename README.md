@@ -42,11 +42,13 @@ desktop app.
 
 Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releases/latest):
 
+Every asset is named `Hoard-<version>-<kind>-<platform>`.
+
 | Platform | Asset | |
 | --- | --- | --- |
-| Windows (x64) | `Hoard-win-Setup.exe` | **Recommended** — installs for your user only (no admin prompt) and updates itself |
-| Windows (x64) | `Hoard-<version>-win-x64.zip` | Portable: unzip and run, no installer, no self-updating |
-| macOS (Apple Silicon) | `Hoard-<version>-osx-arm64.zip` | Unzip and drag `Hoard.app` to Applications — it updates itself from there |
+| Windows (x64) | `Hoard-<version>-installer-win-x64.exe` | **Recommended** — installs for your user only (no admin prompt) and updates itself |
+| Windows (x64) | `Hoard-<version>-portable-win-x64.zip` | Portable: unzip and run, no installer, no self-updating |
+| macOS (Apple Silicon) | `Hoard-<version>-portable-osx-arm64.zip` | Unzip and drag `Hoard.app` to Applications — it updates itself from there |
 
 > **Windows:** the installer isn't code-signed, so SmartScreen shows "Windows protected your PC" the
 > first time you run it — **More info → Run anyway**. That's once per download; updates installed from

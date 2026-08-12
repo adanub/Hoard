@@ -81,6 +81,11 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
   changelog starts fresh at pipeline adoption — `bootstrap-sha` in the config excludes all earlier history
   (it's only consulted until the first release; harmless after that).
+- **Release assets are `Hoard-<version>-<kind>-<platform>`** (`kind` = `portable` | `installer`), collected
+  into `dist/` by the packaging steps — that is the whole naming rule, and a CI run number is deliberately
+  not part of it (a dry run uses the fixed `0.0.1-dev`; **vpk rejects `0.0.0`**). The **Velopack feed files
+  in `Releases/` keep vpk's own names** — `releases.<channel>.json` references its `.nupkg`s BY FILE NAME,
+  so renaming one silently breaks updating; only the two files a human downloads get renamed into `dist/`.
 - **The app's assembly name is `Hoard`, not the project name `Hoard.Desktop`** (`<AssemblyName>`), so the
   exe/taskbar/bundle say "Hoard". Namespaces are unchanged. Two things key off the assembly name and break
   silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong one throws at

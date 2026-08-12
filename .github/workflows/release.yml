@@ -181,7 +181,11 @@ jobs:
             # zips of an existing release are remade, e.g. after a failed upload.
             echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+            # A dry run has no version to state, and the asset NAMES are part of what a packaging dry run
+            # exists to check — so it uses a fixed placeholder rather than folding the CI run number into
+            # every file name (that number means nothing to whoever ends up holding the file, and the run
+            # it came from is already on the artifact page). 0.0.1-dev, not 0.0.0: vpk rejects 0.0.0.
+            echo "VERSION=0.0.1-dev" >> "$GITHUB_ENV"
           fi
 
       # Latest-at-release on purpose — Pinterest changes break old gallery-dl builds, and pinning
@@ -236,13 +240,22 @@ jobs:
           curl -fsSL --retry 3 -o publish/licences/velopack-LICENSE.txt \
             https://raw.githubusercontent.com/velopack/velopack/f2edcbcafb81da5b3c884aaea330e225ad91d8b6/LICENSE
 
-      - name: Package (Windows)
+      # ── Packaging ──────────────────────────────────────────────────────────────────────────────────
+      # Every asset that reaches the release page is named Hoard-<version>-<kind>-<platform>: the app, the
+      # release it belongs to, WHICH KIND of download it is (portable / installer), and what it runs on.
+      # Nothing else — a CI run number in particular means nothing to the person holding the file. They're
+      # collected in dist/, which is what gets checksummed, attested and uploaded.
+      #
+      # The Velopack update-feed files in Releases/ keep the names vpk gave them, deliberately:
+      # releases.<channel>.json references its packages BY FILE NAME, so a "tidier" rename there silently
+      # breaks updating for everyone. Only the two files a HUMAN downloads are renamed out into dist/.
+      - name: Package the portable zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory out | Out-Null
+          New-Item -ItemType Directory out, dist | Out-Null
           Move-Item publish out/Hoard
-          Compress-Archive -Path out/Hoard -DestinationPath "Hoard-$env:VERSION-${{ matrix.rid }}.zip"
+          Compress-Archive -Path out/Hoard -DestinationPath "dist/Hoard-$env:VERSION-portable-${{ matrix.rid }}.zip"
 
       # ── Self-updating packages (Velopack) ──────────────────────────────────────────────────────────
       # Both platforms. Windows gets Setup.exe — a per-user install, no admin prompt — ALONGSIDE the
@@ -318,6 +331,11 @@ jobs:
             --icon src/Hoard.Desktop/Assets/hoard.ico \
             --outputDir Releases \
             --noPortable
+          # vpk names it <packId>-<channel>-Setup.exe. Spelled out rather than globbed on purpose: the
+          # previous release's packages were downloaded into this same folder above, and a glob that
+          # matched one of those would upload the wrong binary as this version's installer. If Velopack
+          # ever changes the name, this fails the release loudly, which is the outcome we want.
+          mv Releases/Hoard-win-Setup.exe "dist/Hoard-$VERSION-installer-${{ matrix.rid }}.exe"
 
       # The .app bundle, built and signed by vpk instead of by hand. Three parts are load-bearing:
       #
@@ -344,6 +362,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          mkdir -p dist
           sed "s/__VERSION__/$VERSION/g" tools/packaging/macos/Info.plist > "$RUNNER_TEMP/Info.plist"
           vpk pack \
             --packId Hoard \
@@ -357,29 +376,24 @@ jobs:
             --outputDir Releases \
             --noInst \
             --signAppIdentity -
-          mv Releases/Hoard-osx-Portable.zip "Hoard-$VERSION-${{ matrix.rid }}.zip"
+          mv Releases/Hoard-osx-Portable.zip "dist/Hoard-$VERSION-portable-${{ matrix.rid }}.zip"
 
-      - name: Checksum
+      - name: Checksum the release assets
         shell: pwsh
         run: |
-          $zip = Get-Item "Hoard-$env:VERSION-${{ matrix.rid }}.zip"
-          "$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())  $($zip.Name)" |
-            Out-File -Encoding ascii "$($zip.Name).sha256"
-
-      - name: Checksum the installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Get-ChildItem Releases/*Setup.exe | ForEach-Object {
-            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" |
-              Out-File -Encoding ascii "Releases/$($_.Name).sha256"
+          # Materialised with @(…) before the loop writes into the same folder: Get-ChildItem streams, so
+          # piping it directly would start hashing the .sha256 files as they appear.
+          $assets = @(Get-ChildItem dist -File)
+          foreach ($asset in $assets) {
+            "$((Get-FileHash $asset -Algorithm SHA256).Hash.ToLower())  $($asset.Name)" |
+              Out-File -Encoding ascii "dist/$($asset.Name).sha256"
           }
 
       - name: Attest build provenance
         if: needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip
+          subject-path: dist/Hoard-${{ env.VERSION }}-portable-${{ matrix.rid }}.zip
 
       # The installer is what most people will actually run, so it gets provenance too. Its own step because
       # only Windows has one (macOS ships the self-updating app zip instead — see the pack steps above).
@@ -387,25 +401,14 @@ jobs:
         if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: Releases/*Setup.exe
+          subject-path: dist/Hoard-${{ env.VERSION }}-installer-${{ matrix.rid }}.exe
 
       - name: Upload release assets
         if: needs.release.outputs.release_created == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "$TAG" \
-            "Hoard-$VERSION-${{ matrix.rid }}.zip" \
-            "Hoard-$VERSION-${{ matrix.rid }}.zip.sha256" \
-            --clobber
-
-      - name: Upload the installer
-        if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" Releases/*Setup.exe Releases/*Setup.exe.sha256 --clobber
+        run: gh release upload "$TAG" dist/* --clobber
 
       # The update feed, uploaded under vpk's own names. releases.<channel>.json is what an installed app
       # reads to discover this release, and the -full/-delta packages are what it downloads — a release
@@ -424,8 +427,6 @@ jobs:
         if: needs.release.outputs.release_created != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: Hoard-${{ env.VERSION }}-${{ matrix.rid }}
-          path: |
-            Hoard-${{ env.VERSION }}-${{ matrix.rid }}.zip*
-            Releases/*Setup.exe*
+          name: Hoard-dry-run-${{ matrix.rid }}
+          path: dist/*
           retention-days: 7
