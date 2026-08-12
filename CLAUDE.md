@@ -81,6 +81,10 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
   changelog starts fresh at pipeline adoption — `bootstrap-sha` in the config excludes all earlier history
   (it's only consulted until the first release; harmless after that).
+- **The app's assembly name is `Hoard`, not the project name `Hoard.Desktop`** (`<AssemblyName>`), so the
+  exe/taskbar/bundle say "Hoard". Namespaces are unchanged. Two things key off the assembly name and break
+  silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong one throws at
+  startup, not at build), and the **`--mainExe`** argument in the release workflow's vpk steps.
 - The build jobs chain off the `release` job via `needs` because events created with the workflow's own
   `GITHUB_TOKEN` never trigger other workflows. release-please runs with the **`RELEASE_PLEASE_TOKEN`
   secret** — a fine-grained PAT (Contents/Pull requests/Issues, RW, this repo only) — because the default

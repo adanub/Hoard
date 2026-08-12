@@ -13,6 +13,6 @@
         <!-- The Hoard design system IS the theme — no Fluent (or any base theme) underneath. Tokens +
              icons + component themes + the stock-control templates (Theme/Controls/Chrome, Scroll,
              ComboBox, ProgressBar) + the implicit by-type aliases. See DESIGN.md and Theme/Theme.axaml. -->
-        <StyleInclude Source="avares://Hoard.Desktop/Theme/Theme.axaml"/>
+        <StyleInclude Source="avares://Hoard/Theme/Theme.axaml"/>
     </Application.Styles>
 </Application>

@@ -301,7 +301,7 @@ jobs:
             --packAuthors "Hoard contributors" \
             --packVersion "$VERSION" \
             --packDir out/Hoard \
-            --mainExe Hoard.Desktop.exe \
+            --mainExe Hoard.exe \
             --icon src/Hoard.Desktop/Assets/hoard.ico \
             --outputDir Releases \
             --noPortable
@@ -317,7 +317,7 @@ jobs:
           # Must land before codesign — adding a resource afterwards invalidates the signature.
           # The name has to match CFBundleIconFile in the plist.
           cp tools/packaging/macos/Hoard.icns "$APP/Contents/Resources/Hoard.icns"
-          chmod +x "$APP/Contents/MacOS/Hoard.Desktop"
+          chmod +x "$APP/Contents/MacOS/Hoard"
           [[ -f "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl" ]] && chmod +x "$APP/Contents/MacOS/tools/gallery-dl/gallery-dl"
           # Ad-hoc signature: enough for local Gatekeeper integrity checks.
           # Real Developer ID signing + notarisation needs Apple secrets — see

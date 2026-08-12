@@ -11,22 +11,22 @@
     <Styles.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Tokens.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Icons.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Pressable.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Button.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Input.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/ListItem.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Switch.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Sheet.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Chrome.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Scroll.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/ComboBox.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/ProgressBar.axaml"/>
-                <ResourceInclude Source="avares://Hoard.Desktop/Theme/Controls/Implicit.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Tokens.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Icons.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Pressable.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Button.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Input.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/ListItem.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Switch.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Sheet.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Chrome.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Scroll.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/ComboBox.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/ProgressBar.axaml"/>
+                <ResourceInclude Source="avares://Hoard/Theme/Controls/Implicit.axaml"/>
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Styles.Resources>
 
-    <StyleInclude Source="avares://Hoard.Desktop/Theme/Controls/Surfaces.axaml"/>
+    <StyleInclude Source="avares://Hoard/Theme/Controls/Surfaces.axaml"/>
 </Styles>

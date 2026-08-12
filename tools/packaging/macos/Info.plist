@@ -15,7 +15,7 @@
     <key>CFBundleVersion</key>
     <string>__VERSION__</string>
     <key>CFBundleExecutable</key>
-    <string>Hoard.Desktop</string>
+    <string>Hoard</string>
     <key>CFBundleIconFile</key>
     <string>Hoard.icns</string>
     <key>CFBundlePackageType</key>
