@@ -12,9 +12,9 @@ I often found myself wanting a way to keep things I'd saved on Pinterest downloa
 was already technically possible by downloading the pins manually, but that didn't seem very fun...
 
 So I looked around if there were any tools out there that already existed for doing this,
-and it was surprisingly barren. The only thing out there was **[gallery-dl](https://github.com/mikf/gallery-dl)**,
-but using a CLI tool for an otherwise art/design-oriented experience didn't quite feel right. I also
-coincidentally had been experimenting with trying agentic workflows for creating useful side projects
+and I couldn't really find something I was happy with. The only things out there seemed to be CLI
+tools, but for an otherwise art/design-oriented experience that didn't quite feel right to me. At the
+time, I had also been experimenting with trying agentic workflows for creating useful side projects
 and tools, so I started hacking away at this problem in my spare time - and thus, Hoard was born 🙂
 
 Hoard lets you select a board from Pinterest that you can access, and saves them into a "project"; a
