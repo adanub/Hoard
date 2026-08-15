@@ -22,7 +22,10 @@ public sealed class UiSettings
     [JsonPropertyName("uiScalePercent")] public int UiScalePercent { get; set; } = 100;
 
     /// <summary>The browser the import/sync cookie pickers pre-select (a <c>BrowserCookies.Choices</c> entry;
-    /// consumers fall back to "(none)" when the stored value is no longer offered).</summary>
+    /// consumers fall back to "(none)" when the stored value is no longer offered). Every run that resolves
+    /// cookies writes its choice back here (<see cref="UiSettingsStore.RememberCookiesBrowser"/>), so this is
+    /// "the last one you used" as much as a Settings preference — picking a browser once for an import means
+    /// the next sync opens on it instead of silently reverting to "(none)" and 404ing every private board.</summary>
     [JsonPropertyName("defaultCookiesBrowser")] public string DefaultCookiesBrowser { get; set; } = "";
 
     /// <summary>Start playing a GIF when its tile scrolls into view (default: tap to play). Memory stays
@@ -76,6 +79,23 @@ public sealed class UiSettingsStore
             Log.Warning(ex, "Couldn't save UI settings to {Path}", _path); // preferences must never break the app
         }
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Remember the cookie source a run actually used, so the next import/sync sheet opens on it. Called by
+    /// every run that gets past <c>BrowserCookies.Resolve</c> — the picker is otherwise seeded from the stored
+    /// default alone, so a browser chosen by hand lived exactly as long as that one sheet: picking "zen" for
+    /// an import left the sync-all a minute later on "(none)", which 404s every private board.
+    /// <para>"(none)" is remembered too — it's a legitimate choice for public boards, and this is a
+    /// last-used, not a best-guess. The write is skipped when nothing changed so a run of imports doesn't
+    /// rewrite the file (and raise <see cref="Changed"/>) for no reason.</para>
+    /// </summary>
+    /// <param name="choice">A <c>BrowserCookies.Choices</c> entry, already normalised by the caller.</param>
+    public void RememberCookiesBrowser(string choice)
+    {
+        if (string.IsNullOrEmpty(choice) || Settings.DefaultCookiesBrowser == choice) return;
+        Settings.DefaultCookiesBrowser = choice;
+        Save();
     }
 
     private static UiSettings Load(string path)

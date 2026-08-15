@@ -430,6 +430,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
 
         var cookies = BrowserCookies.Resolve(CookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
+        _uiSettings?.RememberCookiesBrowser(CookiesBrowser); // the next sheet opens on it, here or on any board
 
         IsImportSheetOpen = false;
         IsImporting = true;
@@ -606,6 +607,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
 
         var cookies = BrowserCookies.Resolve(SyncAllCookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
+        _uiSettings?.RememberCookiesBrowser(SyncAllCookiesBrowser);
 
         var token = _disposeCts.Token; // captured before any await, like ImportAsync
         IsSyncAllSheetOpen = false;

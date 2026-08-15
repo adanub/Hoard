@@ -563,6 +563,7 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
 
         var cookies = BrowserCookies.Resolve(SyncCookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
+        _uiSettingsStore?.RememberCookiesBrowser(SyncCookiesBrowser); // the next sheet opens on it, anywhere
 
         IsSyncSheetOpen = false;
         _importStatus.Begin(boardId); // drives IsBoardImporting + streams LastImported into this open board

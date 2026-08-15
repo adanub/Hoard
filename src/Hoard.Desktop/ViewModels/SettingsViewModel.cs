@@ -79,6 +79,13 @@ public partial class SettingsViewModel : ViewModelBase
     /// <summary>Open the sheet (the bar's ⚙). Project-dependent rows re-evaluate here.</summary>
     public void Open()
     {
+        // Re-read the cookie default: this VM is shell-lifetime, but every import/sync that resolves cookies
+        // now writes its choice back (UiSettingsStore.RememberCookiesBrowser), so the value cached at startup
+        // can be stale. Showing the stale one would break the rule the ctor's snap-backs exist for — what the
+        // sheet displays and what the pickers actually use must be one value. (An unchanged assignment is a
+        // no-op, so this doesn't re-persist on every open.)
+        if (_store is not null)
+            DefaultCookiesBrowser = BrowserCookies.NormaliseChoice(_store.Settings.DefaultCookiesBrowser);
         OnPropertyChanged(nameof(HasOpenProject));
         OpenProjectFolderCommand.NotifyCanExecuteChanged();
         IsOpen = true;
