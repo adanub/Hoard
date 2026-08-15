@@ -36,6 +36,12 @@ public partial class SettingsViewModel : ViewModelBase
         _projects = projects;
         _appPaths = appPaths;
         Update = update;
+        // While the choice is "System", IsDarkTheme reports what the app is ACTUALLY showing — so when the OS
+        // flips light↔dark the app re-themes and the breadcrumb strip's switch has to move with it. Without
+        // this it would sit at its old position, showing the opposite of what's on screen, until something
+        // else touched ThemeChoice. (Shell-lifetime, like the subscription below — nothing to detach.)
+        if (Application.Current is { } app)
+            app.ActualThemeVariantChanged += (_, _) => OnPropertyChanged(nameof(IsDarkTheme));
         // Both are shell-lifetime singletons, so this subscription lives as long as the app — nothing to detach.
         if (update is not null)
             update.PropertyChanged += (_, e) =>
@@ -104,6 +110,24 @@ public partial class SettingsViewModel : ViewModelBase
     {
         Persist(s => s.Theme = value.ToLowerInvariant());
         ApplyTheme(value);
+        OnPropertyChanged(nameof(IsDarkTheme)); // the breadcrumb strip's switch shows the same state
+    }
+
+    /// <summary>
+    /// The breadcrumb strip's sun/moon switch: a two-state view of the three-state <see cref="ThemeChoice"/>,
+    /// so the common flip doesn't cost a trip into Settings. Both write the same stored preference — this is
+    /// a second control over one value, never a second value.
+    /// <para>Reading it while the choice is "System" reports what the app is ACTUALLY showing
+    /// (<c>ActualThemeVariant</c>), because a switch has to sit where the eye says it should. Flipping it
+    /// commits to Light or Dark explicitly: "system" is a follow-the-OS mode a two-state control can't
+    /// express, so leaving it is the deliberate meaning of touching the switch (Settings takes you back).</para>
+    /// </summary>
+    public bool IsDarkTheme
+    {
+        get => ThemeChoice.Equals("Dark", StringComparison.OrdinalIgnoreCase)
+               || (!ThemeChoice.Equals("Light", StringComparison.OrdinalIgnoreCase)
+                   && Application.Current?.ActualThemeVariant == ThemeVariant.Dark);
+        set => ThemeChoice = value ? "Dark" : "Light";
     }
 
     /// <summary>Set the app-wide theme variant ("system"/"light"/"dark", case-insensitive). Also called at

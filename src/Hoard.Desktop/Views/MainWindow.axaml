@@ -30,8 +30,27 @@
                 <Border DockPanel.Dock="Top" Height="34" Padding="10,0"
                         BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
                         TextElement.FontSize="{DynamicResource FontSizeSm}">
-                    <ctrl:BreadcrumbBar Trail="{Binding Chrome.Crumbs}"
-                                        NavigateCommand="{Binding Chrome.NavigateToCrumbCommand}"/>
+                    <!-- The trail fills the strip; the theme switch takes the spare room on the right. It is
+                         docked FIRST so the crumb bar is measured against what's actually left — its
+                         leading-ellipsis trim keys off the width it's given. Same two-state view of the
+                         Settings theme choice as the gallery's header (sun ─ switch ─ moon), and gated on
+                         Chrome.IsModalOpen for the same reason the crumbs are: the strip is docked ABOVE
+                         the page, so a sheet's scrim doesn't reach it. -->
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6"
+                                    VerticalAlignment="Center" Margin="10,0,0,0"
+                                    IsEnabled="{Binding !Chrome.IsModalOpen}">
+                            <ctrl:Icon Data="{StaticResource Icon.sun}" Width="14" Height="14"
+                                       Foreground="{DynamicResource MutedForegroundBrush}"/>
+                            <ToggleButton Theme="{StaticResource HoardSwitch}"
+                                          IsChecked="{Binding Settings.IsDarkTheme}"
+                                          ToolTip.Tip="Light / dark theme"/>
+                            <ctrl:Icon Data="{StaticResource Icon.moon}" Width="14" Height="14"
+                                       Foreground="{DynamicResource MutedForegroundBrush}"/>
+                        </StackPanel>
+                        <ctrl:BreadcrumbBar Trail="{Binding Chrome.Crumbs}"
+                                            NavigateCommand="{Binding Chrome.NavigateToCrumbCommand}"/>
+                    </DockPanel>
                 </Border>
                 <ContentControl Content="{Binding Navigation.Current}"/>
             </DockPanel>
