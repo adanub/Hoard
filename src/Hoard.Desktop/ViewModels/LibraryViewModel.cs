@@ -644,8 +644,13 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         transcript.AppendLine($"Boards: {plans.Count}   Cookies: {SyncAllCookiesBrowser}");
         transcript.AppendLine(new string('-', 60));
 
-        int done = 0, newTotal = 0;
-        var failures = new List<string>();
+        // `position` is where the run IS, `done` is how much of it worked — deliberately two counters. The
+        // crumb once read its ordinal off `done`, so a board that failed left the next one still saying
+        // "1 of 16": with no cookies every board 404s and the whole run counted itself as the first board.
+        int position = 0, done = 0, newTotal = 0;
+        // The message matters as much as the name: when every board fails it's one cause (a missing cookie
+        // choice, a signed-out browser), and the run's closing toast is the only place that can say so.
+        var failures = new List<(string Board, string Error)>();
         var cancelled = false;
 
         // Mark the whole queue up front, so the grid shows what this run is going to do rather than one card
@@ -673,7 +678,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
                     card.IsImporting = true;
                     card.ImportStatusText = "Syncing… starting";
                 }
-                SyncAllStatusText = $"syncing “{plan.Name}” ({done + 1} of {plans.Count})";
+                SyncAllStatusText = $"syncing “{plan.Name}” ({++position} of {plans.Count})";
                 transcript.AppendLine($"=== {plan.Name} (#{plan.CollectionId}) — {plan.Targets.Count} target(s)");
 
                 // Per board, so a progress callback that lands after we've moved on can't write its count onto
@@ -714,7 +719,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
                 {
                     // The whole point is not having to visit boards one at a time, so one bad source (gone
                     // private, deleted) is collected and reported at the end, never a reason to stop.
-                    failures.Add(plan.Name);
+                    failures.Add((plan.Name, ex.Message));
                     transcript.AppendLine($"FAILED: {ex}");
                 }
                 finally
@@ -759,19 +764,76 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         {
             // A re-run picks up from wherever each board stands, so say how far it got rather than letting the
             // strips just vanish (which reads as "finished"). The shell owns the toast host, so this shows
-            // over whatever screen the user is on now.
-            _toasts.Show($"Sync stopped — {done} of {plans.Count} board(s) done before you left.");
+            // over whatever screen the user is on now. It carries whatever failed BEFORE the run was
+            // abandoned, for the same reason the completed run does: those boards are exactly as broken as
+            // they'd have been at the end, and dropping them here would make leaving the Library a way to
+            // lose the report.
+            var stopped = $"Sync stopped — {done} of {plans.Count} board(s) done before you left.";
+            if (failures.Count > 0) stopped += $"  {failures.Count} failed so far.";
+            _toasts.Show(stopped, isError: failures.Count > 0, details: SyncAllDetails(failures));
             return;
         }
         await RefreshAsync();
 
-        var summary = newTotal == 0
-            ? $"Synced {done} board(s) — already up to date."
-            : $"Synced {done} board(s) — {newTotal} new image(s).";
-        if (failures.Count > 0)
-            summary += $"  {failures.Count} failed: {string.Join(", ", failures.Take(3))}"
-                       + (failures.Count > 3 ? "…" : "") + " (see the log).";
-        _toasts.Show(summary, isError: failures.Count > 0);
+        _toasts.Show(SyncAllSummary(done, plans.Count, newTotal, failures),
+            isError: failures.Count > 0, details: SyncAllDetails(failures));
+    }
+
+    /// <summary>
+    /// The closing toast for a "sync all" run — the ONLY thing that reports what a multi-minute run achieved,
+    /// since a board that fails just drops its progress strip and the crumb count clears.
+    /// <para>Three cases, deliberately, because collapsing them hid a total failure: <b>nothing failed</b>
+    /// reads as before; <b>some failed</b> says how many of how many worked and names the casualties;
+    /// <b>everything failed</b> leads with the connector's own reason (the same actionable text a single
+    /// board's Sync toasts — "the board is private, choose your cookies"). The old wording branched on
+    /// <c>newTotal</c> alone, so 16 boards 404ing on a cookie-less run announced itself as "Synced 0 board(s)
+    /// — already up to date", with the cause available only in the log.</para>
+    /// </summary>
+    internal static string SyncAllSummary(int done, int total, int newTotal,
+        IReadOnlyList<(string Board, string Error)> failures)
+    {
+        if (failures.Count == 0)
+            return newTotal == 0
+                ? $"Synced {done} board(s) — already up to date."
+                : $"Synced {done} board(s) — {newTotal} new image(s).";
+
+        if (done == 0)
+            return $"Sync failed — no board could be fetched. {Headline(failures[0].Error)}";
+
+        var names = string.Join(", ", failures.Take(3).Select(f => f.Board)) + (failures.Count > 3 ? "…" : "");
+        var got = newTotal == 0 ? "no new images" : $"{newTotal} new image(s)";
+        // No "see the log": this toast carries SyncAllDetails, so every failure and its reason is one click
+        // away on the card itself. Sending the user to find a file would be a step backwards from that.
+        return $"Synced {done} of {total} board(s) — {got}.  {failures.Count} failed: {names}.";
+    }
+
+    /// <summary>
+    /// The long form behind the closing toast's ⋯ button: every board that failed and what it said. The card
+    /// can only carry the first reason and a count, and "see the log" asks the user to go find a file — a run
+    /// where three of sixteen boards failed for three different reasons is only readable here.
+    /// </summary>
+    internal static string? SyncAllDetails(IReadOnlyList<(string Board, string Error)> failures)
+    {
+        if (failures.Count == 0) return null;
+        var text = new StringBuilder();
+        text.AppendLine(failures.Count == 1 ? "1 board failed." : $"{failures.Count} boards failed.");
+        foreach (var (board, error) in failures)
+        {
+            text.AppendLine();
+            text.AppendLine(board);
+            text.AppendLine($"  {error}");
+        }
+        return text.ToString().TrimEnd();
+    }
+
+    /// <summary>The connector states the actionable cause in a sentence, then appends the raw gallery-dl tail
+    /// (every target URL and its error line) — worth having in the transcript, unreadable in a toast that
+    /// dismisses itself. Keep the sentence, drop the tail.</summary>
+    private static string Headline(string message)
+    {
+        var cut = message.IndexOf(" [", StringComparison.Ordinal); // where the gallery-dl tail starts
+        var head = (cut > 0 ? message[..cut] : message).TrimEnd();
+        return head.Length <= 240 ? head : head[..240].TrimEnd() + "…";
     }
 
     /// <summary>How far a "sync all" run has got, surfaced through <see cref="CrumbTitle"/>.</summary>
