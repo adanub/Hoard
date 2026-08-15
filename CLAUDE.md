@@ -93,9 +93,16 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   back to `version.txt` when there's no PR to preview. `dist/` is listed into the run summary, so the
   preview reads without downloading. (Never reach for `0.0.0` as a placeholder here: **vpk rejects it**.)
 - **The app's assembly name is `Hoard`, not the project name `Hoard.Desktop`** (`<AssemblyName>`), so the
-  exe/taskbar/bundle say "Hoard". Namespaces are unchanged. Two things key off the assembly name and break
-  silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong one throws at
-  startup, not at build), and the **`--mainExe`** argument in the release workflow's vpk steps.
+  exe and the macOS bundle executable say "Hoard". Namespaces are unchanged. Two things key off the assembly
+  name and break silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong
+  one throws at startup, not at build), and the **`--mainExe`** argument in the release workflow's vpk steps.
+- **The name the USER sees has THREE independent inputs, and getting two right is not enough.** The assembly
+  name above, the bundle's `CFBundleName`/`CFBundleDisplayName` (`tools/packaging/macos/Info.plist`), and
+  **`Application.Name` in App.axaml** — which Avalonia defaults to the literal *"Avalonia Application"* and
+  the macOS backend pushes into `NSApplication` (`Avalonia.Native`'s `SetupApplicationName`). That is what
+  the Dock, the app menu and Activity Monitor show, so **v1.1.0 shipped running as "Avalonia Application"
+  with a perfectly correct Info.plist**. (Finding it needed a UTF-16 search of the shipped DLLs — .NET stores
+  string literals as UTF-16, so a plain byte/ASCII `strings` sweep reports a clean bundle and lies.)
 - **The installer/updater (Velopack) covers Windows AND macOS.** Windows: `Setup.exe` (per-user, no admin
   prompt) beside a non-updating portable zip. macOS: `vpk pack --noInst` builds the `.app` itself and its zip
   **replaces** the old hand-rolled one — so the mac "portable" download self-updates. No `.pkg` on purpose (a
@@ -382,7 +389,10 @@ Concepts that span multiple files:
   `ProjectManager` rewrites whole (recents) and would clobber anything else stored there. One mutable
   `UiSettings` instance is shared app-wide: the sheet (`Controls/SettingsSheet` + `ViewModels/SettingsViewModel`,
   hosted in a shell-level `SheetHost` in `MainWindow`; saves on every change, no Apply/Cancel) writes it, and
-  consumers read it live — the import/sync cookie pickers pre-select `DefaultCookiesBrowser` when they open;
+  consumers read it live — the import/sync cookie pickers pre-select `DefaultCookiesBrowser` when they open
+  **and write the resolved choice back** (`UiSettingsStore.RememberCookiesBrowser`), so it doubles as
+  "last used": picking a browser for an import once left the next sync-all on "(none)", which 404s every
+  private board (the sheet re-reads it in `Open()` for the same reason — one value, two controls);
   the board's GIF playback reads `GifAutoplay` and `MaxPlayingGifs` (the LRU bound that used to be a
   hardcoded 12, so memory stays capped either way; a Settings save also **trims already-playing GIFs to a
   lowered budget immediately** via `UiSettingsStore.Changed`). **Autoplay is VIEWPORT-driven, never
@@ -740,11 +750,7 @@ Concepts that span multiple files:
   **`HOARD_UPDATE_DEMO=1`** (same spirit as `HOARD_GALLERY=1`) drives the prompt + Settings rows with a
   pretend update from `dotnet run` — VM-only, it never downloads or applies anything.
   **The `vpk` tool version in `release.yml`,
-  the `Velopack` PackageReference, and the pinned licence commit must move together.** The macOS leg
-  deliberately keeps its hand-rolled ad-hoc-signed `.app` zip (unverified on a real Mac here; an arm64
-  bundle that loses its ad-hoc signature won't launch at all) — the app-side code is cross-platform and
-  simply reports "doesn't update itself" there. If macOS is ever added, use `--noInst`: a root-owned `.pkg`
-  install makes every future update prompt for a password, while a user-owned `.app` updates silently.
+  the `Velopack` PackageReference, and the pinned licence commit must move together.**
 - **Logging.** Serilog → the launching terminal (the WinExe attaches to the parent console) **and**
   `%APPDATA%/Hoard/logs/hoard.log` (rolled daily: `hoardYYYYMMDD.log`). `App` hooks `AppDomain.UnhandledException`
   + `TaskScheduler.UnobservedTaskException` and `Log.CloseAndFlush()`es so an otherwise-silent UI-thread crash
@@ -801,6 +807,11 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
 - **`Theme/Tokens.axaml` is the single source of truth** for colours (light/dark), radius, spacing, type, and
   shadow. **Never hardcode** a colour/radius/spacing in a view — bind a token via `{DynamicResource ...}`; add
   a token if one's missing. New components go under `Theme/Controls/` and into the dev component gallery.
+- **A new piece of UI is GATED on the gallery: reuse an existing component if one fits, otherwise build it
+  in the gallery (`HOARD_GALLERY=1`) with a demo that exercises its real states, and ask the user to verify
+  it visually BEFORE wiring it into the app.** The GUI can't be launched here (see the environment notes),
+  so the gallery is the only place a component can be looked at in isolation — and a component reviewed
+  after it's already threaded through a screen is a component nobody can change cheaply.
 - **FluentTheme is RETIRED — `Theme/Theme.axaml` is the app's entire theme, with no base theme
   underneath.** The stock-control templates Fluent used to supply live in `Theme/Controls/`:
   `Chrome.axaml` (Window, PopupRoot, OverlayPopupHost, AdornerLayer, ToolTip, ItemsControl, ListBox),
@@ -822,10 +833,6 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   behaviour (scroll feel, GIF playback, memory) must be confirmed by the user — point them at `hoard.log`.
 - **The sandbox may block executing the bundled `gallery-dl.exe`** (third-party binary), including via the test
   runner. Direct diagnostic runs are sometimes allowed; don't tunnel execution through tests to get around a block.
-- **`gh` is NOT installed on this machine** — surprising, given how much of the release section above is
-  written around it. Those commands are for CI runners, where it's present. Locally, read GitHub through
-  unauthenticated `https://api.github.com/...` (issues, tags, releases, file contents) with WebFetch; that
-  works fine for public repos and needs no token.
 - **`python` with `pyyaml` is available, and nothing else validates the workflows.** After editing
   `.github/workflows/*.yml`, parse it —
   `python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml', encoding='utf-8'))"` — because
@@ -834,7 +841,13 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); a templated
   control's visual state lives on its template parts, so restyle
   `<class> /template/ <part>#<name>` across states (`:pointerover`/`:pressed`/`:disabled`) rather than
-  setting `Background` on the control — see the `ComboBoxItem` theme. **In any custom interactive control template, make the inner
+  setting `Background` on the control — see the `ComboBoxItem` theme. **The state selector is load-bearing,
+  not decoration: a value written in a `ControlTemplate` applies at `Template` priority, which beats the
+  `Style` priority of a plain `/template/` selector — so a STATELESS one silently does nothing, while a
+  pseudo-class promotes it to `StyleTrigger` and wins.** (A `HoardTextArea` that could never top-align its
+  text, because the base template hard-set `VerticalAlignment="Center"`.) To vary something across themes
+  rather than across states, `TemplateBinding` a property the derived theme sets — that's why the input
+  template binds `VerticalContentAlignment` instead of a literal. **In any custom interactive control template, make the inner
   `ContentPresenter`/content `IsHitTestVisible="False"`** so the fill `Border` is the *single* hover/hit
   surface — otherwise the content (text/icon) is its own hit target and dragging across the content↔fill
   boundary fires enter/leave that flickers the control's `:pointerover`/`:pressed` (the fill `Border` must keep
