@@ -136,5 +136,10 @@
             <Setter Property="Width" Value="{DynamicResource ControlHeight}"/>
             <Setter Property="Padding" Value="0"/>
         </Style>
+        <!-- …and square again at the small height: .icon takes its Width from the DEFAULT height, so an
+             .icon.sm without this comes out wider than it is tall (a lopsided ✕ on a toast card). -->
+        <Style Selector="^.icon.sm">
+            <Setter Property="Width" Value="{DynamicResource ControlHeightSm}"/>
+        </Style>
     </ControlTheme>
 </ResourceDictionary>

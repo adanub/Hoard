@@ -37,6 +37,14 @@
             </DockPanel>
             <ctrl:FloatingBar x:Name="Bar" DataContext="{Binding Chrome}"/>
 
+            <!-- Toasts overlay the page, and every sheet below overlays THEM. That ordering is only safe
+                 because toasts no longer self-dismiss: a message arriving while a modal is open waits behind
+                 the scrim instead of being missed, so nothing is lost by letting the modal own the screen.
+                 Above the sheets it actively hurt — the details popup is opened BY a toast, so its own card
+                 sat over the popup showing its content, and (being interactive now) intercepted clicks
+                 meant for the sheet beneath. -->
+            <ctrl:ToastHost DataContext="{Binding ToastService}"/>
+
             <!-- Shell-owned Settings sheet (the bar's ⚙). Its SheetHost raises the same IsOpenChanged the
                  page sheets do, so the bar hides beneath it. -->
             <ctrl:SheetHost IsOpen="{Binding Settings.IsOpen}" DismissCommand="{Binding Settings.CloseCommand}">
@@ -49,7 +57,15 @@
                 <ctrl:UpdateSheet DataContext="{Binding Update}"/>
             </ctrl:SheetHost>
 
-            <ctrl:ToastHost DataContext="{Binding ToastService}"/>
+            <!-- A toast's ⋯ ("show the full message") opens here. Last, so it floats over the other sheets —
+                 the detail belongs to a message that can arrive while any of them is open. -->
+            <ctrl:SheetHost IsOpen="{Binding ToastService.IsDetailsOpen}" CardMaxWidth="760"
+                            DismissCommand="{Binding ToastService.CloseDetailsCommand}">
+                <!-- CloseCommand resolves against the WINDOW's DataContext on purpose: this element's own
+                     DataContext is the ToastItem, which knows nothing about the service that owns it. -->
+                <ctrl:ToastDetailsSheet DataContext="{Binding ToastService.DetailsToast}"
+                                        CloseCommand="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ToastService.CloseDetailsCommand}"/>
+            </ctrl:SheetHost>
         </Panel>
     </LayoutTransformControl>
 </Window>

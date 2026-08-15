@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
@@ -26,6 +27,16 @@ public partial class GalleryWindow : Window
         InitializeComponent();
         DemoToasts.DataContext = _toasts;
         DemoSheet.DismissCommand = new RelayCommand(() => DemoSheet.IsOpen = false);
+
+        // A toast's ⋯ sets DetailsToast; mirror the shell's wiring so the gallery exercises the real path.
+        _toasts.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(ToastService.DetailsToast)) return;
+            DemoToastDetailsSheet.DataContext = _toasts.DetailsToast;
+            ToastDetailsDemoSheet.IsOpen = _toasts.DetailsToast is not null;
+        };
+        DemoToastDetailsSheet.CloseCommand = _toasts.CloseDetailsCommand;
+        ToastDetailsDemoSheet.DismissCommand = _toasts.CloseDetailsCommand;
 
         // The project card's Edit button opens its Edit popup.
         DemoProjectCard.EditCommand = new RelayCommand(() => ProjectEditDemoSheet.IsOpen = true);
@@ -194,4 +205,41 @@ public partial class GalleryWindow : Window
 
     private void OnShowToast(object? sender, RoutedEventArgs e) => _toasts.Show("Saved your changes.");
     private void OnShowErrorToast(object? sender, RoutedEventArgs e) => _toasts.Show("Something went wrong.", isError: true);
+
+    // The shape the real thing takes: a short line that fits the card, with the run's full story behind ⋯.
+    // The detail is deliberately long AND full of unbreakably long URLs — that's what proves the sheet wraps
+    // instead of overflowing sideways, and scrolls instead of capping what it will show.
+    private void OnShowDetailedToast(object? sender, RoutedEventArgs e)
+    {
+        var boards = new[]
+        {
+            "Dofus/Wakfu", "Animation References", "NPC References", "Map Ideas", "Water References",
+            "3D Art", "Drawing Tips", "Character Hair/Face References", "Alchemist Ideas", "ear-refs",
+            "Terrain Ideas", "Enemy Ideas", "Equipment", "Weapons", "Abilities", "Isometric",
+        };
+        var detail = new StringBuilder($"{boards.Length} boards failed.\n");
+        foreach (var board in boards)
+        {
+            var slug = board.ToLowerInvariant().Replace(' ', '-').Replace('/', '-');
+            detail.AppendLine();
+            detail.AppendLine(board);
+            detail.AppendLine($"  Pinterest returned \"board not found\". [1/2] https://www.pinterest.com/jane/{slug}/"
+                              + " | [pinterest][error] NotFoundError: Requested board could not be found"
+                              + $" | [2/2] https://www.pinterest.com/jane/{slug}/id:5127181054144193440"
+                              + " | [pinterest][error] NotFoundError: Requested section could not be found");
+        }
+
+        _toasts.Show(
+            "Sync failed — no board could be fetched. Pinterest returned \"board not found\". If the board is "
+            + "private, select the browser you're logged into Pinterest with in the Cookies dropdown.",
+            isError: true, details: detail.ToString().TrimEnd());
+    }
+
+    // Past the cap: the stack holds MaxVisible and sheds the OLDEST ROUTINE one, so an error already on the
+    // pile is still there at the end. Enough of them to make the column scroll on a short window, too.
+    private void OnFillToasts(object? sender, RoutedEventArgs e)
+    {
+        for (var i = 1; i <= ToastService.MaxVisible + 3; i++)
+            _toasts.Show($"Routine message {i} — synced a board.");
+    }
 }

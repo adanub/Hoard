@@ -29,6 +29,12 @@ public class SheetHost : ContentControl
     public static readonly StyledProperty<ICommand?> DismissCommandProperty =
         AvaloniaProperty.Register<SheetHost, ICommand?>(nameof(DismissCommand));
 
+    /// <summary>How wide the card may grow (it still STRETCHES down to fit a narrow window). The default suits
+    /// a form — a column of fields and a couple of buttons. Raise it for a sheet whose content is text to be
+    /// READ rather than filled in (the toast details dump), where 440px would wrap a log into a ribbon.</summary>
+    public static readonly StyledProperty<double> CardMaxWidthProperty =
+        AvaloniaProperty.Register<SheetHost, double>(nameof(CardMaxWidth), 440);
+
     /// <summary>Bubbles to the window whenever a sheet opens or closes, so the shell can track "any sheet
     /// open" without polling (it hides the floating bar while a modal owns the screen).</summary>
     public static readonly RoutedEvent<RoutedEventArgs> IsOpenChangedEvent =
@@ -50,6 +56,12 @@ public class SheetHost : ContentControl
     {
         get => GetValue(DismissCommandProperty);
         set => SetValue(DismissCommandProperty, value);
+    }
+
+    public double CardMaxWidth
+    {
+        get => GetValue(CardMaxWidthProperty);
+        set => SetValue(CardMaxWidthProperty, value);
     }
 
     public SheetHost() => Focusable = true; // the focus fallback target when a sheet has no TextBox (confirm sheets)

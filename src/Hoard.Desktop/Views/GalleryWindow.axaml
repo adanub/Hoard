@@ -155,13 +155,17 @@
                     <Button Theme="{StaticResource HoardButton}" Content="Open sheet" HorizontalAlignment="Left" Click="OnOpenSheet"/>
                 </StackPanel>
 
-                <!-- Toast (transient messages) -->
+                <!-- Toast (status messages). They do NOT self-dismiss: each card has a ✕, one with long-form
+                     detail has a ⋯ that opens the ToastDetailsSheet, and a pile gets "Clear all". "Fill the
+                     stack" shows the cap shedding the oldest ROUTINE toast while errors stay put. -->
                 <StackPanel Spacing="10">
                     <TextBlock Classes="h2" Text="Toast"/>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                    <ctrl:FlexWrapPanel Spacing="8">
                         <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Show toast" Click="OnShowToast"/>
                         <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Show error toast" Click="OnShowErrorToast"/>
-                    </StackPanel>
+                        <Button Theme="{StaticResource HoardButton}" Classes="destructive" Content="Error with details" Click="OnShowDetailedToast"/>
+                        <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Fill the stack" Click="OnFillToasts"/>
+                    </ctrl:FlexWrapPanel>
                 </StackPanel>
 
                 <!-- Busy indicator: ALWAYS a BusyBar, never a raw indeterminate ProgressBar — a raw one animates
@@ -288,7 +292,12 @@
         </ScrollViewer>
     </DockPanel>
 
-        <!-- Overlays for the Sheet + Toast demos (sit above everything). -->
+        <!-- Overlays for the Sheet + Toast demos (sit above everything).
+             ORDER MATCHES MainWindow: the ToastHost first, then every sheet on top of it. Toasts persist
+             until dismissed, so one waiting behind a scrim is delayed, never lost — and a card left on
+             screen must not cover the sheet it opened (the details popup) or eat clicks meant for it. -->
+        <ctrl:ToastHost x:Name="DemoToasts"/>
+
         <ctrl:SheetHost x:Name="DemoSheet">
             <StackPanel Margin="24" Spacing="14">
                 <TextBlock Classes="h2" Text="Example sheet"/>
@@ -297,7 +306,10 @@
                 <Button Theme="{StaticResource HoardButton}" Content="Close" HorizontalAlignment="Right" Click="OnCloseSheet"/>
             </StackPanel>
         </ctrl:SheetHost>
-        <ctrl:ToastHost x:Name="DemoToasts"/>
+        <!-- A toast's ⋯ opens here (the shell wires the same pair). -->
+        <ctrl:SheetHost x:Name="ToastDetailsDemoSheet" CardMaxWidth="760">
+            <ctrl:ToastDetailsSheet x:Name="DemoToastDetailsSheet"/>
+        </ctrl:SheetHost>
 
         <!-- Project card's Edit popup (opened by the card's Edit button). -->
         <ctrl:SheetHost x:Name="ProjectEditDemoSheet">

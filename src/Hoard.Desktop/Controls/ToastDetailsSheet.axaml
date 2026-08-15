@@ -1,0 +1,36 @@
+<!--
+  ToastDetailsSheet — contents of the popup behind a toast's ⋯ button (see Controls/ToastDetailsSheet.cs).
+  Goes inside a SheetHost; DataContext is the ToastItem being expanded.
+
+  NO fixed Width, per Sheet.axaml: content wider than the card's cap doesn't widen the card, it draws outside
+  it on both sides. The card is widened by the HOST instead (CardMaxWidth) — this content just stretches.
+
+  The detail is a read-only HoardTextArea: it wraps (so nothing escapes sideways) and scrolls within a bounded
+  height, so an unbounded dump stays readable and the Copy/Close buttons never scroll away. Its Copy() also
+  sidesteps Avalonia 12's DataTransfer/DataFormat clipboard API (see CLAUDE.md).
+-->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
+             xmlns:svc="using:Hoard.Desktop.Services"
+             x:Class="Hoard.Desktop.Controls.ToastDetailsSheet"
+             x:DataType="svc:ToastItem"
+             x:Name="Root">
+
+    <StackPanel Margin="24" Spacing="16">
+        <TextBlock Classes="h2" Text="{Binding #Root.Title}"/>
+
+        <!-- The toast's own line, kept above the detail so the sheet stands alone once the toast is gone. -->
+        <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                   Foreground="{DynamicResource MutedForegroundBrush}"/>
+
+        <TextBox x:Name="DetailText" Theme="{StaticResource HoardTextArea}"
+                 Text="{Binding Details, Mode=OneWay}" IsReadOnly="True"
+                 FontSize="{DynamicResource FontSizeSm}" MinHeight="160" MaxHeight="520"/>
+
+        <ctrl:FlexWrapPanel Spacing="8">
+            <Button Theme="{StaticResource HoardButton}" Classes="ghost lg" Content="Copy" Click="OnCopy"/>
+            <Button Theme="{StaticResource HoardButton}" Classes="lg" Content="Close" Click="OnClose"/>
+        </ctrl:FlexWrapPanel>
+    </StackPanel>
+</UserControl>

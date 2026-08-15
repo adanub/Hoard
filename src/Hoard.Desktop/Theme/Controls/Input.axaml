@@ -31,7 +31,11 @@
                     <ScrollViewer Name="PART_ScrollViewer" Padding="{TemplateBinding Padding}"
                                   HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"
                                   VerticalScrollBarVisibility="{TemplateBinding (ScrollViewer.VerticalScrollBarVisibility)}">
-                        <Panel VerticalAlignment="Center">
+                        <!-- Alignment comes from VerticalContentAlignment, NOT a literal: a value written in
+                             a template applies at Template priority, which a plain (non-pseudo-class) style
+                             selector can't override — so `^ /template/ Panel#content` would silently lose and
+                             HoardTextArea could never top-align its text. -->
+                        <Panel Name="content" VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
                             <TextBlock Name="placeholder" Text="{TemplateBinding PlaceholderText}"
                                        Foreground="{DynamicResource MutedForegroundBrush}" VerticalAlignment="Center"
                                        IsVisible="{Binding Text, RelativeSource={RelativeSource TemplatedParent}, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
@@ -47,7 +51,7 @@
                                            RevealPassword="{TemplateBinding RevealPassword}"
                                            TextAlignment="{TemplateBinding TextAlignment}"
                                            TextWrapping="{TemplateBinding TextWrapping}"
-                                           VerticalAlignment="Center"/>
+                                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                         </Panel>
                     </ScrollViewer>
                 </Border>
@@ -62,5 +66,23 @@
         <Style Selector="^:disabled">
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
+    </ControlTheme>
+
+    <!--
+      Multi-line variant, for text to be READ (a log, a run's failures, a stack trace) rather than typed into:
+      the same recessed field, but the text starts at the TOP and long content SCROLLS vertically instead of
+      widening the box. HoardInput centres a single line and floors the height at 40 — both wrong past one
+      line. Horizontal scrolling is off on purpose: wrapping is what keeps the content inside the card.
+      Pair with IsReadOnly + a copy button (a read-only TextBox's own Copy() sidesteps Avalonia 12's
+      DataTransfer/DataFormat clipboard API). Bound the height at the call site.
+    -->
+    <ControlTheme x:Key="HoardTextArea" TargetType="TextBox" BasedOn="{StaticResource HoardInput}">
+        <Setter Property="AcceptsReturn" Value="True"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="VerticalContentAlignment" Value="Top"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="Cursor" Value="Ibeam"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
     </ControlTheme>
 </ResourceDictionary>

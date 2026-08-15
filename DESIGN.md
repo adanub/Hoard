@@ -188,10 +188,29 @@ Built as Avalonia `Styles` / `ControlThemes` over standard controls; add new one
 - **Badge / Tag** — small **floating** chip (gloss bevel + border + drop shadow): item counts, GIF tag.
 - **Sheet** (`Controls/SheetHost.cs`, theme in `Sheet.axaml`) — reusable in-app modal: a `ScrimBrush` backdrop
   dims the page and centres `Content` in a floating card (`ShadowMd`); scrim-click / Esc dismiss. Hosts
-  new-project now; import / new-collection later.
-- **Toast** (`Services/ToastService.cs` + `Controls/ToastHost.axaml`) — transient, auto-dismissing status
-  messages, bottom-right; the host is shell-mounted in `MainWindow` and hit-test-invisible. Error toasts edge
-  in `DestructiveBrush`.
+  new-project now; import / new-collection later. The card stretches to fit a narrow window and caps at the
+  host's **`CardMaxWidth`** (440 by default; raise it for a sheet of text to be *read* rather than filled in).
+  **Sheet content must never set a fixed `Width`** — content wider than the cap doesn't widen the card, it
+  draws outside it on both sides.
+- **Toast** (`Services/ToastService.cs` + `Controls/ToastHost.axaml`) — status messages stacked bottom-right,
+  newest nearest the corner; the host is shell-mounted in `MainWindow`. Error toasts edge in
+  `DestructiveBrush`. **They do not auto-dismiss** — each card carries a ✕, a pile carries "Clear all", and
+  the stack is capped (shedding the oldest *routine* toast first, so an error is never pushed out unread).
+  The four-second fade this replaced lost the only report a long run gives. A message too long for the 360px
+  card passes `details:` and gains a ⋯ that opens the **Toast details** sheet.
+  Three consequences: the host is **interactive**, so nothing between it and the cards may take a `Background`
+  (a null background isn't hit-testable, which keeps the empty corner click-through to the page beneath); the
+  column **scrolls**, following the newest — a full stack is taller than a short window, and a card rendered
+  off the top edge is the very thing this design exists to prevent; and the host is mounted **below every
+  sheet**, so a modal covers it. That's only safe *because* toasts persist — one arriving during a sheet is
+  delayed, never missed — and it's required, since a card left standing would otherwise cover the details
+  popup it opened and eat clicks meant for it.
+- **Toast details** (`Controls/ToastDetailsSheet.axaml`) — the ⋯ popup: the toast's line above its long form
+  in a read-only, scrollable, copyable **`HoardTextArea`** (a run's per-board failures, a stack trace). A
+  `SheetHost` at `CardMaxWidth="760"`, like every other in-app modal.
+- **Text area** (`HoardTextArea`, in `Input.axaml`) — the multi-line `HoardInput`: text starts at the top,
+  wraps, and scrolls vertically within a height the caller bounds. `HoardInput` centres one line and floors
+  the height at 40 — both wrong past a single line, so never use it for a block of text.
 - **Separator** (not yet built). The old `ConfirmDialog`/`MessageDialog` OS windows are gone — every
   confirm/notice is an in-app `SheetHost` (`ConfirmSheet`, note sheets) or a toast.
 

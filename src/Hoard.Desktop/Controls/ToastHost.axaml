@@ -1,45 +1,100 @@
 <!--
-  ToastHost — renders a ToastService's live toasts as a stack of floating cards in the bottom-right corner.
-  Hit-test invisible so toasts never block the UI underneath. Set DataContext to a ToastService.
-  ClipToBounds=False at every level (UserControl / ItemsControl / item ContentPresenter / panel) so each
-  toast's drop shadow isn't cropped at its bounds; the 40px margin keeps the corner shadow off the window edge.
+  ToastHost — renders a ToastService's live toasts as a stack of cards in the bottom-right corner, newest
+  nearest the corner so the pile grows upwards. Set DataContext to a ToastService.
+
+  Toasts DON'T self-dismiss (see ToastService): every card carries a ✕, a card with long-form detail carries
+  a ⋯ that opens it in the shell's sheet, and a pile carries "Clear all". So this host is INTERACTIVE — the
+  old IsHitTestVisible="False" is gone. Nothing between here and the cards may take a Background: a null
+  background isn't hit-testable in Avalonia, which is what keeps the empty corner click-through to the page
+  underneath (the UserControl, the DockPanel, the ItemsControl template's Border and the panels all leave
+  theirs unset).
+
+  The column SCROLLS: a full stack is taller than a short window, and a toast rendered off the top edge is
+  exactly the invisible message this design exists to prevent. Structure that makes it work:
+    • Grid Margin=10 — the constrained region, so the ScrollViewer is measured against the WINDOW height.
+      (A StackPanel here would measure its children with infinite height and the scroller would never engage.)
+    • DockPanel — "Clear all" docks Bottom and the ScrollViewer FILLS what's left, still constrained.
+    • Padding=30 INSIDE the scrolled content — the cards' ShadowMd draws outside their bounds and a
+      ScrollViewer clips to its viewport, so the room for the shadow has to be part of the scrolled content.
+      10 (margin) + 30 (padding) = the 40px inset the corner had before.
+  ClipToBounds=False everywhere the ScrollViewer isn't, for the same shadow reason.
 -->
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Hoard.Desktop.Controls"
              xmlns:svc="using:Hoard.Desktop.Services"
              x:Class="Hoard.Desktop.Controls.ToastHost"
              x:DataType="svc:ToastService"
-             IsHitTestVisible="False" ClipToBounds="False">
+             ClipToBounds="False">
 
-    <ItemsControl ItemsSource="{Binding Toasts}" ClipToBounds="False"
-                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="40">
-        <ItemsControl.Styles>
-            <!-- The generated per-item container; stop it cropping the toast's shadow. -->
-            <Style Selector="ContentPresenter">
-                <Setter Property="ClipToBounds" Value="False"/>
-            </Style>
-        </ItemsControl.Styles>
-        <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-                <StackPanel Spacing="12" ClipToBounds="False"/>
-            </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="svc:ToastItem">
-                <Border Classes.error="{Binding IsError}"
-                        Background="{DynamicResource PopoverBrush}"
-                        BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
-                        CornerRadius="{DynamicResource RadiusMd}" Padding="14,10"
-                        BoxShadow="{DynamicResource ShadowMd}" MaxWidth="360" HorizontalAlignment="Right">
-                    <Border.Styles>
-                        <Style Selector="Border.error">
-                            <Setter Property="BorderBrush" Value="{DynamicResource DestructiveBrush}"/>
+    <Grid Margin="10">
+        <DockPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" LastChildFill="True">
+
+            <!-- Only once there's a pile: under a single toast it duplicates that toast's own ✕. -->
+            <Button DockPanel.Dock="Bottom" Theme="{StaticResource HoardButton}" Classes="ghost sm"
+                    Content="Clear all" HorizontalAlignment="Right" Margin="0,8,30,30"
+                    IsVisible="{Binding ShowClearAll}" Command="{Binding ClearAllCommand}"/>
+
+            <!-- Background MUST be cleared: the ScrollViewer theme sets Transparent (so a bar track stays a
+                 hit target) and its presenter renders it, and Transparent IS hit-testable — which would make
+                 the whole scroll viewport swallow clicks. With Padding=30 that's a dead 60×60 patch even
+                 with zero toasts, and a tall strip with a few standing, over the floating bar and the page.
+                 A local value outranks the theme setter. Cards keep their own background, so the wheel still
+                 scrolls over them. -->
+            <ScrollViewer x:Name="Scroller" Background="{x:Null}"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding Toasts}" Padding="30" ClipToBounds="False">
+                    <ItemsControl.Styles>
+                        <!-- The generated per-item container; stop it cropping the toast's shadow. -->
+                        <Style Selector="ContentPresenter">
+                            <Setter Property="ClipToBounds" Value="False"/>
                         </Style>
-                    </Border.Styles>
-                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
-                               Foreground="{DynamicResource ForegroundBrush}"/>
-                </Border>
-            </DataTemplate>
-        </ItemsControl.ItemTemplate>
-    </ItemsControl>
+                    </ItemsControl.Styles>
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="12" ClipToBounds="False"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="svc:ToastItem">
+                            <Border Classes.error="{Binding IsError}"
+                                    Background="{DynamicResource PopoverBrush}"
+                                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                                    CornerRadius="{DynamicResource RadiusMd}" Padding="14,10,8,10"
+                                    BoxShadow="{DynamicResource ShadowMd}" MaxWidth="360"
+                                    HorizontalAlignment="Right">
+                                <Border.Styles>
+                                    <Style Selector="Border.error">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource DestructiveBrush}"/>
+                                    </Style>
+                                </Border.Styles>
+                                <!-- Message takes the width; the buttons sit top-right so a wrapped multi-line
+                                     message doesn't push them down the card. -->
+                                <DockPanel LastChildFill="True">
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2"
+                                                VerticalAlignment="Top" Margin="8,-2,0,0">
+                                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon sm"
+                                                IsVisible="{Binding HasDetails}"
+                                                Command="{Binding ShowDetailsCommand}"
+                                                ToolTip.Tip="Show the full message">
+                                            <ctrl:Icon Data="{StaticResource Icon.more-horizontal}"
+                                                       Width="16" Height="16"/>
+                                        </Button>
+                                        <Button Theme="{StaticResource HoardButton}" Classes="ghost icon sm"
+                                                Command="{Binding DismissCommand}" ToolTip.Tip="Dismiss">
+                                            <ctrl:Icon Data="{StaticResource Icon.x}" Width="14" Height="14"/>
+                                        </Button>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource ForegroundBrush}"/>
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </DockPanel>
+    </Grid>
 </UserControl>
