@@ -10,7 +10,17 @@
          every `avares://Hoard/...` URI keys off THIS name (not the namespace), and so does the
          mainExe argument the release workflow's packaging steps hand to vpk. -->
     <AssemblyName>Hoard</AssemblyName>
+    <!-- Shipped identity. These land in the Windows exe's Details tab and the assembly attributes; unset,
+         each falls back to the assembly name or to nothing (Copyright was simply blank on a GPL app).
+         NO <Version> here on purpose — the release stamps it with -p:Version, and a hardcoded one would
+         quietly override release-please's. AssemblyTitle is what Windows shows as "File description":
+         without it the taskbar/Task Manager fall back to the bare file name. -->
     <Product>Hoard</Product>
+    <AssemblyTitle>Hoard</AssemblyTitle>
+    <Company>Hoard contributors</Company>
+    <Authors>Hoard contributors</Authors>
+    <Copyright>Copyright © 2026 Hoard contributors — GPL-3.0-or-later</Copyright>
+    <Description>A self-hosted, local-first Pinterest archiver: back up your boards, with their metadata, into an archive you own.</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- The Windows shell reads this one out of the .exe itself (taskbar, Explorer, Alt-Tab); the
          Window's own Icon="/Assets/hoard.ico" is what Avalonia draws in the title bar. Both point at
@@ -20,7 +30,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
     <InternalsVisibleTo Include="Hoard.Desktop.Tests" />
   </ItemGroup>

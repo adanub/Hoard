@@ -2,8 +2,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Hoard.Desktop.App"
              xmlns:local="using:Hoard.Desktop"
+             Name="Hoard"
              RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+             <!-- Name is NOT decoration: Avalonia's Application.Name defaults to the literal
+                  "Avalonia Application", and the macOS backend pushes it into NSApplication
+                  (Avalonia.Native's SetupApplicationName). That name is what the app menu, the Dock and
+                  Activity Monitor show — so a correct Info.plist ISN'T enough on its own, and the shipped
+                  1.1.0 bundle ran as "Avalonia Application" despite CFBundleName being "Hoard".
+                  "Default" ThemeVariant follows the system theme variant. "Dark"/"Light" are the others. -->
 
     <Application.DataTemplates>
         <local:ViewLocator/>

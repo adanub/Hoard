@@ -28,5 +28,10 @@
     <true/>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
+    <!-- Shown in Finder's Get Info panel. (The name macOS displays in the Dock, the app menu and Activity
+         Monitor comes from CFBundleName AND from Avalonia's Application.Name — see App.axaml; setting only
+         one of them is not enough.) -->
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Hoard contributors — GPL-3.0-or-later</string>
 </dict>
 </plist>
