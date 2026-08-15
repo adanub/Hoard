@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Windows.Input;
 using Avalonia;
@@ -6,8 +7,10 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Serilog;
 
 namespace Hoard.Desktop.Controls;
 
@@ -90,6 +93,8 @@ public class SheetHost : ContentControl
         // but not keys, so without this the first keystrokes went to whatever scrim-covered control opened the sheet
         // (e.g. Space re-invoking the opener). Posted so the sheet has become visible/measured first.
         if (IsOpen)
+        {
+            WarnIfContentHasFixedWidth();
             Dispatcher.UIThread.Post(() =>
             {
                 if (!IsOpen) return; // closed again before the post ran
@@ -97,6 +102,33 @@ public class SheetHost : ContentControl
                              ?? this;
                 target.Focus();
             }, DispatcherPriority.Loaded);
+        }
+    }
+
+    /// <summary>
+    /// DEBUG-only: the card stretches to fit and caps at <see cref="CardMaxWidth"/>, so content with a fixed
+    /// <c>Width</c> doesn't widen the card — it draws OUTSIDE it, spilling symmetrically past both edges and
+    /// cutting off its own text. The rule is stated in <c>Theme/Controls/Sheet.axaml</c>'s header and was
+    /// broken anyway (a 520px sheet in a 440px card), which is why it's a check now rather than more prose:
+    /// prose can't fire. Same self-announcing spirit as <c>Infrastructure/LeakCanary</c> — it costs nothing in
+    /// a release build and shouts the first time anyone opens the sheet in development.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void WarnIfContentHasFixedWidth()
+    {
+        if (Content is not Layoutable content) return;
+        // Only the two that can force a desired width past the card's constraint. A MaxWidth is never a
+        // problem — narrower than the cap is a deliberate choice and wider simply never binds — so flagging
+        // it would cry wolf, and a check nobody trusts is worse than no check.
+        var forced = !double.IsNaN(content.Width) ? content.Width
+                   : content.MinWidth > CardMaxWidth ? content.MinWidth
+                   : double.NaN;
+        if (double.IsNaN(forced)) return;
+        Log.Warning(
+            "Sheet content {Content} forces a width of {Forced}px inside a card capped at {Cap}px — that "
+            + "doesn't widen the card, it overflows both of its edges. Drop the width and raise the host's "
+            + "CardMaxWidth instead (see Theme/Controls/Sheet.axaml).",
+            content.GetType().Name, forced, CardMaxWidth);
     }
 
     /// <summary>Close the sheet (raises <see cref="DismissCommand"/>). Public so the shell's unified Back
