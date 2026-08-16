@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Dev-only headless render harness — NOT shipped (it is absent from the release workflow's publish, and
+    IsPackable=false). It boots the real Hoard theme and the real page views under Avalonia's headless
+    windowing platform with Skia doing actual drawing, so a layout can be rendered to a PNG and measured at
+    any client size without a display, a Mac, or a human clicking anything. See README.md in this folder.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <RootNamespace>Hoard.Harness</RootNamespace>
+    <AssemblyName>Hoard.Harness</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned to the same Avalonia the app uses: the harness is only honest if it renders with the very
+         same layout and drawing code the shipped app runs. -->
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Hoard.Desktop\Hoard.Desktop.csproj" />
+  </ItemGroup>
+
+</Project>

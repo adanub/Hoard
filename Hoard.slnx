@@ -4,6 +4,9 @@
     <Project Path="src/Hoard.Desktop/Hoard.Desktop.csproj" />
     <Project Path="src/Hoard.Ingest.GalleryDl/Hoard.Ingest.GalleryDl.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Hoard.Harness/Hoard.Harness.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Hoard.Core.Tests/Hoard.Core.Tests.csproj" />
     <Project Path="tests/Hoard.Desktop.Tests/Hoard.Desktop.Tests.csproj" />

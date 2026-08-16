@@ -857,8 +857,34 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
 
 ## Working in this repo (environment realities)
 
-- **You cannot launch the GUI here.** Build + tests verify logic and that things compile/lay out; runtime
-  behaviour (scroll feel, GIF playback, memory) must be confirmed by the user — point them at `hoard.log`.
+- **Layout can be verified here; runtime behaviour still can't.** Two dev tools split that line, and reaching
+  for the wrong one wastes a round trip with the user:
+  - **`tools/Hoard.Harness`** (headless render harness, `dotnet run --project tools/Hoard.Harness -- --help`)
+    renders a real page with the real theme at any client size — `--size` repeatably, reusing ONE window so
+    later sizes exercise a **re-layout** — and writes a PNG plus a geometry report per size. Use it for
+    anything decidable from geometry: scroll extents, cropped edges, reflow, column counts. It found the
+    board's "pins cut off at the bottom" bug as a one-line extent mismatch. It knows nothing about the
+    platform windowing layer (native fullscreen, DPI, the compositor): `renderScaling` is always 1 there.
+  - **`HOARD_LAYOUT_PROBE=1`** (`Infrastructure/LayoutProbe.cs`) arms the same report inside the running app,
+    dumped on every resize/window-state/scaling change (twice — immediately and after the layout settles, so
+    a late resize is visible as a second, different dump), on lightbox open/close, and on demand via
+    **Ctrl/⌘+Shift+L**. Each element prints its `Bounds` *and* its `TransformToVisual(window)` matrix, which is
+    the discriminator worth knowing: bounds too wide ⇒ our layout bug; bounds correct and matrices ≈ identity
+    while the screen looks zoomed ⇒ the scene graph is right and the compositor is scaling a stale surface, a
+    platform problem; a stray scale in a matrix ⇒ a `RenderTransform` left on an ancestor.
+  - Still user-only: scroll feel, GIF playback, memory, and anything about the real window (fullscreen
+    transitions). Point them at `hoard.log` — the probe writes there too.
+- **`ScrollViewer.Padding` is broken in Avalonia 12 — always inset scrolling content with a Margin on the
+  content instead, in BOTH axes.** `ScrollContentPresenter` ignores `Padding` when it measures (the child is
+  measured against the raw constraint) but `ArrangeOverrideImpl` deflates the child's rect by it, and
+  `ComputeExtent` takes the extent from the child's *arranged* bounds — so padding silently costs the extent
+  twice its own size and the tail of the content becomes unreachable. A content `Margin` is correct because
+  `ComputeExtent` inflates by the child's margin. Horizontally this cropped the right edge; vertically it hid
+  the masonry's last row under the floating bar. `LibraryView`/`ProjectLauncherView` already use a content
+  margin; `BoardView` was the one that didn't. (This is a rule for the `ScrollViewer`s **views** declare. The
+  one place `Padding` is still forwarded to a `ScrollViewer` is the stock `TextBox` template in
+  `Theme/Controls/Input.axaml`, which mirrors Avalonia's own — it inherits the same caveat, so if a multi-line
+  `HoardTextArea` ever loses its last line at the bottom of a scroll, this is why.)
 - **The sandbox may block executing the bundled `gallery-dl.exe`** (third-party binary), including via the test
   runner. Direct diagnostic runs are sometimes allowed; don't tunnel execution through tests to get around a block.
 - **`python` with `pyyaml` is available, and nothing else validates the workflows.** After editing
