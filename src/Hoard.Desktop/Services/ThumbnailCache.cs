@@ -100,7 +100,8 @@ public sealed partial class ThumbnailCache
         {
             // Write to a temp file then move into place so a concurrent reader never sees a partial file.
             var temp = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            bitmap.Save(temp);
+            // Explicit PNG options: the bare Save(path) overload is obsolete as of Avalonia 12.1.
+            bitmap.Save(temp, PngBitmapEncoderOptions.Default);
             File.Move(temp, cachePath, overwrite: true);
         }
         catch
