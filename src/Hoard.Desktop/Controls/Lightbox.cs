@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Hoard.Desktop.Infrastructure;
 
 namespace Hoard.Desktop.Controls;
 
@@ -81,8 +82,14 @@ public partial class Lightbox : UserControl
         if (change.Property == IsOpenProperty)
         {
             IsVisible = IsOpen;
-            if (IsOpen) { _panning = false; ResetTransform(); LoadMedia(); }
-            else ClearMedia();
+            // Reset on the way OUT as well as in: a viewer closed while zoomed used to keep its (possibly 8×,
+            // heavily translated) matrix on ZoomHost until the next open. Nothing should be left holding a
+            // scale on a hidden subtree — and "fullscreen misdraws after using the lightbox" is exactly the
+            // sort of report that shouldn't have a stale transform anywhere near it.
+            _panning = false;
+            ResetTransform();
+            if (IsOpen) LoadMedia(); else ClearMedia();
+            LayoutProbe.Note($"lightbox {(IsOpen ? "opened" : "closed")}");
         }
         else if (change.Property == SourceProperty && IsOpen)
         {
