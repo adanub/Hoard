@@ -5,20 +5,24 @@
 
   Fill is Hoard's accent indigo, PrimaryBrush in src/Hoard.Desktop/Theme/Tokens.axaml.
 
+  The two halves read platform | what-you-get. They deliberately don't say "Download" — the surrounding
+  copy does, and a button whose loudest word is the one thing both buttons share tells you nothing.
+
   textLength pins each label's width, so the layout survives a renderer that lacks Verdana instead of
-  overflowing the button. Keep it if you edit the wording — and re-measure the width to match.
+  overflowing the button. If you reword either half, re-measure: the widths here (whole-badge, label
+  rect, and each text x/textLength) are the metrics for THIS text at this font size.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="233.75" height="28" role="img"
-     aria-label="Download: Windows x64">
-  <title>Download: Windows x64</title>
-  <rect width="233.75" height="28" fill="#6d6df5" shape-rendering="crispEdges"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="244.5" height="28" role="img"
+     aria-label="Download Hoard for Windows: installer, x64">
+  <title>Download Hoard for Windows: installer, x64</title>
+  <rect width="244.5" height="28" fill="#6d6df5" shape-rendering="crispEdges"/>
   <!-- Four-pane flag in a 24-unit box, scaled into the 14x14 logo slot at x=9,y=7. -->
   <g transform="translate(9 7) scale(.5833333)">
     <path fill="#fff" d="M0 3.449 9.75 2.1v9.451H0M10.949 1.949 23.99 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
   </g>
   <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif"
      text-rendering="geometricPrecision" font-size="100">
-    <text transform="scale(.1)" x="640" y="175" textLength="700">DOWNLOAD</text>
-    <text transform="scale(.1)" x="1723.75" y="175" textLength="987.5" font-weight="bold">WINDOWS X64</text>
+    <text transform="scale(.1)" x="598.75" y="175" textLength="617.5">WINDOWS</text>
+    <text transform="scale(.1)" x="1736.25" y="175" textLength="1177.5" font-weight="bold">INSTALLER (X64)</text>
   </g>
 </svg>

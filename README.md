@@ -14,8 +14,8 @@
      their own glyph geometry — read them before editing either. -->
 [![Download for Windows](assets/badges/download-windows.svg)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe)
 [![Download for macOS](assets/badges/download-macos.svg)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip)
-
-<sub>Windows installer · macOS Apple Silicon app — [all downloads](https://github.com/adanub/Hoard/releases/latest) · [first-run notes](#install)</sub>
+<br>
+<sub>latest release · [other downloads](https://github.com/adanub/Hoard/releases/latest) · [first-run setup](#install)</sub>
 
 I often found myself wanting a way to keep things I'd saved on Pinterest downloaded locally - this
 was already technically possible by downloading the pins manually, but that didn't seem very fun...
