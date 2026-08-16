@@ -194,7 +194,12 @@ jobs:
             # are still right in shape, just a release behind.
             next=$(gh api "repos/$GITHUB_REPOSITORY/contents/.release-please-manifest.json?ref=release-please--branches--main" \
                      -H "Accept: application/vnd.github.raw" -q '."."' 2>/dev/null || true)
-            [[ -n "$next" && "$next" != "null" ]] || next=$(tr -d '[:space:]' < version.txt)
+            # Test the SHAPE of what came back, not merely that something did. With no release branch
+            # the raw Accept header makes gh print its 404 JSON body to stdout (-q never runs on a raw
+            # response) and `|| true` hides the failing exit, so a miss arrives as a non-empty,
+            # non-"null" blob that an emptiness check waves through — and lands in -p:Version=, where
+            # MSBuild reads the spaces in it as further switches and fails the build.
+            [[ "$next" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || next=$(tr -d '[:space:]' < version.txt)
             echo "VERSION=$next" >> "$GITHUB_ENV"
             echo "Dry run — previewing the assets for **$next**." >> "$GITHUB_STEP_SUMMARY"
           fi
