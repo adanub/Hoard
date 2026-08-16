@@ -140,11 +140,11 @@ jobs:
 
           | Platform | Download | |
           | --- | --- | --- |
-          | **Windows (x64)** | [\`Hoard-installer-win-x64.exe\`]($dl/Hoard-installer-win-x64.exe) | **Recommended** — installs for your user only (no admin prompt) and updates itself |
+          | **Windows (x64)** | [\`Hoard-installer-win-x64.exe\`]($dl/Hoard-installer-win-x64.exe) | **Recommended** — installs for your user only (no admin prompt) and updates itself. Not code-signed, so the first run shows SmartScreen's *\"Windows protected your PC\"* — **More info → Run anyway** |
           | Windows (x64) | [\`Hoard-portable-win-x64.zip\`]($dl/Hoard-portable-win-x64.zip) | Unzip and run. Does not self-update |
-          | **macOS (Apple Silicon)** | [\`Hoard-portable-osx-arm64.zip\`]($dl/Hoard-portable-osx-arm64.zip) | Unzip in Finder, drag \`Hoard.app\` to Applications. Updates itself |
+          | **macOS (Apple Silicon)** | [\`Hoard-portable-osx-arm64.zip\`]($dl/Hoard-portable-osx-arm64.zip) | Unzip **in Finder** (not \`unzip\`, which strips the signature), drag \`Hoard.app\` to Applications. Updates itself. Not notarised, so opening it the first time will likely be blocked — allow it with **System Settings → Privacy & Security → Open Anyway** |
 
-          First run needs one click past SmartScreen (Windows) or Gatekeeper (macOS) — see [Install](https://github.com/$GITHUB_REPOSITORY#install). Intel Macs aren't built.
+          Intel Macs aren't built. Fuller notes on both first-run prompts are in [Install](https://github.com/$GITHUB_REPOSITORY#install).
 
           Everything else on this page is machinery, not a download: the \`.nupkg\` and \`releases.*.json\` assets are Hoard's in-app update feed (including one package stamped with the *previous* version — it's the base the delta is built against), and each \`.sha256\` file holds one checksum for the download beside it.
 
