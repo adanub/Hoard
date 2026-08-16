@@ -812,8 +812,12 @@ Concepts that span multiple files:
   `licences/`** — Hoard's own text plus the GPL-2.0 text of the bundled gallery-dl binary, fetched by
   release.yml's "Collect licences" step. Shipping without them is a licence breach, so treat that step as
   load-bearing. `THIRD-PARTY-NOTICES.md` names those paths; keep it in step if they move. Adding a
-  dependency means adding it there too — and anything not permissively licensed (MIT/Apache/BSD/ISC) needs
-  checking against GPL-3.0 before it goes in.
+  dependency **that ships** means adding it there too — and anything not permissively licensed
+  (MIT/Apache/BSD/ISC) needs checking against GPL-3.0 before it goes in. **Dev-only tool projects are
+  exempt**, because the notices describe what's IN the release archive and `release.yml` publishes
+  `src/Hoard.Desktop` alone: `tools/Hoard.Harness` pulls `Avalonia.Headless`/`Avalonia.Skia` and correctly
+  appears nowhere in the notices. Test projects are the same. The test for "does this need a notice?" is
+  whether a user could receive it, not whether the repo builds it.
 - **Don't commit real personal data** — no real Pinterest handles, board names or local paths in tests,
   fixtures or the component gallery. The fixture user is `jane`. (This cost a git-history rewrite once.)
 - **C#:** `_camelCase` for private/protected fields, PascalCase for everything public; file-scoped namespaces,
