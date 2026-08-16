@@ -8,7 +8,10 @@
 
 **Back up your Pinterest boards locally, on your own disk.**
 
-[![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe)
+<!-- The Windows glyph is an inline data-URI SVG on purpose: shields.io's icon set carries no Microsoft
+     logo any more (windows / windows11 / microsoft all render a blank badge), while `logo=apple` still
+     works — so a named slug here would silently leave one button icon-less beside an iconed one. -->
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTAgMy40NDkgOS43NSAyLjF2OS40NTFIME0xMC45NDkgMS45NDkgMjMuOTkgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe)
 [![Download for macOS](https://img.shields.io/badge/Download-macOS%20Apple%20Silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip)
 
 <sub>Windows installer · macOS Apple Silicon app — [all downloads](https://github.com/adanub/Hoard/releases/latest) · [first-run notes](#install)</sub>
