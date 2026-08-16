@@ -37,15 +37,17 @@
              with a floating detail overlay on top. The masonry stays virtualized (its layout realizes from the
              effective viewport, not the measure height), so a folder header above it is free. -->
         <Panel>
-            <!-- Horizontal inset is a Margin on the content, NOT ScrollViewer.Padding. The masonry fills its width
-                 edge-to-edge, and SV horizontal padding cropped the right edge (the scrollbar/padding placement ate
-                 it — the measured width was already correct, so it wasn't an overflow). A content Margin gives a
-                 reliable, symmetric left/right inset. Vertical padding stays on the SV (its scroll-direction padding
-                 behaves, and the scroll-to-top math reads GridScroll.Padding.Top). -->
-            <!-- The 96px bottom padding keeps the last masonry row scrollable clear of the floating bar. -->
-            <ScrollViewer Name="GridScroll" Padding="0,10,0,96"
+            <!-- EVERY inset is a Margin on the content, NEVER ScrollViewer.Padding — in both axes. Avalonia's
+                 ScrollContentPresenter ignores Padding when it measures (it measures the child against the raw
+                 constraint) but Arrange deflates the child's rect by it, and the scroll Extent is taken from the
+                 child's ARRANGED bounds. So padding silently shrinks the extent by its own size: horizontally it
+                 cropped the right edge, and vertically it made the last (top+bottom) pixels of content unreachable
+                 — the masonry's bottom row disappeared under the floating bar with no way to scroll to it. A
+                 content Margin has none of that: ComputeExtent inflates by the child's margin, so the inset is
+                 part of the scrollable region. The 96px bottom keeps the last row clear of the floating bar. -->
+            <ScrollViewer Name="GridScroll"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="6" Margin="10,0" ClipToBounds="False">
+                <StackPanel Name="GridContent" Spacing="6" Margin="10,10,10,96" ClipToBounds="False">
                     <!-- Folder grid: "+ New folder" + one BoardCard per child folder, rendered exactly like
                          top-level boards. Hidden for "All images" / search results. ClipToBounds=False down to
                          the item ContentPresenter so the cards' hover-scale + shadow aren't cropped (the same

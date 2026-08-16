@@ -235,7 +235,11 @@ public partial class BoardView : UserControl
             // otherwise sit mostly/entirely off-screen.
             if (AssetGrid.TranslatePoint(new Point(0, bandTop), GridScroll) is { } p)
             {
-                var target = Math.Max(0, GridScroll.Offset.Y + p.Y - GridScroll.Padding.Top);
+                // The content's own top inset, read off the element rather than duplicated as a constant, so the
+                // band lands the same distance below the viewport top as the grid's first row does. (It used to
+                // read GridScroll.Padding.Top; the inset moved onto the content because SV padding breaks the
+                // scroll extent — see the comment in BoardView.axaml.)
+                var target = Math.Max(0, GridScroll.Offset.Y + p.Y - GridContent.Margin.Top);
                 _scroll.Start(GridScroll.Offset.Y, target, ScrollMs, ScrollEasing,
                     onStep: y => GridScroll.Offset = GridScroll.Offset.WithY(y));
             }
