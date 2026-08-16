@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/adanub/Hoard/compare/v1.0.0...v1.1.0) (2026-08-16)
+
+
+### Features
+
+* direct downloads on readme for easier access ([cce402b](https://github.com/adanub/Hoard/commit/cce402bdcfe1ada9de96a9976458e2717bc958c7))
+
 ## 1.0.0 (2026-08-16)
 
 
