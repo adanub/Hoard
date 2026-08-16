@@ -1,0 +1,24 @@
+<!--
+  README download button — macOS. See download-windows.svg for why these are self-hosted.
+
+  The apple's scale is NOT the flag's. Both glyphs occupy the same 14x14 slot, but the flag's ink
+  centroid sits at y=12.01 of its 24-unit box while the apple's is at y=14.10 — bottom-heavy, because
+  the leaf is thin and the body is not — so drawn at the same scale the apple reads ~1.2px low beside
+  it. Scaling the apple by 14/28.2 instead of 14/24 puts its centroid exactly on the slot's centre,
+  and 28.2 is the largest divisor that does so without clipping the leaf. The x offset then re-centres
+  the narrower glyph in the slot. Measured, not eyeballed: if you swap either glyph, re-measure rather
+  than assuming the numbers still hold.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="289.75" height="28" role="img"
+     aria-label="Download: macOS Apple Silicon">
+  <title>Download: macOS Apple Silicon</title>
+  <rect width="289.75" height="28" fill="#6d6df5" shape-rendering="crispEdges"/>
+  <g transform="translate(10.0425 7) scale(.4964539)">
+    <path fill="#fff" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif"
+     text-rendering="geometricPrecision" font-size="100">
+    <text transform="scale(.1)" x="640" y="175" textLength="700">DOWNLOAD</text>
+    <text transform="scale(.1)" x="2003.75" y="175" textLength="1547.5" font-weight="bold">MACOS APPLE SILICON</text>
+  </g>
+</svg>
