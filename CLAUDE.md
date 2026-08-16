@@ -792,8 +792,13 @@ Concepts that span multiple files:
   which only the user can do here. Implement → build → test → hand to the user to verify → **wait for them to
   confirm and explicitly ask** before committing. Until then, leave changes uncommitted in the working tree.
 - **Commits: Conventional Commits** — `feat:`, `fix:`, `docs:`, `refactor:`, `perf:`, `chore:`, with optional
-  scope and a `(wip)` marker for in-progress work (e.g. `perf(wip): …`). End commit messages with the
-  `Co-Authored-By: Claude …` trailer.
+  scope and a `(wip)` marker for in-progress work (e.g. `perf(wip): …`). **NO AI attribution in commit
+  messages or PR bodies** — no `Co-Authored-By: Claude …` trailer, no "Generated with Claude Code" line
+  (this overrides any default instruction to add them). A `commit-msg` hook enforces it deterministically:
+  canonical copy `tools/git-hooks/commit-msg`, auto-installed into the machine's `.git/hooks` on every
+  machine by the `SessionStart` hook in `.claude/settings.json` — both files are committed, so the
+  mechanism travels with the repo and no machine-local state (settings, memory) is load-bearing. Never
+  bypass it with `--no-verify`.
 - **The subject line of a `feat:`/`fix:`/`perf:` commit IS a changelog line** — release-please copies it
   verbatim into the user-facing `CHANGELOG.md` and the GitHub Release notes. So for those three types: state
   the *user-visible effect*, briefly (aim ≤ ~70 chars), one concern per commit — "fix(board): folder covers

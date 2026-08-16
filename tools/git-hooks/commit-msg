@@ -1,0 +1,14 @@
+#!/bin/sh
+# Deterministically strips AI attribution from every commit message, no matter
+# who or what wrote it:
+#   Co-Authored-By: Claude ... / anything@anthropic trailers
+#   "Generated with Claude Code" lines and claude.com/claude-code links
+# Canonical copy: tools/git-hooks/commit-msg. The live hook is a copy in
+# .git/hooks (untracked), auto-installed on every machine by the SessionStart
+# hook in .claude/settings.json; manual fallback:
+#   cp tools/git-hooks/commit-msg "$(git rev-parse --git-path hooks)/commit-msg"
+msg="$1"
+tmp="$msg.noattrib"
+grep -ivE '^co-authored-by:.*(claude|anthropic)|generated with.*claude ?code|claude\.(com/claude-code|ai/code)' "$msg" > "$tmp"
+mv "$tmp" "$msg"
+exit 0
