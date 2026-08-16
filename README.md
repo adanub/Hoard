@@ -8,11 +8,20 @@
 
 **Back up your Pinterest boards locally, on your own disk.**
 
-<!-- The Windows glyph is an inline data-URI SVG on purpose: shields.io's icon set carries no Microsoft
-     logo any more (windows / windows11 / microsoft all render a blank badge), while `logo=apple` still
-     works — so a named slug here would silently leave one button icon-less beside an iconed one. -->
-[![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTAgMy40NDkgOS43NSAyLjF2OS40NTFIME0xMC45NDkgMS45NDkgMjMuOTkgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe)
-[![Download for macOS](https://img.shields.io/badge/Download-macOS%20Apple%20Silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip)
+<!-- Both buttons carry Hoard's accent indigo (#6D6DF5, the PrimaryBrush from Theme/Tokens.axaml) as one
+     solid fill, and both glyphs are inline data-URI SVGs. Two reasons they can't be shields.io's named
+     logo slugs, each of which was a visible defect first:
+       · shields' icon set carries no Microsoft logo any more — windows / windows11 / windows10 /
+         microsoft / microsoftwindows ALL render a blank badge, while `logo=apple` still resolves, so a
+         named slug leaves one button icon-less beside an iconed one.
+       · the stock apple glyph reads ~1.2px LOW beside the Windows flag. Both are placed in an identical
+         14x14 box, but the Windows flag's ink centroid sits at y=12.01 of its 24-unit viewBox while the
+         apple's is at y=14.10 — bottom-heavy, because the leaf is thin and the body is not. The fix is
+         the apple's viewBox height: at "0 0 24 28.2" preserveAspectRatio=meet scales it so the centroid
+         lands exactly on the box centre, and 28.2 is the largest such height that doesn't clip the leaf.
+     Measured, not eyeballed. If you swap either glyph, re-check the centroids rather than trusting it. -->
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64-6D6DF5?labelColor=6D6DF5&style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTAgMy40NDkgOS43NSAyLjF2OS40NTFIME0xMC45NDkgMS45NDkgMjMuOTkgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe)
+[![Download for macOS](https://img.shields.io/badge/Download-macOS%20Apple%20Silicon-6D6DF5?labelColor=6D6DF5&style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyOC4yIiBmaWxsPSIjZmZmIj48cGF0aCBkPSJNMTIuMTUyIDYuODk2Yy0uOTQ4IDAtMi40MTUtMS4wNzgtMy45Ni0xLjA0LTIuMDQuMDI3LTMuOTEgMS4xODMtNC45NjEgMy4wMTQtMi4xMTcgMy42NzUtLjU0NiA5LjEwMyAxLjUxOSAxMi4wOSAxLjAxMyAxLjQ1NCAyLjIwOCAzLjA5IDMuNzkyIDMuMDM5IDEuNTItLjA2NSAyLjA5LS45ODcgMy45MzUtLjk4NyAxLjgzMSAwIDIuMzUuOTg3IDMuOTYuOTQ4IDEuNjM3LS4wMjYgMi42NzYtMS40OCAzLjY3Ni0yLjk0OCAxLjE1Ni0xLjY4OCAxLjYzNi0zLjMyNSAxLjY2Mi0zLjQxNS0uMDM5LS4wMTMtMy4xODItMS4yMjEtMy4yMi00Ljg1Ny0uMDI2LTMuMDQgMi40OC00LjQ5NCAyLjU5Ny00LjU1OS0xLjQyOS0yLjA5LTMuNjIzLTIuMzI0LTQuMzktMi4zNzYtMi0uMTU2LTMuNjc1IDEuMDktNC42MSAxLjA5ek0xNS41MyAzLjgzYy44NDMtMS4wMTIgMS40LTIuNDI3IDEuMjQ1LTMuODMtMS4yMDcuMDUyLTIuNjYyLjgwNS0zLjUzMiAxLjgxOC0uNzguODk2LTEuNDU0IDIuMzM4LTEuMjczIDMuNzE0IDEuMzM4LjEwNCAyLjcxNS0uNjg4IDMuNTU5LTEuNzAxIi8%2BPC9zdmc%2B)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip)
 
 <sub>Windows installer · macOS Apple Silicon app — [all downloads](https://github.com/adanub/Hoard/releases/latest) · [first-run notes](#install)</sub>
 
