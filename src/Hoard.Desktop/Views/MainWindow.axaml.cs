@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Hoard.Desktop.Controls;
+using Hoard.Desktop.Infrastructure;
 using Hoard.Desktop.Navigation;
 using Hoard.Desktop.ViewModels;
 
@@ -28,6 +29,9 @@ public partial class MainWindow : Window
         AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Bubble);
         // Any sheet opening/closing anywhere re-evaluates "is a modal up" (the floating bar hides under modals).
         AddHandler(SheetHost.IsOpenChangedEvent, (_, _) => UpdateModalState());
+        // Dev-only (HOARD_LAYOUT_PROBE=1): dump window + element geometry on every resize and on demand, so a
+        // "it's drawn at the wrong size" report can be settled as layout-vs-renderer instead of guessed at.
+        LayoutProbe.Attach(this);
     }
 
     protected override void OnDataContextChanged(EventArgs e)

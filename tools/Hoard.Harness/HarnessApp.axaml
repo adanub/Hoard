@@ -1,0 +1,22 @@
+<!--
+  The harness's Application: deliberately NOT Hoard.Desktop's App, which builds the whole DI graph, opens
+  a real project and configures Serilog against the user's live hoard.log. All the harness needs from the
+  app is what affects layout and pixels — the ViewLocator and the design system — so it takes exactly those
+  two, by URI, from the Hoard assembly. Anything a page renders differently here than in the app would be a
+  difference in the shell, not in the theme.
+-->
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:hoard="using:Hoard.Desktop"
+             x:Class="Hoard.Harness.HarnessApp"
+             Name="Hoard Harness"
+             RequestedThemeVariant="Default">
+
+    <Application.DataTemplates>
+        <hoard:ViewLocator/>
+    </Application.DataTemplates>
+
+    <Application.Styles>
+        <StyleInclude Source="avares://Hoard/Theme/Theme.axaml"/>
+    </Application.Styles>
+</Application>

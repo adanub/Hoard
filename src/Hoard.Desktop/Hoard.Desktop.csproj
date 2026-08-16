@@ -32,6 +32,8 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
     <InternalsVisibleTo Include="Hoard.Desktop.Tests" />
+    <!-- The dev-only headless render harness (tools/Hoard.Harness) reuses LayoutProbe's report. -->
+    <InternalsVisibleTo Include="Hoard.Harness" />
   </ItemGroup>
 
   <!-- Bundle the gallery-dl downloader next to the app: <output>/tools/gallery-dl/gallery-dl.exe -->

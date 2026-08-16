@@ -21,3 +21,6 @@ hoard.project.json
 # Claude Code: the shared config (.claude/skills, .claude/settings.json) IS committed; the per-machine
 # override is not — it holds local absolute paths, which must never land in a tracked file.
 .claude/settings.local.json
+
+# Headless render-harness output (tools/Hoard.Harness) — PNG/geometry dumps, never committed.
+artifacts/
