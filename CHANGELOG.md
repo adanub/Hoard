@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/adanub/Hoard/compare/v1.1.0...v1.1.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* **board:** the last row of images is no longer cut off at the bottom ([775b062](https://github.com/adanub/Hoard/commit/775b062ff3d41f1572247e669da7957fcc44774a))
+* **macos:** app contents draw at the right size after going fullscreen ([30d5e40](https://github.com/adanub/Hoard/commit/30d5e40519e0066d0d41c63e83f47b7dd849642a))
+
 ## [1.1.0](https://github.com/adanub/Hoard/compare/v1.0.0...v1.1.0) (2026-08-16)
 
 
