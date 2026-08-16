@@ -17,7 +17,7 @@ Binaries are taken from [gdl-org/builds](https://github.com/gdl-org/builds).
 
 ### Velopack — MIT
 
-The Windows installer (`Hoard-<version>-installer-win-x64.exe`), the app it installs, and the macOS
+The Windows installer (`Hoard-installer-win-x64.exe`), the app it installs, and the macOS
 `Hoard.app` are built with [Velopack](https://github.com/velopack/velopack), copyright Caelan Sayler and
 Velopack Ltd., licensed under the MIT Licence. Its managed assembly is linked into the app (so it travels
 in every build, portable zips included) and its native binaries (`Setup.exe` and `Update.exe` on Windows,

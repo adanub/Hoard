@@ -111,8 +111,21 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Bundling gallery-dl build \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
 
-      # Answerable later without an affected user's About sheet: which gallery-dl did vX.Y.Z ship?
-      - name: Record the bundled gallery-dl in the release notes
+      # A release page carries ~16 assets and only three of them are meant for a human: the rest are the
+      # Velopack update feed (whose names can't be tidied — see the packaging block below) plus GitHub's own
+      # source archives, and one of the feed packages is stamped with the PREVIOUS version, which reads like
+      # a mistake to anyone who doesn't know it's the delta base. Assets can't be grouped, hidden or
+      # reordered on a release page — but the notes render ABOVE them, so the notes are where the sorting
+      # actually happens: name the three downloads, then say plainly that the rest aren't for you.
+      #
+      # Asset names are version-free (see the packaging block), so they're constants here. The links point
+      # at THIS tag rather than /latest/ so an old release's notes keep pointing at that release's files;
+      # they 404 for the few minutes between release-please publishing the release and the build job
+      # uploading to it, which is the accepted cost of composing the notes in one place, once.
+      #
+      # The gallery-dl footer answers "which gallery-dl did vX.Y.Z ship?" later, without needing an
+      # affected user's About sheet.
+      - name: Compose the release notes
         if: steps.release.outputs.release_created == 'true'
         shell: bash
         env:
@@ -121,8 +134,23 @@ jobs:
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
           GDL_TAG: ${{ steps.gdl.outputs.tag }}
         run: |
+          dl="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG_NAME"
           body=$(gh release view "$TAG_NAME" --json body -q .body)
-          gh release edit "$TAG_NAME" --notes "$body
+          gh release edit "$TAG_NAME" --notes "## Downloads
+
+          | Platform | Download | |
+          | --- | --- | --- |
+          | **Windows (x64)** | [\`Hoard-installer-win-x64.exe\`]($dl/Hoard-installer-win-x64.exe) | **Recommended** — installs for your user only (no admin prompt) and updates itself |
+          | Windows (x64) | [\`Hoard-portable-win-x64.zip\`]($dl/Hoard-portable-win-x64.zip) | Unzip and run. Does not self-update |
+          | **macOS (Apple Silicon)** | [\`Hoard-portable-osx-arm64.zip\`]($dl/Hoard-portable-osx-arm64.zip) | Unzip in Finder, drag \`Hoard.app\` to Applications. Updates itself |
+
+          First run needs one click past SmartScreen (Windows) or Gatekeeper (macOS) — see [Install](https://github.com/$GITHUB_REPOSITORY#install). Intel Macs aren't built.
+
+          Everything else on this page is machinery, not a download: the \`.nupkg\` and \`releases.*.json\` assets are Hoard's in-app update feed (including one package stamped with the *previous* version — it's the base the delta is built against), and each \`.sha256\` file holds one checksum for the download beside it.
+
+          ---
+
+          $body
 
           Bundled gallery-dl: [$GDL_TAG](https://github.com/gdl-org/builds/releases/tag/$GDL_TAG)"
 
@@ -169,10 +197,11 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # A dry run is a PREVIEW of the next release, so it builds under a real version and produces the
-      # real asset names — no placeholder, no "dry-run" marker anywhere in a file name. What it's
-      # previewing is exactly what you'd be shipping, which is the only way the names themselves can be
-      # part of what gets checked.
+      # A dry run is a PREVIEW of the next release, so it builds under a real version — no placeholder, no
+      # "dry-run" marker anywhere. Asset names no longer carry the version (see the packaging block), so
+      # what the version now decides is what goes INSIDE the build: -p:Version, vpk's --packVersion, and
+      # therefore the update feed. A placeholder would still be wrong — vpk outright rejects 0.0.0, and a
+      # preview built under a version the release won't carry isn't previewing the release.
       - name: Work out version
         shell: bash
         env:
@@ -257,10 +286,19 @@ jobs:
             https://raw.githubusercontent.com/velopack/velopack/f2edcbcafb81da5b3c884aaea330e225ad91d8b6/LICENSE
 
       # ── Packaging ──────────────────────────────────────────────────────────────────────────────────
-      # Every asset that reaches the release page is named Hoard-<version>-<kind>-<platform>: the app, the
-      # release it belongs to, WHICH KIND of download it is (portable / installer), and what it runs on.
-      # Nothing else — a CI run number in particular means nothing to the person holding the file. They're
-      # collected in dist/, which is what gets checksummed, attested and uploaded.
+      # Every asset that reaches the release page is named Hoard-<kind>-<platform>: the app, WHICH KIND of
+      # download it is (portable / installer), and what it runs on. Nothing else — a CI run number in
+      # particular means nothing to the person holding the file. They're collected in dist/, which is what
+      # gets checksummed, attested and uploaded.
+      #
+      # The version is DELIBERATELY not in the name, and that is load-bearing rather than a style choice:
+      # GitHub's /releases/latest/download/<name> redirect resolves an EXACT file name, so a version in it
+      # means no permanent download link can exist and the README can only ever link to the releases page.
+      # Version-free names are what let the README's two download buttons point straight at the file. The
+      # version still travels with the release (tag, title, notes) and inside the app itself — About and
+      # the exe's file version — so nothing is actually lost except a version in your Downloads folder.
+      # If a name here changes, the README's buttons break SILENTLY (a 404, on a page nobody re-tests);
+      # keep them in step.
       #
       # The Velopack update-feed files in Releases/ keep the names vpk gave them, deliberately:
       # releases.<channel>.json references its packages BY FILE NAME, so a "tidier" rename there silently
@@ -271,7 +309,7 @@ jobs:
         run: |
           New-Item -ItemType Directory out, dist | Out-Null
           Move-Item publish out/Hoard
-          Compress-Archive -Path out/Hoard -DestinationPath "dist/Hoard-$env:VERSION-portable-${{ matrix.rid }}.zip"
+          Compress-Archive -Path out/Hoard -DestinationPath "dist/Hoard-portable-${{ matrix.rid }}.zip"
 
       # ── Self-updating packages (Velopack) ──────────────────────────────────────────────────────────
       # Both platforms. Windows gets Setup.exe — a per-user install, no admin prompt — ALONGSIDE the
@@ -351,7 +389,7 @@ jobs:
           # previous release's packages were downloaded into this same folder above, and a glob that
           # matched one of those would upload the wrong binary as this version's installer. If Velopack
           # ever changes the name, this fails the release loudly, which is the outcome we want.
-          mv Releases/Hoard-win-Setup.exe "dist/Hoard-$VERSION-installer-${{ matrix.rid }}.exe"
+          mv Releases/Hoard-win-Setup.exe "dist/Hoard-installer-${{ matrix.rid }}.exe"
 
       # The .app bundle, built and signed by vpk instead of by hand. Three parts are load-bearing:
       #
@@ -392,7 +430,7 @@ jobs:
             --outputDir Releases \
             --noInst \
             --signAppIdentity -
-          mv Releases/Hoard-osx-Portable.zip "dist/Hoard-$VERSION-portable-${{ matrix.rid }}.zip"
+          mv Releases/Hoard-osx-Portable.zip "dist/Hoard-portable-${{ matrix.rid }}.zip"
 
       - name: Checksum the release assets
         shell: pwsh
@@ -421,7 +459,7 @@ jobs:
         if: needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/Hoard-${{ env.VERSION }}-portable-${{ matrix.rid }}.zip
+          subject-path: dist/Hoard-portable-${{ matrix.rid }}.zip
 
       # The installer is what most people will actually run, so it gets provenance too. Its own step because
       # only Windows has one (macOS ships the self-updating app zip instead — see the pack steps above).
@@ -429,7 +467,7 @@ jobs:
         if: runner.os == 'Windows' && needs.release.outputs.release_created == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/Hoard-${{ env.VERSION }}-installer-${{ matrix.rid }}.exe
+          subject-path: dist/Hoard-installer-${{ matrix.rid }}.exe
 
       - name: Upload release assets
         if: needs.release.outputs.release_created == 'true'
@@ -453,8 +491,9 @@ jobs:
 
       # The same dist/ that a real release uploads, so the artifact IS the preview: the names inside it are
       # the names that would appear on the release page. The artifact's own name is a container GitHub wraps
-      # around them and follows the same scheme rather than announcing itself as a dry run — the run it
-      # belongs to already says that, and a marker in the name would be the one thing the preview got wrong.
+      # around them, and it keeps the version — since the files inside no longer carry one, this is the only
+      # thing telling two dry runs' artifacts apart. Still no "dry-run" marker: the run it belongs to already
+      # says that, and a marker in the name would be the one thing the preview got wrong.
       - name: Upload dry-run artifact
         if: needs.release.outputs.release_created != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

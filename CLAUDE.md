@@ -81,17 +81,36 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   specific version (e.g. the jump to 1.0.0), land a commit whose footer says `Release-As: 1.0.0`. The
   changelog starts fresh at pipeline adoption — `bootstrap-sha` in the config excludes all earlier history
   (it's only consulted until the first release; harmless after that).
-- **Release assets are `Hoard-<version>-<kind>-<platform>`** (`kind` = `portable` | `installer`), collected
-  into `dist/` by the packaging steps — that is the whole naming rule; nothing else (a CI run number least
-  of all) belongs in it. The **Velopack feed files in `Releases/` keep vpk's own names** —
-  `releases.<channel>.json` references its `.nupkg`s BY FILE NAME, so renaming one silently breaks
-  updating; only the two files a human downloads get renamed into `dist/`.
+- **Release assets are `Hoard-<kind>-<platform>`** (`kind` = `portable` | `installer`), collected into
+  `dist/` by the packaging steps — that is the whole naming rule; nothing else (a CI run number least of
+  all) belongs in it, **and that includes the version**. Version-free is load-bearing, not tidiness:
+  GitHub's `/releases/latest/download/<name>` redirect resolves an EXACT file name, so a version in the
+  name makes a permanent download link impossible — and **the README's two download buttons are exactly
+  those links**, so renaming an asset breaks them silently (a 404 on a page nobody re-tests). Keep the
+  three names, the README buttons, and the release-notes Downloads table in step. The version still rides
+  the tag, the release title, the notes, `-p:Version`/`--packVersion` and the update feed. The **Velopack
+  feed files in `Releases/` keep vpk's own names** — `releases.<channel>.json` references its `.nupkg`s BY
+  FILE NAME, so renaming one silently breaks updating; only the files a human downloads get renamed into
+  `dist/`.
+- **The release notes are composed in ONE step, in the `release` job** ("Compose the release notes"): a
+  Downloads table of the three human assets, then the line saying the `.nupkg`/`releases.*.json`/`.sha256`
+  assets are machinery, then release-please's changelog body, then the bundled gallery-dl tag. This is the
+  only lever available for tidying a release page — **GitHub cannot group, hide or reorder assets**, and a
+  page carries ~16 of them (feed packages for both channels, one stamped with the PREVIOUS version because
+  it's the delta base, plus GitHub's source archives), so the notes are what stop that reading as a mess.
+  It lives in the `release` job because names are deterministic and there's a single writer; the two
+  matrix build legs doing read-modify-write on the notes would clobber each other. Accepted cost: the
+  download links 404 for the few minutes between release-please publishing the release and the build job
+  uploading to it.
 - **A dry run is a PREVIEW of the next release, so it carries no placeholder version and no `dry-run`
-  marker anywhere** — the point is that the names it produces are the names that would ship, so the naming
-  itself is what's being checked. Its version comes from **release-please's manifest on the
-  `release-please--branches--main` branch** (the computed bump — exact while a release PR is open), falling
-  back to `version.txt` when there's no PR to preview. `dist/` is listed into the run summary, so the
-  preview reads without downloading. (Never reach for `0.0.0` as a placeholder here: **vpk rejects it**.)
+  marker anywhere.** Since names no longer carry the version, what the version decides is what goes
+  *inside* the build — `-p:Version`, vpk's `--packVersion`, hence the update feed — and a preview built
+  under a version the release won't carry isn't previewing the release. Its version comes from
+  **release-please's manifest on the `release-please--branches--main` branch** (the computed bump — exact
+  while a release PR is open), falling back to `version.txt` when there's no PR to preview. The dry-run
+  *artifact container* still carries the version (`Hoard-<version>-<rid>`), which is now the only thing
+  telling two runs' artifacts apart. `dist/` is listed into the run summary, so the preview reads without
+  downloading. (Never reach for `0.0.0` as a placeholder here: **vpk rejects it**.)
 - **The app's assembly name is `Hoard`, not the project name `Hoard.Desktop`** (`<AssemblyName>`), so the
   exe and the macOS bundle executable say "Hoard". Namespaces are unchanged. Two things key off the assembly
   name and break silently if it moves: every **`avares://Hoard/...`** URI (App.axaml + Theme.axaml — a wrong

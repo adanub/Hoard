@@ -8,6 +8,11 @@
 
 **Back up your Pinterest boards locally, on your own disk.**
 
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe)
+[![Download for macOS](https://img.shields.io/badge/Download-macOS%20Apple%20Silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip)
+
+<sub>Windows installer · macOS Apple Silicon app — [all downloads](https://github.com/adanub/Hoard/releases/latest) · [first-run notes](#install)</sub>
+
 I often found myself wanting a way to keep things I'd saved on Pinterest downloaded locally - this
 was already technically possible by downloading the pins manually, but that didn't seem very fun...
 
@@ -38,15 +43,20 @@ local folder created on your machine. More details below 👇
 
 ## Install
 
-Grab the latest build from [**Releases**](https://github.com/adanub/Hoard/releases/latest):
+Each link below always resolves to the newest release; the whole set lives on the
+[**Releases**](https://github.com/adanub/Hoard/releases/latest) page. Every asset is named
+`Hoard-<kind>-<platform>` — the version is in the release, not the file name, so these links never go stale.
 
-Every asset is named `Hoard-<version>-<kind>-<platform>`.
-
-| Platform | Asset | |
+| Platform | Download | |
 | --- | --- | --- |
-| Windows (x64) | `Hoard-<version>-installer-win-x64.exe` | **Recommended** — installs for your user only (no admin prompt) and updates itself |
-| Windows (x64) | `Hoard-<version>-portable-win-x64.zip` | Portable: unzip and run, no installer, no self-updating |
-| macOS (Apple Silicon) | `Hoard-<version>-portable-osx-arm64.zip` | Unzip and drag `Hoard.app` to Applications — it updates itself from there |
+| Windows (x64) | [`Hoard-installer-win-x64.exe`](https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe) | **Recommended** — installs for your user only (no admin prompt) and updates itself |
+| Windows (x64) | [`Hoard-portable-win-x64.zip`](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-win-x64.zip) | Portable: unzip and run, no installer, no self-updating |
+| macOS (Apple Silicon) | [`Hoard-portable-osx-arm64.zip`](https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip) | Unzip and drag `Hoard.app` to Applications — it updates itself from there |
+
+A release page also carries `.nupkg` and `releases.*.json` assets. Those are the in-app updater's feed —
+Hoard downloads them for you, and one of them deliberately carries the *previous* version number (it's what
+the smaller "only what changed" update is built against). You never need to download them by hand. The
+`.sha256` files hold a checksum for the download sitting beside them.
 
 > **Windows:** the installer isn't code-signed, so SmartScreen shows "Windows protected your PC" the
 > first time you run it — **More info → Run anyway**. That's once per download; updates installed from
