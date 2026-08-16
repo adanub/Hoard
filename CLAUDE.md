@@ -877,7 +877,13 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
     while the screen looks zoomed ⇒ the scene graph is right and the compositor is scaling a stale surface, a
     platform problem; a stray scale in a matrix ⇒ a `RenderTransform` left on an ancestor.
   - Still user-only: scroll feel, GIF playback, memory, and anything about the real window (fullscreen
-    transitions). Point them at `hoard.log` — the probe writes there too.
+    transitions). Point them at `hoard.log` — the probe writes there too. **The app itself DOES launch here
+    (`dotnet run` opens a real window on macOS), but you cannot see it**: `screencapture` fails with "could
+    not create image from display" and `osascript`/System Events with "not allowed assistive access", because
+    the terminal hosting the agent has neither Screen Recording nor Accessibility permission. Those are
+    one-time user grants that were considered and deliberately declined in favour of the two tools above —
+    so don't spend calls rediscovering it. Launching is still worth it as a smoke test (it starts, it logs,
+    it doesn't throw); just read `hoard.log` rather than trying to screenshot.
 - **`ScrollViewer.Padding` is broken in Avalonia 12 — always inset scrolling content with a Margin on the
   content instead, in BOTH axes.** `ScrollContentPresenter` ignores `Padding` when it measures (the child is
   measured against the raw constraint) but `ArrangeOverrideImpl` deflates the child's rect by it, and
