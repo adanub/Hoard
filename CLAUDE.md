@@ -152,6 +152,15 @@ Three assemblies, split by *platform reach* — this is the load-bearing decisio
 - **`Hoard.Core`** — platform-neutral. Domain, EF Core/SQLite metadata, the SHA-256 content-addressed blob
   store, the project model, ingest + library services, and the `ISourceConnector` abstraction. **Must stay
   free of subprocess / P-Invoke / Avalonia code** so a future mobile head and sync server can reference it.
+  **That applies to its `PackageReference`s, not just its `.cs` files** — an unused dependency is the same
+  leak with none of the compile errors to announce it. (SkiaSharp sat in Core for a while used by nothing,
+  so every consumer inherited it for free. Check `project.assets.json`'s framework dependencies, not the
+  csproj alone, when auditing this.) **The line is data vs presentation, not desktop vs mobile:** Core
+  stores blobs and hands out paths — it decodes nothing, which is why it has no imaging dependency at all.
+  Decoding belongs to whichever head is drawing. `Controls/GifDecoder.cs` is the case in point: it returns
+  an `Avalonia.Media.Imaging.Bitmap`, so it is head code no matter which codec it uses. A future mobile
+  head is free to reference SkiaSharp itself (it targets iOS/Android perfectly well, and is Avalonia's
+  renderer there too) — at which point the decoder moves to a shared UI assembly, still not to Core.
 - **`Hoard.Ingest.GalleryDl`** — desktop/server only. The gallery-dl connector spawns a subprocess (forbidden
   on iOS / restricted on Android), so it lives here, not in Core. Browser-cookie detection lives here too.
 - **`Hoard.Desktop`** — Avalonia MVVM app (views, view models, custom controls). Hosts Core in-process for now.

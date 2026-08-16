@@ -98,8 +98,10 @@
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.9" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="10.0.0" />
+    <!-- Declared here rather than inherited: Controls/GifDecoder.cs uses SKCodec directly, and Avalonia
+         only supplies Skia transitively, so an Avalonia bump could move the version under us. -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <!-- Installer + auto-update (MIT). Desktop-only by nature: the update apply step re-execs a native

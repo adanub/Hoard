@@ -12,7 +12,9 @@
          (GHSA-2m69-gcr7-jv3q) with no patched 2.x — the 3.x line carries the fixed SQLite. -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
-    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <!-- No SkiaSharp here on purpose. Core is the assembly a future mobile head and sync server
+         reference, so it stays free of native graphics binaries; the only Skia code in the repo is the
+         desktop GIF decoder, and the package is declared there. -->
   </ItemGroup>
 
 </Project>
