@@ -388,7 +388,15 @@ h3 { font-size: var(--fs-lg); margin: 0; }
     letter-spacing: -.02em;
 }
 
-.hero__blurb { margin: 0 auto var(--space-8); max-width: 58ch; color: var(--muted-fg); font-size: var(--fs-lg); }
+.hero__blurb { margin: 0 auto var(--space-6); max-width: 58ch; color: var(--muted-fg); font-size: var(--fs-lg); }
+
+/* Scope note: what Hoard is NOT. It sits between the blurb and the buttons on purpose, so the
+   expectation is set before the download rather than after it, and its copy matches the README's note
+   word for word (the two public faces share one voice). Deliberately unboxed: a bordered card here
+   would fight the two large CTA buttons directly beneath it. The <strong> lead carries the weight
+   instead, the same device .callout uses. */
+.hero__scope { margin: 0 auto var(--space-8); max-width: 58ch; color: var(--muted-fg); font-size: var(--fs-base); }
+.hero__scope strong { color: var(--fg); font-weight: 600; }
 
 .hero__cta { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: center; }
 .hero__note { margin-top: var(--space-4); font-size: var(--fs-sm); color: var(--muted-fg); }

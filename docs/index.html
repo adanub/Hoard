@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hoard — back up your Pinterest boards locally</title>
-<meta name="description" content="Hoard is a self-hosted, local-first Pinterest archiver for Windows and macOS. It backs up your boards — images and metadata — into a folder you own.">
+<title>Hoard: back up your Pinterest boards locally</title>
+<meta name="description" content="Hoard is a self-hosted, local-first Pinterest archiver for Windows and macOS. It backs up your boards (images and metadata) into a folder you own.">
 <meta name="theme-color" content="#212025">
 <link rel="icon" href="assets/hoard-128.png" type="image/png">
 <link rel="apple-touch-icon" href="assets/hoard-512.png">
 <link rel="canonical" href="https://adanub.github.io/Hoard/">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="Hoard — back up your Pinterest boards locally">
+<meta property="og:title" content="Hoard: back up your Pinterest boards locally">
 <meta property="og:description" content="A self-hosted, local-first Pinterest archiver. Your boards, on your own disk, in a folder you own.">
 <meta property="og:url" content="https://adanub.github.io/Hoard/">
 <meta property="og:image" content="https://adanub.github.io/Hoard/assets/hoard-512.png">
@@ -85,9 +85,14 @@
       <h1>Hoard</h1>
       <p class="hero__tagline">Back up your Pinterest boards locally.</p>
       <p class="hero__blurb">
-        A self-hosted, local-first Pinterest archiver for Windows and macOS. Your boards — the images
-        <em>and</em> their metadata — land in a folder on a disk you own, browsable in a fast masonry
-        grid, and readable without Hoard if you ever walk away from it.
+        A self-hosted, local-first Pinterest archiver for Windows and macOS. Your boards, the images
+        <em>and</em> their metadata, land in a folder on a disk you own. Browse them in a fast masonry
+        grid, or view them without Hoard in your file explorer.
+      </p>
+      <p class="hero__scope">
+        <strong>Hoard isn't a replacement for Pinterest.</strong> It keeps a backup of what you've
+        already saved to your boards so you can browse it offline; finding new things to save still
+        happens on Pinterest.
       </p>
       <div class="hero__cta">
         <a class="btn btn--lg" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe">
@@ -137,7 +142,7 @@
     <div class="wrap">
       <div class="section-head">
         <h2>What it does</h2>
-        <p>Point it at a board. It fetches the pins, keeps the structure, and stays cheap to run again.</p>
+        <p>Point it at a board and it fetches the pins, keeps the structure, and stays cheap to run again.</p>
       </div>
 
       <div class="features">
@@ -145,7 +150,8 @@
           <div class="feature__icon"><svg class="icon"><use href="#i-download"></use></svg></div>
           <h3>Imports a board</h3>
           <p>Paste a board, section or pin URL. For private boards, pick the browser you're signed in
-             with and Hoard borrows its cookies — nothing to configure, no password to hand over.</p>
+             with and Hoard borrows its cookies, so there's nothing to configure and no password to
+             hand over.</p>
         </article>
 
         <article class="card feature">
@@ -159,29 +165,29 @@
           <div class="feature__icon"><svg class="icon"><use href="#i-refresh"></use></svg></div>
           <h3>Syncs cheaply</h3>
           <p>A sync walks the board newest-first and stops as soon as it reaches pins you already have,
-             so picking up three new ones costs a page or two — not a re-crawl. A full sync is there
-             for the edge cases.</p>
+             so picking up three new ones costs a page or two rather than a re-crawl. A full sync is
+             there for the edge cases.</p>
         </article>
 
         <article class="card feature">
           <div class="feature__icon"><svg class="icon"><use href="#i-layers"></use></svg></div>
           <h3>Merges boards</h3>
-          <p>Aim several Pinterest boards at one local board and they gather into the same grid, each
-             pin remembering where it came from.</p>
+          <p>Aim several Pinterest boards at one local board and they gather into the same grid. Each
+             pin remembers where it came from.</p>
         </article>
 
         <article class="card feature">
           <div class="feature__icon"><svg class="icon"><use href="#i-drive"></use></svg></div>
           <h3>Backs itself up</h3>
           <p>Replicate a project to an external drive, a NAS share or a synced folder. After the first
-             pass, only what changed moves — a backup for your backup.</p>
+             pass, only what changed moves. A backup for your backup.</p>
         </article>
 
         <article class="card feature">
           <div class="feature__icon"><svg class="icon"><use href="#i-external"></use></svg></div>
           <h3>Exports to plain folders</h3>
           <p>One button writes a browsable <code>Board/Folder/image.jpg</code> copy anywhere you like.
-             No Hoard needed to read it, and re-running it is an incremental refresh.</p>
+             You don't need Hoard to read it, and re-running it is an incremental refresh.</p>
         </article>
 
         <article class="card feature">
@@ -194,8 +200,8 @@
         <article class="card feature">
           <div class="feature__icon"><svg class="icon"><use href="#i-search"></use></svg></div>
           <h3>Yours, offline</h3>
-          <p>No account, no server, no telemetry. Hoard only ever fetches what the account you're
-             already signed in as can see, and everything it fetches stays on your machine.</p>
+          <p>There's no account, no server and no telemetry. Hoard only ever fetches what the account
+             you're already signed in as can see, and everything it fetches stays on your machine.</p>
         </article>
       </div>
     </div>
@@ -206,7 +212,7 @@
     <div class="wrap">
       <div class="section-head">
         <h2>Where your data lives</h2>
-        <p>A project is just a folder you chose. Open it in your file manager any time — nothing in
+        <p>A project is just a folder you choose. Open it in your file manager any time; nothing in
            there is locked behind the app.</p>
       </div>
 
@@ -218,9 +224,8 @@
 
         <ul class="notes">
           <li>
-            <strong>Immutable images, plus a log of every change.</strong>
-            <span>That is the whole archive. Identical bytes are stored once; nothing is ever rewritten
-                  in place.</span>
+            <strong>The whole archive is immutable images plus a log of every change.</strong>
+            <span>Identical bytes are stored once, and nothing is ever rewritten in place.</span>
           </li>
           <li>
             <strong>The database is derived, and per-machine.</strong>
@@ -228,13 +233,13 @@
                   Delete it and the next open rebuilds it from <code>ops/</code>.</span>
           </li>
           <li>
-            <strong>Which is what makes a NAS work.</strong>
+            <strong>That is what makes a NAS work.</strong>
             <span>Because no database is ever written over the network, the same project folder can sit
                   on a share and be opened from several machines.</span>
           </li>
           <li>
-            <strong>Two copies of a project are copies, not rivals.</strong>
-            <span>Sync them against each other in either direction; images whose files went missing come
+            <strong>Two copies of a project stay copies of one archive.</strong>
+            <span>Sync them against each other in either direction. Images whose files went missing come
                   back from the other side rather than being re-downloaded.</span>
           </li>
         </ul>
@@ -260,7 +265,7 @@
           <div class="step__n">2</div>
           <h3>Import a board</h3>
           <p>＋ → <strong>Import board</strong>, paste the URL. For secret boards, pick the browser you're
-             signed in with — the Firefox and Chromium families are both detected.</p>
+             signed in with. The Firefox and Chromium families are both detected.</p>
         </article>
         <article class="card step">
           <div class="step__n">3</div>
@@ -282,8 +287,8 @@
     <div class="wrap">
       <div class="section-head">
         <h2>Download</h2>
-        <p>Every link resolves to the newest release — the version rides the release, not the file name,
-           so these never go stale.</p>
+        <p>The buttons below always download the latest release. For other versions, visit the
+           <a href="https://github.com/adanub/Hoard/releases">GitHub releases page</a>.</p>
       </div>
 
       <div class="downloads">
@@ -293,7 +298,7 @@
             <h3>Windows (x64)</h3>
             <span class="pill">Recommended</span>
           </div>
-          <p>Installs for your user only — no admin prompt — and updates itself from inside the app.</p>
+          <p>Installs for your user only, with no admin prompt, and updates itself from inside the app.</p>
           <code>Hoard-installer-win-x64.exe</code>
           <a class="btn" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe">
             <svg class="icon"><use href="#i-download"></use></svg> Installer
@@ -305,7 +310,8 @@
             <svg class="icon"><use href="#i-windows"></use></svg>
             <h3>Windows (x64)</h3>
           </div>
-          <p>Portable: unzip and run. No installer, and no self-updating — download over it to update.</p>
+          <p>Portable: unzip and run. There's no installer and it can't update itself, so download over
+             it to update.</p>
           <code>Hoard-portable-win-x64.zip</code>
           <a class="btn btn--secondary" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-win-x64.zip">
             <svg class="icon"><use href="#i-download"></use></svg> Portable zip
@@ -317,7 +323,7 @@
             <svg class="icon"><use href="#i-apple"></use></svg>
             <h3>macOS (Apple Silicon)</h3>
           </div>
-          <p>Unzip and drag <code>Hoard.app</code> to Applications — it updates itself from there.
+          <p>Unzip and drag <code>Hoard.app</code> to Applications. It updates itself from there.
              Intel Macs aren't built.</p>
           <code>Hoard-portable-osx-arm64.zip</code>
           <a class="btn btn--secondary" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip">
@@ -329,26 +335,22 @@
       <div class="callouts">
         <div class="callout">
           <strong>Windows: SmartScreen will object the first time.</strong>
-          The installer isn't code-signed, so you'll get "Windows protected your PC" — <em>More info →
-          Run anyway</em>. That's once per download; updates installed from inside the app skip it entirely.
+          The installer isn't code-signed, so you'll get "Windows protected your PC". Click <em>More
+          info → Run anyway</em>. That's once per download; updates installed from inside the app skip it
+          entirely.
         </div>
         <div class="callout">
           <strong>macOS: so will Gatekeeper.</strong>
           The app is ad-hoc signed but not notarised. Right-click → Open, or System Settings → Privacy
-          &amp; Security → <em>Open Anyway</em>. Unzip it in Finder — command-line <code>unzip</code> drops
+          &amp; Security → <em>Open Anyway</em>. Unzip it in Finder; command-line <code>unzip</code> drops
           the signature and macOS then calls the app damaged.
         </div>
         <div class="callout">
-          <strong>Updates are yours to switch off.</strong>
+          <strong>You can switch updates off.</strong>
           The installed builds check for a new release at startup and <em>ask</em> before installing
           anything. Turn the check off in ⚙ Settings and Hoard never phones home.
         </div>
       </div>
-
-      <p class="hero__note" style="text-align:left">
-        Every asset, including checksums and the updater's feed files, is on the
-        <a href="https://github.com/adanub/Hoard/releases/latest">releases page</a>.
-      </p>
     </div>
   </section>
 
@@ -360,7 +362,7 @@
       <div>
         <a class="brand" href="#top"><img src="assets/hoard-128.png" alt=""> Hoard</a>
         <p class="muted small" style="margin:var(--space-3) 0 0;max-width:38ch">
-          A local-first Pinterest archiver, built in the open. Backed by
+          A local-first Pinterest archiver, built in the open on
           <a href="https://github.com/mikf/gallery-dl">gallery-dl</a> and
           <a href="https://avaloniaui.net">Avalonia</a>.
         </p>
