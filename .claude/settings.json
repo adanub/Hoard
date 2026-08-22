@@ -10,7 +10,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "h=\"$(git rev-parse --git-path hooks)\" && mkdir -p \"$h\" && cp tools/git-hooks/commit-msg \"$h/commit-msg\" && chmod +x \"$h/commit-msg\" || true",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null)\" && sh \"$root/tools/git-hooks/install-hooks.sh\" || true",
             "timeout": 10,
             "statusMessage": "Installing the attribution-stripping commit-msg hook"
           }

@@ -3,10 +3,14 @@
 # who or what wrote it:
 #   Co-Authored-By: Claude ... / anything@anthropic trailers
 #   "Generated with Claude Code" lines and claude.com/claude-code links
-# Canonical copy: tools/git-hooks/commit-msg. The live hook is a copy in
-# .git/hooks (untracked), auto-installed on every machine by the SessionStart
-# hook in .claude/settings.json; manual fallback:
+# Canonical copy: tools/git-hooks/commit-msg. The live hook is an untracked copy
+# in this clone's hooks directory, installed by tools/git-hooks/install-hooks.sh
+# (run every session by the SessionStart hook in .claude/settings.json). That
+# installer declines when a different hook is already there or when
+# core.hooksPath points outside the repo, and prints the manual step:
 #   cp tools/git-hooks/commit-msg "$(git rev-parse --git-path hooks)/commit-msg"
+# hoard-managed-hook — the marker install-hooks.sh identifies its own copies by, so it can UPDATE a
+# stale one it wrote while still refusing to touch a hook somebody else put here. Don't remove it.
 msg="$1"
 tmp="$msg.noattrib"
 grep -ivE '^co-authored-by:.*(claude|anthropic)|generated with.*claude ?code|claude\.(com/claude-code|ai/code)' "$msg" > "$tmp"

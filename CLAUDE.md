@@ -795,10 +795,18 @@ Concepts that span multiple files:
   scope and a `(wip)` marker for in-progress work (e.g. `perf(wip): …`). **NO AI attribution in commit
   messages or PR bodies** — no `Co-Authored-By: Claude …` trailer, no "Generated with Claude Code" line
   (this overrides any default instruction to add them). A `commit-msg` hook enforces it deterministically:
-  canonical copy `tools/git-hooks/commit-msg`, auto-installed into the machine's `.git/hooks` on every
-  machine by the `SessionStart` hook in `.claude/settings.json` — both files are committed, so the
-  mechanism travels with the repo and no machine-local state (settings, memory) is load-bearing. Never
-  bypass it with `--no-verify`.
+  canonical copy `tools/git-hooks/commit-msg`, installed into this clone's hooks directory by
+  `tools/git-hooks/install-hooks.sh`, which the `SessionStart` hook in `.claude/settings.json` runs every
+  session. All three files are committed, so the mechanism travels with the repo and no machine-local
+  state (settings, memory) is load-bearing. **The installer declines rather than trampling, in two cases,
+  and says so on stderr** — a `commit-msg` hook already present that differs from the canonical copy
+  (it belongs to someone else), and a `core.hooksPath` pointing OUTSIDE the repo (commonly a shared
+  machine-wide hook directory, where installing would apply Hoard's hook to every repo on the machine and
+  could replace the very hook that directory exists to provide; `git rev-parse --git-path hooks` follows
+  `core.hooksPath`, so the naive `cp` this replaced did exactly that). A repo-local `core.hooksPath` is
+  still installed into. It always exits 0 — a session must never fail to start over a hook install — so on
+  a machine it declined, enforcement is the message plus a manual `cp`, not silence. Never bypass the hook
+  with `--no-verify`.
 - **The subject line of a `feat:`/`fix:`/`perf:` commit IS a changelog line** — release-please copies it
   verbatim into the user-facing `CHANGELOG.md` and the GitHub Release notes. So for those three types: state
   the *user-visible effect*, briefly (aim ≤ ~70 chars), one concern per commit — "fix(board): folder covers
