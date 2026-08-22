@@ -237,9 +237,33 @@ public partial class SettingsViewModel : ViewModelBase
     private static string ReadAppVersion()
     {
         var asm = typeof(SettingsViewModel).Assembly;
-        return asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-               ?? asm.GetName().Version?.ToString(3)
-               ?? "unknown";
+        return DisplayVersion(
+            asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+            asm.GetName().Version);
+    }
+
+    /// <summary>
+    /// The version as a human reads it, from the assembly's informational version.
+    /// </summary>
+    /// <remarks>
+    /// The SDK appends <c>+&lt;full 40-char git sha&gt;</c> to <see cref="AssemblyInformationalVersionAttribute"/>
+    /// — <c>IncludeSourceRevisionInInformationalVersion</c> has defaulted to true since .NET 8, so
+    /// <c>Version=1.1.1</c> ships as <c>1.1.1+318b19d…</c>. That is semver BUILD METADATA and it is worth
+    /// keeping in the binary (it identifies the exact commit a release was built from, which is the one
+    /// thing a bug report can't reconstruct), so it is trimmed for DISPLAY only rather than switched off
+    /// at build time. Trim at '+' alone: a pre-release suffix is introduced by '-' and IS part of the
+    /// version ("1.2.0-rc.1" must survive intact).
+    /// </remarks>
+    internal static string DisplayVersion(string? informational, Version? assemblyVersion)
+    {
+        if (informational is { Length: > 0 })
+        {
+            var plus = informational.IndexOf('+');
+            var trimmed = plus >= 0 ? informational[..plus] : informational;
+            if (trimmed.Length > 0) return trimmed;
+        }
+
+        return assemblyVersion?.ToString(3) ?? "unknown";
     }
 
     private static string ReadGalleryDlVersion()

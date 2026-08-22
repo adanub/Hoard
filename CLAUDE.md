@@ -446,7 +446,13 @@ Concepts that span multiple files:
   `SettingsViewModel`'s ctor **persists its snap-backs** (an out-of-choice stored value is normalised AND
   written back) because consumers read the raw shared `UiSettings` live — display and enforcement must be one
   value. About rows report the app version and the bundled gallery-dl's
-  file version (`FileVersionInfo`, deliberately no `--version` subprocess).
+  file version (`FileVersionInfo`, deliberately no `--version` subprocess). **The app version is the
+  informational version with its `+<sha>` build metadata trimmed for display**
+  (`SettingsViewModel.DisplayVersion`, unit-tested): the SDK appends the full 40-char git commit to
+  `AssemblyInformationalVersionAttribute` — `IncludeSourceRevisionInInformationalVersion` has defaulted
+  to true since .NET 8 — so `1.1.1` shipped in the binary as `1.1.1+b1155a83…`. It is trimmed at DISPLAY
+  rather than switched off at build, because that sha is the only record of which commit a release was
+  built from; keep it in the assembly. Trim at `+` only — a `-rc.1` pre-release suffix IS the version.
 - **Import targets one board, and progress is shared state.** The import sheet picks a target board (new —
   created up front via `IngestService.CreateBoardAsync` so the card shows immediately — or existing to merge);
   `IngestService.ImportAsync(targetCollectionId)` links every pin into it instead of auto-foldering by source
