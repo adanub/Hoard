@@ -124,6 +124,78 @@ public static class BrowserCookies
         }
     }
 
+    /// <summary>
+    /// The cookie database under a Chromium profile root, or null when there isn't one. Chromium keeps it at
+    /// <c>Network/Cookies</c> (older builds: <c>Cookies</c>) inside a profile directory, and which directory
+    /// that is varies: <c>Default</c>, a <c>Profile N</c>, or - Opera - the root itself. Rather than walk the
+    /// tree (a profile root contains the browser's whole cache; gallery-dl's recursive search is affordable
+    /// for it only because it runs once per crawl), the plausible spots are checked directly and the most
+    /// recently written wins, which is the same rule by a cheaper route.
+    /// </summary>
+    internal static string? FindChromiumCookieDb(string root)
+    {
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+
+        var profiles = new List<string> { root };
+        try
+        {
+            profiles.AddRange(Directory.EnumerateDirectories(root).Where(d =>
+            {
+                var name = Path.GetFileName(d);
+                return name.Equals("Default", StringComparison.OrdinalIgnoreCase)
+                       || name.StartsWith("Profile", StringComparison.OrdinalIgnoreCase);
+            }));
+        }
+        catch (IOException) { /* unreadable root - nothing to report */ }
+        catch (UnauthorizedAccessException) { }
+
+        return profiles
+            .SelectMany(p => new[] { Path.Combine(p, "Network", "Cookies"), Path.Combine(p, "Cookies") })
+            .Where(File.Exists)
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .FirstOrDefault();
+    }
+
+    /// <summary>Whether the chosen browser's cookie database can't be read right now because the browser has
+    /// it open. Chromium browsers hold it with the share mode set to deny-all while they run, so no reader
+    /// can touch it and every private board comes back "not found"; Gecko browsers permit shared reads.
+    /// <para>Fails OPEN on purpose: unless a database was found AND positively refused us, this reports
+    /// false. A warning nobody can act on, in front of every import, would be far worse than a missed one.</para></summary>
+    public static bool IsCookieDbLocked(string? choice)
+    {
+        var browser = NormaliseChoice(choice);
+        if (browser == None) return false;
+
+        var path = GeckoForkAppDataDirs.ContainsKey(browser) || browser == "firefox"
+            ? GeckoCookieDb(browser)
+            : FindChromiumCookieDb(ChromiumRoot(browser) ?? "");
+        return path is not null && !CanRead(path);
+    }
+
+    private static string? GeckoCookieDb(string browser)
+    {
+        var dir = GeckoForkAppDataDirs.TryGetValue(browser, out var d)
+            ? FindNewestFirefoxProfile(d)
+            : FindNewestFirefoxProfile(Path.Combine("Mozilla", "Firefox"));
+        if (dir is null) return null;
+        var db = Path.Combine(dir, "cookies.sqlite");
+        return File.Exists(db) ? db : null;
+    }
+
+    /// <summary>Can this file be opened for reading alongside whoever else has it? The share flags are the
+    /// most permissive available, so a refusal means the HOLDER denied it - which is exactly the condition
+    /// worth warning about.</summary>
+    private static bool CanRead(string path)
+    {
+        try
+        {
+            using var _ = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
     /// <summary>Find the profile directory holding the most recently used cookies.sqlite.</summary>
     private static string? FindNewestFirefoxProfile(string appDataDir)
     {

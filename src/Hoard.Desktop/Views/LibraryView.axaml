@@ -130,6 +130,12 @@
             <ctrl:ConfirmSheet x:Name="BoardConfirmContent"/>
         </ctrl:SheetHost>
 
+        <!-- "That browser is holding its cookies" warning. Its own host so it can layer OVER the import /
+             sync-all sheet that triggered it, which stays open behind for a second try. -->
+        <ctrl:SheetHost x:Name="CookieConfirmHost">
+            <ctrl:ConfirmSheet x:Name="CookieConfirmContent"/>
+        </ctrl:SheetHost>
+
         <!-- Backup popup (the ＋ menu's Backup): configure the project's remote folder + sync. -->
         <ctrl:SheetHost IsOpen="{Binding IsRemoteSheetOpen}" DismissCommand="{Binding CloseRemoteSheetCommand}">
             <ctrl:RemoteSheet x:Name="RemoteSheetContent"

@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.Controls;
 using Hoard.Desktop.ViewModels;
+using Hoard.Desktop.Services;
 
 namespace Hoard.Desktop.Views;
 
@@ -19,6 +20,10 @@ public partial class LibraryView : UserControl
     {
         InitializeComponent();
         WireBoardEditSheet();
+        // The guard lives on the view model, which is replaced on navigation — so re-point it whenever the
+        // DataContext changes, not once at construction.
+        DataContextChanged += (_, _) => WireCookieGuard();
+        WireCookieGuard();
         // The picker needs the visual tree's TopLevel, so it lives here; everything else on the Backup
         // sheet binds straight to the view model in XAML.
         RemoteSheetContent.ChooseCommand = new RelayCommand(() => _ = PickRemoteFolderAsync());
@@ -51,6 +56,12 @@ public partial class LibraryView : UserControl
         });
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path && Vm is { } vm)
             vm.SetExportFolder(path);
+    }
+
+    private void WireCookieGuard()
+    {
+        if (Vm is { } vm)
+            vm.CookieGuard.Confirm = b => CookieLockPrompt.ShowAsync(CookieConfirmHost, CookieConfirmContent, b);
     }
 
     private void WireBoardEditSheet()

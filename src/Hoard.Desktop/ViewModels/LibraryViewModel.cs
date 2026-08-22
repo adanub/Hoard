@@ -375,6 +375,10 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
 
     [ObservableProperty] private bool _isImportSheetOpen;
     [ObservableProperty] private string _boardUrl = "";
+    /// <summary>Pre-flight check for a browser that's holding its cookie database open; the view supplies
+    /// the popup, so a headless caller just proceeds.</summary>
+    public CookieLockGuard CookieGuard { get; } = new();
+
     [ObservableProperty] private string _cookiesBrowser = BrowserCookies.None;
     [ObservableProperty] private bool _isImporting;
     [ObservableProperty] private string _newBoardName = "";
@@ -431,6 +435,9 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         var cookies = BrowserCookies.Resolve(CookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
         _uiSettings?.RememberCookiesBrowser(CookiesBrowser); // the next sheet opens on it, here or on any board
+        // Asked while the import sheet is still open, so backing out leaves the user on it — able to close the
+        // browser and press Import again, or choose another one, without re-entering the URL.
+        if (!await CookieGuard.AllowAsync(CookiesBrowser)) return;
 
         IsImportSheetOpen = false;
         IsImporting = true;
@@ -608,6 +615,7 @@ public partial class LibraryViewModel : ViewModelBase, IResumable, IDisposable, 
         var cookies = BrowserCookies.Resolve(SyncAllCookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
         _uiSettings?.RememberCookiesBrowser(SyncAllCookiesBrowser);
+        if (!await CookieGuard.AllowAsync(SyncAllCookiesBrowser)) return;
 
         var token = _disposeCts.Token; // captured before any await, like ImportAsync
         IsSyncAllSheetOpen = false;

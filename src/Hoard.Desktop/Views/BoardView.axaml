@@ -344,6 +344,11 @@
             <ctrl:ConfirmSheet x:Name="FolderConfirmContent"/>
         </ctrl:SheetHost>
 
+        <!-- "That browser is holding its cookies" warning, layered over the sync sheet that triggered it. -->
+        <ctrl:SheetHost x:Name="CookieConfirmHost">
+            <ctrl:ConfirmSheet x:Name="CookieConfirmContent"/>
+        </ctrl:SheetHost>
+
         <!-- Delete sheet: collect the required tombstone reason, then delete (the in-app replacement for the old
              DeleteDialog window). The image file is recycled but the row is kept as a restorable tombstone. -->
         <ctrl:SheetHost IsOpen="{Binding IsDeleteSheetOpen}" DismissCommand="{Binding CloseDeleteSheetCommand}">

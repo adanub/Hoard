@@ -489,6 +489,9 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
     // ── Sync (re-fetch this board from its sources) ────────────────────────────
 
     [ObservableProperty] private bool _isSyncSheetOpen;
+    /// <summary>Pre-flight check for a browser holding its cookie database open (see the Library screen's).</summary>
+    public CookieLockGuard CookieGuard { get; } = new();
+
     [ObservableProperty] private string _syncCookiesBrowser = BrowserCookies.None;
 
     [ObservableProperty]
@@ -564,6 +567,8 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
         var cookies = BrowserCookies.Resolve(SyncCookiesBrowser);
         if (!cookies.Found) { _toasts.Show(cookies.Error!, isError: true); return; }
         _uiSettingsStore?.RememberCookiesBrowser(SyncCookiesBrowser); // the next sheet opens on it, anywhere
+        // Asked before the sheet closes, so backing out leaves it open to close the browser and sync again.
+        if (!await CookieGuard.AllowAsync(SyncCookiesBrowser)) return;
 
         IsSyncSheetOpen = false;
         _importStatus.Begin(boardId); // drives IsBoardImporting + streams LastImported into this open board

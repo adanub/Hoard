@@ -15,6 +15,7 @@ using CommunityToolkit.Mvvm.Input;
 using Hoard.Desktop.Controls;
 using Hoard.Desktop.Infrastructure;
 using Hoard.Desktop.ViewModels;
+using Hoard.Desktop.Services;
 
 namespace Hoard.Desktop.Views;
 
@@ -124,6 +125,8 @@ public partial class BoardView : UserControl
         if (_subscribedVm is not null) { _subscribedVm.CollapseStarting -= OnCollapseStarting; _subscribedVm.ViewTeardown -= OnViewTeardown; _subscribedVm.PropertyChanged -= OnVmPropertyChanged; }
         _subscribedVm = Vm;
         if (_subscribedVm is not null) { _subscribedVm.CollapseStarting += OnCollapseStarting; _subscribedVm.ViewTeardown += OnViewTeardown; _subscribedVm.PropertyChanged += OnVmPropertyChanged; }
+        if (_subscribedVm is { } vm)
+            vm.CookieGuard.Confirm = b => CookieLockPrompt.ShowAsync(CookieConfirmHost, CookieConfirmContent, b);
         UpdateBandStacked(AssetGrid.Bounds.Width); // seed the new VM (SizeChanged keeps it current thereafter)
     }
 
