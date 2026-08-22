@@ -822,6 +822,16 @@ Concepts that span multiple files:
   `release-please-config.json`), so dev-log style subjects are fine there. Avoid landing `feat/fix/perf` with a
   `(wip)` scope on `main` — the changelog would print it as a "**wip:**" entry; use `chore(wip): …` until the
   work is user-ready, then land the finishing commit as the real `feat:`/`fix:`.
+- **Commit text goes through the humanizer rules first** (`.claude/skills/humanizer/SKILL.md`, vendored
+  from blader/humanizer, MIT) — apply them to the subject *and* the body before writing the message, in the
+  skill's **embedded mode**: produce the final text only, no draft-plus-critique preamble. It matters most
+  for `feat:`/`fix:`/`perf:`, whose subject release-please copies verbatim into `CHANGELOG.md` and the
+  GitHub Release, where users read it rather than maintainers. The tells that actually turn up in commit
+  text are em dashes, bolded fragments, clipped negative endings ("…, no guessing"), forced triples, and
+  "not X but Y"; this repo's own prose voice uses ` - ` where a dash is wanted. **This is an instruction,
+  not a hook** — the rules need a model to apply them, so the deterministic `commit-msg` hook still
+  enforces only the attribution ban. Refreshing the skill means re-copying `SKILL.md` + `LICENSE` from
+  upstream (see `VENDORED.md`).
 - **Never run destructive git** (force-push, `reset --hard`, `clean -f`, `branch -D`, `checkout --`/`.`, history
   rewrites of pushed commits) regardless of permission mode. Don't commit machine-specific absolute paths into
   tracked files.
