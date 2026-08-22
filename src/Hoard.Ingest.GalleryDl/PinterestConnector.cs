@@ -88,6 +88,7 @@ public sealed partial class PinterestConnector : ISourceConnector
             var errorTail = new Queue<string>();
             var notFound = 0;
             var skipped = 0;
+            string? cookieFailure = null;
             using var process = new Process { StartInfo = psi };
             process.OutputDataReceived += (_, e) =>
             {
@@ -106,6 +107,7 @@ public sealed partial class PinterestConnector : ISourceConnector
                 errorTail.Enqueue(e.Data);
                 while (errorTail.Count > 10) errorTail.Dequeue();
                 if (IsNotFound(e.Data)) notFound++;
+                if (cookieFailure is null && IsCookieFailure(e.Data)) cookieFailure = e.Data;
             };
 
             try
@@ -162,11 +164,26 @@ public sealed partial class PinterestConnector : ISourceConnector
             //   • skipped == 0 → nothing was reachable at all. With an error to go with it, that's the
             //                    private-board/cookies case, whatever the target count.
             var reachedSomething = skipped > 0;
+
+            // Cookies that couldn't be read are the CAUSE of the not-found that follows, so this is checked
+            // first: without them the request goes out anonymous and every private board 404s. Telling the
+            // user to "select the browser you're logged in with" there is actively wrong - they already did.
+            // Why it happens: Chromium-based browsers (Opera, Edge, Chrome, Brave, Vivaldi) hold their cookie
+            // database open with the Windows share mode set to deny-all while they run, so NOTHING can read
+            // it - not gallery-dl, not a copy, no matter what share flags the reader asks for. Gecko browsers
+            // (Firefox, Zen, LibreWolf, ...) permit shared reads, which is why the Firefox path never hit
+            // this and the whole thing went unnoticed. Closing the browser is the only fix, so say so.
+            if (cookieFailure is not null && !reachedSomething)
+                throw new InvalidOperationException(
+                    $"Couldn't read {DescribeCookieSource(options)} cookies, so Pinterest was asked " +
+                    "anonymously and a private board looks missing. Close that browser completely and try " +
+                    "again - Chromium-based browsers lock their cookie database while they're running." +
+                    detail);
+
             if (notFound > 0 && !reachedSomething)
                 throw new InvalidOperationException(
                     "Pinterest returned \"board not found\". If the board is private, select the browser " +
-                    "you're logged into Pinterest with in the Cookies dropdown (Firefox-based browsers " +
-                    "like Zen are supported)." + detail);
+                    "you're logged into Pinterest with in the Cookies dropdown." + detail);
 
             // A non-zero exit with nothing downloaded AND nothing skipped means the run achieved nothing —
             // report it. If some targets were walked, the failure was partial and the archive is still current.
@@ -254,6 +271,29 @@ public sealed partial class PinterestConnector : ISourceConnector
     private static bool IsNotFound(string line)
         => line.Contains("NotFoundError", StringComparison.OrdinalIgnoreCase)
            || line.Contains("could not be found", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Did gallery-dl fail to read the browser's cookie database? It reports this as
+    /// <c>cookies: &lt;exception&gt;</c>, so the prefix is the anchor; the rest matches the ways a
+    /// locked or unreadable file arrives (Python maps a Windows sharing violation to errno 13).
+    /// Deliberately narrow - a cookie line that isn't about access shouldn't claim the browser is open.
+    /// </summary>
+    internal static bool IsCookieFailure(string line)
+        => line.Contains("cookies:", StringComparison.OrdinalIgnoreCase)
+           && (line.Contains("Errno 13", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("database is locked", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Name the chosen browser for an error message. The spec is either a bare browser name
+    /// ("opera") or a Gecko fork's resolved profile path ("firefox:C:\..."), so take the head.</summary>
+    private static string DescribeCookieSource(ConnectorOptions options)
+    {
+        var spec = options.CookiesFromBrowser;
+        if (string.IsNullOrWhiteSpace(spec)) return "the browser's";
+        var name = spec.Split(':', 2)[0].Trim();
+        return string.IsNullOrEmpty(name) ? "the browser's" : name + "'s";
+    }
 
     private static void AddCookieArgs(List<string> args, ConnectorOptions options)
     {
