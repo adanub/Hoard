@@ -24,3 +24,6 @@ hoard.project.json
 
 # Headless render-harness output (tools/Hoard.Harness) — PNG/geometry dumps, never committed.
 artifacts/
+
+# macOS Finder metadata. Written into any folder the Finder looks at, so it turns up unbidden.
+.DS_Store
