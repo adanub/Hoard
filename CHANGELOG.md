@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/adanub/Hoard/compare/v1.1.2...v1.2.0) (2026-08-22)
+
+
+### Features
+
+* **import:** add Opera GX to the cookies browser list ([8cc1aa5](https://github.com/adanub/Hoard/commit/8cc1aa556714c94395531a74fa60d4a804d96919))
+* **import:** warn when the chosen browser is holding its cookies ([91d9877](https://github.com/adanub/Hoard/commit/91d9877ea6d670da00af8a50019ac02e93d04cba))
+
+
+### Bug Fixes
+
+* **import:** report a locked cookie database instead of a missing board ([5e083c0](https://github.com/adanub/Hoard/commit/5e083c018ac3d5dc3a5c2a3df762b19cdda6d838))
+
 ## [1.1.2](https://github.com/adanub/Hoard/compare/v1.1.1...v1.1.2) (2026-08-22)
 
 
