@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en-AU" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoard — back up your Pinterest boards locally</title>
+<meta name="description" content="Hoard is a self-hosted, local-first Pinterest archiver for Windows and macOS. It backs up your boards — images and metadata — into a folder you own.">
+<meta name="theme-color" content="#212025">
+<link rel="icon" href="assets/hoard-128.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/hoard-512.png">
+<link rel="canonical" href="https://adanub.github.io/Hoard/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Hoard — back up your Pinterest boards locally">
+<meta property="og:description" content="A self-hosted, local-first Pinterest archiver. Your boards, on your own disk, in a folder you own.">
+<meta property="og:url" content="https://adanub.github.io/Hoard/">
+<meta property="og:image" content="https://adanub.github.io/Hoard/assets/hoard-512.png">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="assets/styles.css">
+<!-- Applied before first paint so a light-mode visitor never sees a dark flash. -->
+<script>
+  try {
+    var stored = localStorage.getItem("hoard-theme");
+    var theme = stored || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.dataset.theme = theme;
+  } catch (e) { /* private mode — the dark default in the markup stands */ }
+</script>
+</head>
+<body>
+
+<!-- Lucide icon geometries (ISC), the same set the app embeds as Avalonia StreamGeometries. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="i-drive" viewBox="0 0 24 24"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01"/><path d="M10 16h.01"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+  <symbol id="i-windows" viewBox="0 0 24 24" stroke="none" fill="currentColor"><path d="M0 3.449 9.75 2.1v9.451H0M10.949 1.949 23.99 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></symbol>
+  <symbol id="i-apple" viewBox="0 0 24 24" stroke="none" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></symbol>
+</defs></svg>
+
+<div class="backdrop" aria-hidden="true">
+  <div class="backdrop__grid" id="backdrop-grid"></div>
+  <div class="backdrop__scrim"></div>
+</div>
+
+<div class="page">
+
+<header class="topbar" id="topbar">
+  <div class="wrap topbar__inner">
+    <a class="brand" href="#top"><img src="assets/hoard-128.png" alt=""> Hoard</a>
+    <nav class="topbar__links">
+      <a class="btn btn--ghost btn--sm" href="#features">Features</a>
+      <a class="btn btn--ghost btn--sm" href="#archive">Your archive</a>
+      <a class="btn btn--ghost btn--sm" href="#start">Quick start</a>
+      <a class="btn btn--ghost btn--sm" href="#download">Download</a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="btn btn--ghost btn--icon btn--sm" id="theme-toggle" type="button" aria-label="Switch theme">
+        <svg class="icon" id="theme-icon"><use href="#i-moon"></use></svg>
+      </button>
+      <a class="btn btn--secondary btn--sm" href="https://github.com/adanub/Hoard">
+        <svg class="icon"><use href="#i-github"></use></svg> GitHub
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="wrap">
+      <img class="hero__mark" src="assets/hoard-512.png" width="88" height="88" alt="">
+      <h1>Hoard</h1>
+      <p class="hero__tagline">Back up your Pinterest boards locally.</p>
+      <p class="hero__blurb">
+        A self-hosted, local-first Pinterest archiver for Windows and macOS. Your boards — the images
+        <em>and</em> their metadata — land in a folder on a disk you own, browsable in a fast masonry
+        grid, and readable without Hoard if you ever walk away from it.
+      </p>
+      <div class="hero__cta">
+        <a class="btn btn--lg" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe">
+          <svg class="icon"><use href="#i-windows"></use></svg> Download for Windows
+        </a>
+        <a class="btn btn--secondary btn--lg" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip">
+          <svg class="icon"><use href="#i-apple"></use></svg> Download for macOS
+        </a>
+      </div>
+      <p class="hero__note">
+        Latest release · free and open source under
+        <a href="https://github.com/adanub/Hoard/blob/main/LICENSE">GPL-3.0</a> ·
+        <a href="#download">other downloads</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- ── App mock ─────────────────────────────────────────────────────── -->
+  <section class="section--tight">
+    <div class="wrap">
+      <div class="mock" role="img" aria-label="The Hoard board screen: a breadcrumb trail, a masonry grid of saved pins, and the floating action bar.">
+        <div class="mock__titlebar">
+          <div class="mock__dots"><i></i><i></i><i></i></div>
+          <div class="mock__crumbs">
+            <span>Projects</span> <span>›</span>
+            <span>Reference</span> <span>›</span>
+            <span>Terrain ideas</span> <span>›</span>
+            <span class="current">Buildings</span>
+          </div>
+        </div>
+        <div class="mock__body">
+          <div class="mock__masonry" id="mock-masonry"></div>
+          <div class="mock__bar">
+            <span class="mock__key"><svg class="icon"><use href="#i-chevron-left"></use></svg></span>
+            <span class="mock__key"><svg class="icon"><use href="#i-search"></use></svg></span>
+            <span class="sep"></span>
+            <span class="mock__key"><svg class="icon"><use href="#i-plus"></use></svg></span>
+            <span class="mock__key"><svg class="icon"><use href="#i-settings"></use></svg></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────────────────────────── -->
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>What it does</h2>
+        <p>Point it at a board. It fetches the pins, keeps the structure, and stays cheap to run again.</p>
+      </div>
+
+      <div class="features">
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-download"></use></svg></div>
+          <h3>Imports a board</h3>
+          <p>Paste a board, section or pin URL. For private boards, pick the browser you're signed in
+             with and Hoard borrows its cookies — nothing to configure, no password to hand over.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-folder"></use></svg></div>
+          <h3>Keeps folders as folders</h3>
+          <p>Pinterest sections become nested folders inside the saved board, to any depth, and stay
+             in step as the board changes.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-refresh"></use></svg></div>
+          <h3>Syncs cheaply</h3>
+          <p>A sync walks the board newest-first and stops as soon as it reaches pins you already have,
+             so picking up three new ones costs a page or two — not a re-crawl. A full sync is there
+             for the edge cases.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-layers"></use></svg></div>
+          <h3>Merges boards</h3>
+          <p>Aim several Pinterest boards at one local board and they gather into the same grid, each
+             pin remembering where it came from.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-drive"></use></svg></div>
+          <h3>Backs itself up</h3>
+          <p>Replicate a project to an external drive, a NAS share or a synced folder. After the first
+             pass, only what changed moves — a backup for your backup.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-external"></use></svg></div>
+          <h3>Exports to plain folders</h3>
+          <p>One button writes a browsable <code>Board/Folder/image.jpg</code> copy anywhere you like.
+             No Hoard needed to read it, and re-running it is an incremental refresh.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-image"></use></svg></div>
+          <h3>Browses fast</h3>
+          <p>A virtualised masonry grid, live search, an inline detail band and a zoom/pan lightbox.
+             GIFs animate right in the grid, capped so memory stays flat.</p>
+        </article>
+
+        <article class="card feature">
+          <div class="feature__icon"><svg class="icon"><use href="#i-search"></use></svg></div>
+          <h3>Yours, offline</h3>
+          <p>No account, no server, no telemetry. Hoard only ever fetches what the account you're
+             already signed in as can see, and everything it fetches stays on your machine.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Archive layout ───────────────────────────────────────────────── -->
+  <section id="archive">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Where your data lives</h2>
+        <p>A project is just a folder you chose. Open it in your file manager any time — nothing in
+           there is locked behind the app.</p>
+      </div>
+
+      <div class="split">
+        <pre class="tree"><code>YourFolder/
+  <span class="k">hoard.project.json</span>   <span class="c"># marker: name, id, format</span>
+  <span class="k">store/</span>               <span class="c"># your images, content-addressed</span>
+  <span class="k">ops/</span>                 <span class="c"># append-only history, per computer</span></code></pre>
+
+        <ul class="notes">
+          <li>
+            <strong>Immutable images, plus a log of every change.</strong>
+            <span>That is the whole archive. Identical bytes are stored once; nothing is ever rewritten
+                  in place.</span>
+          </li>
+          <li>
+            <strong>The database is derived, and per-machine.</strong>
+            <span>Each computer keeps its own index, thumbnails and logs under your app-data folder.
+                  Delete it and the next open rebuilds it from <code>ops/</code>.</span>
+          </li>
+          <li>
+            <strong>Which is what makes a NAS work.</strong>
+            <span>Because no database is ever written over the network, the same project folder can sit
+                  on a share and be opened from several machines.</span>
+          </li>
+          <li>
+            <strong>Two copies of a project are copies, not rivals.</strong>
+            <span>Sync them against each other in either direction; images whose files went missing come
+                  back from the other side rather than being re-downloaded.</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Quick start ──────────────────────────────────────────────────── -->
+  <section id="start">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Quick start</h2>
+        <p>Four steps from a fresh install to a board on your disk.</p>
+      </div>
+
+      <div class="steps">
+        <article class="card step">
+          <div class="step__n">1</div>
+          <h3>Make a project</h3>
+          <p>Name it, choose where the folder goes. That folder is your archive.</p>
+        </article>
+        <article class="card step">
+          <div class="step__n">2</div>
+          <h3>Import a board</h3>
+          <p>＋ → <strong>Import board</strong>, paste the URL. For secret boards, pick the browser you're
+             signed in with — the Firefox and Chromium families are both detected.</p>
+        </article>
+        <article class="card step">
+          <div class="step__n">3</div>
+          <h3>Watch it fill</h3>
+          <p>Progress streams into the board card and the grid fills in live as pins land.</p>
+        </article>
+        <article class="card step">
+          <div class="step__n">4</div>
+          <h3>Later, sync</h3>
+          <p>＋ → <strong>Sync board</strong> picks up what's new. <strong>Sync all boards</strong> does the
+             whole project in turn; one failing board never stops the rest.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Download ─────────────────────────────────────────────────────── -->
+  <section id="download">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Download</h2>
+        <p>Every link resolves to the newest release — the version rides the release, not the file name,
+           so these never go stale.</p>
+      </div>
+
+      <div class="downloads">
+        <article class="card dl">
+          <div class="dl__head">
+            <svg class="icon"><use href="#i-windows"></use></svg>
+            <h3>Windows (x64)</h3>
+            <span class="pill">Recommended</span>
+          </div>
+          <p>Installs for your user only — no admin prompt — and updates itself from inside the app.</p>
+          <code>Hoard-installer-win-x64.exe</code>
+          <a class="btn" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-installer-win-x64.exe">
+            <svg class="icon"><use href="#i-download"></use></svg> Installer
+          </a>
+        </article>
+
+        <article class="card dl">
+          <div class="dl__head">
+            <svg class="icon"><use href="#i-windows"></use></svg>
+            <h3>Windows (x64)</h3>
+          </div>
+          <p>Portable: unzip and run. No installer, and no self-updating — download over it to update.</p>
+          <code>Hoard-portable-win-x64.zip</code>
+          <a class="btn btn--secondary" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-win-x64.zip">
+            <svg class="icon"><use href="#i-download"></use></svg> Portable zip
+          </a>
+        </article>
+
+        <article class="card dl">
+          <div class="dl__head">
+            <svg class="icon"><use href="#i-apple"></use></svg>
+            <h3>macOS (Apple Silicon)</h3>
+          </div>
+          <p>Unzip and drag <code>Hoard.app</code> to Applications — it updates itself from there.
+             Intel Macs aren't built.</p>
+          <code>Hoard-portable-osx-arm64.zip</code>
+          <a class="btn btn--secondary" href="https://github.com/adanub/Hoard/releases/latest/download/Hoard-portable-osx-arm64.zip">
+            <svg class="icon"><use href="#i-download"></use></svg> Apple Silicon app
+          </a>
+        </article>
+      </div>
+
+      <div class="callouts">
+        <div class="callout">
+          <strong>Windows: SmartScreen will object the first time.</strong>
+          The installer isn't code-signed, so you'll get "Windows protected your PC" — <em>More info →
+          Run anyway</em>. That's once per download; updates installed from inside the app skip it entirely.
+        </div>
+        <div class="callout">
+          <strong>macOS: so will Gatekeeper.</strong>
+          The app is ad-hoc signed but not notarised. Right-click → Open, or System Settings → Privacy
+          &amp; Security → <em>Open Anyway</em>. Unzip it in Finder — command-line <code>unzip</code> drops
+          the signature and macOS then calls the app damaged.
+        </div>
+        <div class="callout">
+          <strong>Updates are yours to switch off.</strong>
+          The installed builds check for a new release at startup and <em>ask</em> before installing
+          anything. Turn the check off in ⚙ Settings and Hoard never phones home.
+        </div>
+      </div>
+
+      <p class="hero__note" style="text-align:left">
+        Every asset, including checksums and the updater's feed files, is on the
+        <a href="https://github.com/adanub/Hoard/releases/latest">releases page</a>.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__inner">
+      <div>
+        <a class="brand" href="#top"><img src="assets/hoard-128.png" alt=""> Hoard</a>
+        <p class="muted small" style="margin:var(--space-3) 0 0;max-width:38ch">
+          A local-first Pinterest archiver, built in the open. Backed by
+          <a href="https://github.com/mikf/gallery-dl">gallery-dl</a> and
+          <a href="https://avaloniaui.net">Avalonia</a>.
+        </p>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/adanub/Hoard">Source on GitHub</a></li>
+          <li><a href="https://github.com/adanub/Hoard/releases/latest">Releases</a></li>
+          <li><a href="https://github.com/adanub/Hoard/issues">Report an issue</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Reading</h4>
+        <ul>
+          <li><a href="https://github.com/adanub/Hoard#readme">README</a></li>
+          <li><a href="https://github.com/adanub/Hoard/blob/main/DESIGN.md">Design system</a></li>
+          <li><a href="https://github.com/adanub/Hoard/blob/main/SYNC-DESIGN.md">Archive format</a></li>
+          <li><a href="https://github.com/adanub/Hoard/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer__legal">
+      <p style="margin:0">
+        Hoard is an independent tool. It isn't affiliated with, endorsed by, or connected to Pinterest in
+        any way, and it only ever fetches content the account you're signed in as can already see.
+      </p>
+      <p style="margin:0">
+        © Hoard contributors · <a href="https://github.com/adanub/Hoard/blob/main/LICENSE">GPL-3.0</a> ·
+        bundles <a href="https://github.com/mikf/gallery-dl">gallery-dl</a> (GPL-2.0) · icons from
+        <a href="https://lucide.dev">Lucide</a> (ISC)
+      </p>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

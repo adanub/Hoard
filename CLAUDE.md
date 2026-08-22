@@ -839,6 +839,17 @@ Concepts that span multiple files:
   whether a user could receive it, not whether the repo builds it.
 - **Don't commit real personal data** — no real Pinterest handles, board names or local paths in tests,
   fixtures or the component gallery. The fixture user is `jane`. (This cost a git-history rewrite once.)
+- **The public face is `docs/` (the GitHub Pages site) and the README, and they share ONE app mock.**
+  `docs/` is plain static files served from the `main` branch's `/docs` folder — no build step, no
+  workflow, no external request at runtime (see `docs/README.md`); its stylesheet is a *transcription*
+  of `Theme/Tokens.axaml` + `Theme/Controls/*.axaml`, so a token change in the app must be copied there
+  by hand. Neither surface uses screenshots — a screenshot would carry somebody's real boards, per the
+  rule above — so both show the same **drawn** board screen: the site builds it in HTML/CSS, and
+  `tools/preview/app-preview.py` regenerates `assets/preview/app-{dark,light}.svg` for the README from
+  the same seeded palette and column heights. **Change one and re-run the generator**, or they drift.
+  The SVGs carry no `<filter>`/`<style>`/script on purpose (GitHub sanitises what it renders in a
+  README, and a silently dropped filter would flatten the image); the README pairs them in a
+  `<picture>` so the preview follows the reader's theme.
 - **C#:** `_camelCase` for private/protected fields, PascalCase for everything public; file-scoped namespaces,
   nullable enabled, `var` where the type is obvious, expression-bodied members. **British/Australian English**
   in identifiers, comments, and UI strings. Bias toward performance and tight memory (this app is image/GIF heavy).
