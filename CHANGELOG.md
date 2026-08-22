@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/adanub/Hoard/compare/v1.1.1...v1.1.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **settings:** show the app version without its build metadata hash ([4748c1f](https://github.com/adanub/Hoard/commit/4748c1f7683c25aa17e333a49760bcfb8c58136f))
+
 ## [1.1.1](https://github.com/adanub/Hoard/compare/v1.1.0...v1.1.1) (2026-08-16)
 
 
