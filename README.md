@@ -8,7 +8,7 @@
 
 **Back up your Pinterest boards locally, on your own disk.**
 
-🌐 **[adanub.github.io/Hoard](https://adanub.github.io/Hoard/)**
+**[adanub.github.io/Hoard](https://adanub.github.io/Hoard/)**
 
 <!-- Self-hosted button art (assets/badges/), not shields.io: these two carry no live data, so an image
      service would add a third-party runtime dependency and an unreadable base64 blob to this file for
@@ -42,9 +42,11 @@ local folder created on your machine. More details below 👇
        alt="The Hoard board screen: a breadcrumb trail of Projects, Reference, Terrain ideas, Buildings; a masonry grid of saved pins with GIF and VIDEO tags; and the floating action bar with back, search, add and settings.">
 </picture>
 
-<sub>the board screen — your own pins in place of the gradients</sub>
+<sub>What the board screen looks like</sub>
 
 </div>
+
+Note: this app is not a replacement; Hoard is useful for keeping a backup of what you've already saved before in boards and browsing them offline, but discovering new items to add still happens on Pinterest.
 
 ---
 
@@ -242,7 +244,7 @@ gallery-dl with `pwsh tools/fetch-gallery-dl.ps1` before assuming it's Hoard.
 - **[Lucide](https://lucide.dev)** (ISC) for the icons, embedded as geometries.
 
 Hoard is an independent tool. It isn't affiliated with, endorsed by, or connected to Pinterest in any way,
-and it only ever fetches content the account you're signed in as can already see.
+and it only ever fetches content the account you're signed in as can already see and manually download.
 
 ## Licence
 
