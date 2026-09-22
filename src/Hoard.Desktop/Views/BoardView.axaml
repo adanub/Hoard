@@ -383,8 +383,11 @@
                               ExportCommand="{Binding ExportCommand}"/>
         </ctrl:SheetHost>
 
-        <!-- Fullscreen zoom/pan viewer for the expanded image, layered above everything (last child = topmost). -->
+        <!-- Fullscreen zoom/pan viewer for the expanded image, layered above everything (last child = topmost).
+             Image hands it the band's own full-resolution decode to borrow, so the zoom opens without decoding the
+             same file a second time; it falls back to Source while that decode is still running. -->
         <ctrl:Lightbox IsOpen="{Binding IsLightboxOpen}" Source="{Binding LightboxSource}"
+                       Image="{Binding Details.FullPreview}"
                        IsGif="{Binding LightboxIsGif}" CloseCommand="{Binding CloseLightboxCommand}"/>
     </Panel>
 </UserControl>

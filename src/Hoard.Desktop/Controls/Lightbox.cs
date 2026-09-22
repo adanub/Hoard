@@ -18,6 +18,12 @@ namespace Hoard.Desktop.Controls;
 /// is always in the tree but hidden while <see cref="IsOpen"/> is false; its media is loaded on open and freed on
 /// close so memory tracks only what's being viewed.
 ///
+/// When the caller already holds the full-resolution decode — the detail band does, since it shows the image at
+/// full resolution itself — it hands it over as <see cref="Image"/> and this control <b>borrows</b> it: no second
+/// decode of the same file, no second copy of it in memory, and the zoom opens on the first frame. The borrowed
+/// bitmap is never disposed here; <see cref="Source"/> remains the fallback for whenever one isn't offered (the
+/// band's own decode hasn't landed yet).
+///
 /// Zoom/pan is a single accumulating affine <see cref="Matrix"/> applied as the media host's RenderTransform —
 /// set directly (never a code-built RenderTransform <c>Animation</c>, which throws on a deferred timer per the
 /// CLAUDE.md gotcha). Anchored zoom keeps the cursor's point fixed: M' = M · T(-c) · S · T(c); pan is M · T(d).
@@ -31,6 +37,11 @@ public partial class Lightbox : UserControl
     public static readonly StyledProperty<string?> SourceProperty =
         AvaloniaProperty.Register<Lightbox, string?>(nameof(Source));
 
+    /// <summary>An already-decoded full-resolution bitmap to show instead of decoding <see cref="Source"/>.
+    /// Borrowed, not owned — the provider disposes it, and setting it to null here just drops the reference.</summary>
+    public static readonly StyledProperty<Bitmap?> ImageProperty =
+        AvaloniaProperty.Register<Lightbox, Bitmap?>(nameof(Image));
+
     public static readonly StyledProperty<bool> IsGifProperty =
         AvaloniaProperty.Register<Lightbox, bool>(nameof(IsGif));
 
@@ -40,6 +51,7 @@ public partial class Lightbox : UserControl
 
     public bool IsOpen { get => GetValue(IsOpenProperty); set => SetValue(IsOpenProperty, value); }
     public string? Source { get => GetValue(SourceProperty); set => SetValue(SourceProperty, value); }
+    public Bitmap? Image { get => GetValue(ImageProperty); set => SetValue(ImageProperty, value); }
     public bool IsGif { get => GetValue(IsGifProperty); set => SetValue(IsGifProperty, value); }
     public ICommand? CloseCommand { get => GetValue(CloseCommandProperty); set => SetValue(CloseCommandProperty, value); }
 
@@ -49,7 +61,7 @@ public partial class Lightbox : UserControl
 
     private readonly MatrixTransform _transform = new(Matrix.Identity);
     private Matrix _matrix = Matrix.Identity;
-    private Bitmap? _bitmap;
+    private Bitmap? _decoded;      // OURS to free — null whenever the shown bitmap is the borrowed Image
     private int _loadId;           // monotonic: only the latest decode may apply its result
     private bool _panning;
     private bool _lastPressPrimary; // gates DoubleTapped, which fires for every pointer button (the Tapped gotcha)
@@ -96,6 +108,13 @@ public partial class Lightbox : UserControl
             ResetTransform();
             LoadMedia();
         }
+        else if (change.Property == ImageProperty && IsOpen)
+        {
+            // The band's full-resolution decode landing (or going away) while the zoom is already open: re-run the
+            // load so it switches to the borrowed bitmap and frees the one it decoded for itself. The zoom/pan the
+            // user has set up is deliberately NOT reset — it's the same picture, only sharper.
+            LoadMedia();
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -121,6 +140,20 @@ public partial class Lightbox : UserControl
 
     private async void LoadMedia()
     {
+        // The borrowed bitmap replaces what's shown BEFORE the old one is freed, so switching to it (the band's
+        // full-resolution decode landing mid-zoom) doesn't blank the viewer for a frame.
+        if (!IsGif && Image is { } borrowed)
+        {
+            _loadId++;
+            Gif.Source = null;
+            StillImage.IsVisible = true;
+            Gif.IsVisible = false;
+            Spinner.IsVisible = false;
+            StillImage.Source = borrowed;
+            FreeDecoded();
+            return;
+        }
+
         ClearMedia();        // frees the current media AND bumps _loadId, superseding any still-in-flight decode
         var id = _loadId;
 
@@ -145,7 +178,7 @@ public partial class Lightbox : UserControl
             Spinner.IsVisible = true;
             var bmp = await Task.Run(() => new Bitmap(path));
             if (id != _loadId || !IsOpen) { bmp.Dispose(); return; } // superseded or closed during decode
-            _bitmap = bmp;
+            _decoded = bmp;
             StillImage.Source = bmp;
         }
         catch
@@ -165,10 +198,17 @@ public partial class Lightbox : UserControl
         // control — mirrors AnimatedImageControl bumping its load id on detach.
         _loadId++;
         Gif.Source = null;          // releases the GIF lease so its frames free
-        StillImage.Source = null;
+        StillImage.Source = null;   // a borrowed Image is only ever dropped here, never disposed
         Spinner.IsVisible = false;
-        _bitmap?.Dispose();
-        _bitmap = null;
+        FreeDecoded();
+    }
+
+    /// <summary>Free the bitmap this control decoded for itself, if any. Never touches a borrowed
+    /// <see cref="Image"/> — that one belongs to whoever handed it over.</summary>
+    private void FreeDecoded()
+    {
+        _decoded?.Dispose();
+        _decoded = null;
     }
 
     // ── Zoom / pan ─────────────────────────────────────────────────────────────────

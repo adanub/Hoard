@@ -733,8 +733,9 @@ Concepts that span multiple files:
   declarative XAML transition path (e.g. `DoubleTransition`) for any movement, or opacity-only in code; never a
   code-built transform animation. **Increment 2:** (a) tapping the band's media opens
   a **fullscreen zoom/pan `Controls/Lightbox`** — a near-black overlay (`LightboxScrimBrush`/`LightboxForegroundBrush`
-  tokens) viewing the **full-res** still (decoded on open, disposed on close) or the GIF; scroll-wheel zooms anchored
-  at the cursor, drag pans, double-click fits, scrim/✕/Esc close. **The band AND the zoom are now back/forward
+  tokens) viewing the **full-res** still (borrowed from the band, else decoded on open and disposed on close — see
+  the band-image bullet below) or the GIF; scroll-wheel zooms anchored at the cursor, drag pans, double-click fits,
+  scrim/✕/Esc close. **The band AND the zoom are now back/forward
   history steps** (see the Shell-navigation bullet): opening the band `PushState`s it, switching the band's image
   `ReplaceTopState`s, opening the zoom `PushState`s it; **Back / Esc / mouse-5 / the ← chevron all step zoom → band
   → out of the page**, and Forward re-opens them (cross-page too — a `StateStep.Apply` runs against the *rebuilt*
@@ -760,6 +761,18 @@ Concepts that span multiple files:
   **styles** (a local Dock/Width would beat the style), via a `bandstacked` class bound to `BoardViewModel.IsBandStacked`
   (the view sets it from the grid width using the packer's own breakpoint, so the layout matches the band-height math).
   The outer fade Border is untouched; the old `RailColumnWidth` `GridLength` is gone.
+- **The band shows the image at FULL resolution, in two stages, and the zoom borrows that one decode.**
+  `AssetDetailViewModel.LoadPreviewAsync` decodes twice: a sampled `DecodeToWidth(520)` first, purely so the band
+  paints immediately, then the real file, which replaces it (`Preview` owns both — each swap frees the one it
+  replaces, the tile-thumbnail rule). The sampled one is a **stand-in, not the destination**: the band's media area
+  is ~1000px wide and more than that on a HiDPI screen, where 520px reads visibly soft. An image no wider than
+  520 skips stage one — decoding it "smaller" would only upscale it, i.e. show something worse than the file
+  itself. The full-resolution surface is then published as **`FullPreview`, a borrowed alias** the `Lightbox` takes
+  through its `Image` property, so opening the zoom costs no second decode of the same file and no second copy of
+  it in memory (`Source` stays the fallback for the window before that decode lands, and the lightbox frees only
+  `_decoded`, never a borrowed bitmap). The ownership rule that makes it safe: **`Dispose` clears `FullPreview`
+  BEFORE `Preview`**, so the binding drops the lightbox's reference in the same synchronous UI-thread run that
+  frees the surface.
 - **Installer + auto-update is Velopack (MIT), Windows only, and entirely opt-in.** `Program.Main` calls
   `VelopackApp.Build().Run()` **as its very first statement** — the installer re-launches the same exe with
   hook arguments, so anything before it runs during every install/update (and anything that opens a window
