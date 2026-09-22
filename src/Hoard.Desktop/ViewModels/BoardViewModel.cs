@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Input.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hoard.Core.Connectors;
@@ -752,6 +753,25 @@ public partial class BoardViewModel : ViewModelBase, IDisposable, IResumable, IA
     {
         _pendingZoom = false; // the step is leaving history — a latched zoom must not fire after the load (see HideBand)
         IsLightboxOpen = false;
+    }
+
+    // ── Copy the selected image to the system clipboard ───────────────────────────
+
+    /// <summary>Put the band's image on the clipboard at full resolution (the rail's copy button). The detail view
+    /// model does the work and owns the button's short-lived "Copied" label; a failure — an unreadable file, a
+    /// clipboard another app is holding — surfaces as a toast, since the button is about to read "Copy" again and
+    /// would otherwise say nothing went wrong.</summary>
+    public async Task CopySelectedImageAsync(IClipboard? clipboard)
+    {
+        if (Details is not { } detail) return;
+        if (await detail.CopyToClipboardAsync(clipboard) is not { } error) return;
+        // A live pin whose blob was deleted/moved outside the app reaches here (the rail can't see the tile's
+        // file-missing state), and "couldn't copy" plus a raw stack trace doesn't say that the file is the
+        // problem or that the tile can re-download it.
+        var message = error is FileNotFoundException or DirectoryNotFoundException
+            ? "That image's file is missing from the archive — re-download it from its tile first."
+            : "Couldn't copy the image to the clipboard.";
+        _toasts.Show(message, isError: true, details: error.ToString());
     }
 
     // ── Delete the selected pin (in-app note sheet → restorable tombstone) ─────────

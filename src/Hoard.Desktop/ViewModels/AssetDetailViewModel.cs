@@ -1,9 +1,11 @@
 using System;
 using System.Threading.Tasks;
+using Avalonia.Input.Platform;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Hoard.Core.Domain;
 using Hoard.Core.Library;
+using Hoard.Desktop.Services;
 
 namespace Hoard.Desktop.ViewModels;
 
@@ -16,6 +18,11 @@ public partial class AssetDetailViewModel : ViewModelBase, IDisposable
     /// <summary>Width of the <b>first</b> decode — a quick, sampled one that gives the band something to draw while
     /// the full-resolution decode runs. Not what the band settles on (see <see cref="LoadPreviewAsync"/>).</summary>
     private const int PreviewWidth = 520;
+
+    private const string DefaultCopyLabel = "Copy image to clipboard";
+
+    /// <summary>How long the copy button reads "Copied" before going back to its normal label.</summary>
+    private static readonly TimeSpan CopiedLabelDuration = TimeSpan.FromSeconds(1.8);
 
     public AssetDetail Model { get; }
 
@@ -32,7 +39,16 @@ public partial class AssetDetailViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] private bool _isPreviewLoading;
 
+    /// <summary>The copy button's label. It flips to "Copied" for a moment after a successful copy — the
+    /// confirmation belongs on the button the user just pressed, not in a toast, which here never self-dismisses
+    /// and would pile up one card per copy.</summary>
+    [ObservableProperty] private string _copyLabel = DefaultCopyLabel;
+
+    /// <summary>True while a copy is in flight, so the button cannot start a second one over the first.</summary>
+    [ObservableProperty] private bool _isCopying;
+
     private bool _disposed;
+    private int _copySeq;   // monotonic: only the latest copy may reset the label
 
     public AssetDetailViewModel(AssetDetail model)
     {
@@ -68,6 +84,10 @@ public partial class AssetDetailViewModel : ViewModelBase, IDisposable
     public bool IsStaticImage => IsLive && Model.Kind is MediaKind.Image;
     public bool IsVideo => IsLive && Model.Kind is MediaKind.Video;
     public string FilePath => Model.AbsolutePath;
+
+    /// <summary>Whether this asset can go on the clipboard as a picture. A GIF copies as its first frame, which is
+    /// what "copy image" does everywhere else; a video or a tombstone has no picture to copy.</summary>
+    public bool CanCopyImage => IsImage;
 
     public string? Dimensions => Model is { Width: > 0, Height: > 0 } ? $"{Model.Width} × {Model.Height}" : null;
     public string FileSize => ByteFormat.Format(Model.Bytes);
@@ -129,5 +149,48 @@ public partial class AssetDetailViewModel : ViewModelBase, IDisposable
         {
             if (!_disposed) IsPreviewLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Puts this image on the system clipboard at full resolution, so it can be pasted anywhere else. Returns the
+    /// failure, or null when it worked.
+    /// </summary>
+    /// <remarks>
+    /// The clipboard gets its <b>own</b> decode rather than <see cref="FullPreview"/>: what goes on the clipboard
+    /// has to outlive the band (<see cref="ImageClipboard"/> says why it is held at all), and this view model frees
+    /// its surfaces the moment the band closes.
+    /// </remarks>
+    public async Task<Exception?> CopyToClipboardAsync(IClipboard? clipboard)
+    {
+        if (!CanCopyImage || IsCopying) return null;
+        if (clipboard is null) return new InvalidOperationException("No clipboard is available on this window.");
+
+        IsCopying = true;
+        try
+        {
+            await ImageClipboard.CopyAsync(clipboard, Model.AbsolutePath);
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+        finally
+        {
+            IsCopying = false;
+        }
+
+        if (_disposed) return null;
+        CopyLabel = "Copied";
+        _ = ResetCopyLabelAsync(++_copySeq);
+        return null;
+    }
+
+    // Back to the normal label after a moment (resumes on the UI thread — this is awaited from a click). The
+    // sequence check hands the reset to the LATEST copy, so an earlier one's timer can't clear a newer
+    // confirmation early.
+    private async Task ResetCopyLabelAsync(int seq)
+    {
+        await Task.Delay(CopiedLabelDuration);
+        if (!_disposed && seq == _copySeq) CopyLabel = DefaultCopyLabel;
     }
 }

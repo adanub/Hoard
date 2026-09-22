@@ -773,6 +773,21 @@ Concepts that span multiple files:
   `_decoded`, never a borrowed bitmap). The ownership rule that makes it safe: **`Dispose` clears `FullPreview`
   BEFORE `Preview`**, so the binding drops the lightbox's reference in the same synchronous UI-thread run that
   frees the surface.
+- **A copied image must NOT be disposed while the clipboard holds it (`Services/ImageClipboard`).** The detail
+  rail's copy button puts the full-resolution image on the system clipboard as `DataFormat.Bitmap` (Avalonia 12's
+  OLE wrapper publishes that as CF_BITMAP/CF_DIB/CF_DIBV5/PNG on Windows; macOS promises it to `NSPasteboard`).
+  Both platforms render **lazily** — they call back for the bytes when something pastes — so the eager free this
+  app applies everywhere else would leave a paste with nothing to read. Staying *alive* is not the issue
+  (the clipboard's data object references the bitmap, and Avalonia never disposes it for us: `DataTransfer.Dispose`
+  is an empty body and `IDataTransferItem` isn't disposable). What the one retained static bitmap buys is a
+  **deterministic free** of the surface it replaces, instead of waiting on the `Ref<T>` finalizer — the lagging
+  finalization the thumbnail/GIF rules above exist to avoid. Consequences: the clipboard keeps the image only
+  while Hoard runs (`IClipboard.FlushAsync` would outlive the app, at four full-resolution encodes per copy);
+  the **last** copy's surface is held until the next one or exit, and it is uncapped, since "full resolution"
+  is the point; and freeing the previous one assumes nobody kept the superseded `IDataObject`. The copy also
+  takes its **own** decode rather than the band's `FullPreview`, which dies with the band. The confirmation is
+  the **button's own label** flipping to "Copied", not a toast: toasts here never self-dismiss, so a routine
+  action would leave a card behind every time.
 - **Installer + auto-update is Velopack (MIT), Windows only, and entirely opt-in.** `Program.Main` calls
   `VelopackApp.Build().Run()` **as its very first statement** — the installer re-launches the same exe with
   hook arguments, so anything before it runs during every install/update (and anything that opens a window
@@ -955,8 +970,8 @@ and **mobile-first responsive** (design for the narrowest phone width, reflow up
   `python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml', encoding='utf-8'))"` — because
   a YAML mistake there otherwise surfaces at release time, on the one run that matters.
 - **Avalonia 12 gotchas already hit:** `ItemsRepeater` is a separate NuGet package; the clipboard API changed to
-  `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it); a templated
-  control's visual state lives on its template parts, so restyle
+  `DataTransfer`/`DataFormat` (a read-only `TextBox`'s built-in `Copy()` sidesteps it; `Services/ImageClipboard`
+  uses it directly for images); a templated control's visual state lives on its template parts, so restyle
   `<class> /template/ <part>#<name>` across states (`:pointerover`/`:pressed`/`:disabled`) rather than
   setting `Background` on the control — see the `ComboBoxItem` theme. **The state selector is load-bearing,
   not decoration: a value written in a `ControlTemplate` applies at `Template` priority, which beats the

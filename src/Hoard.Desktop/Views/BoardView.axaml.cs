@@ -321,6 +321,13 @@ public partial class BoardView : UserControl
         if (Vm is { } vm) await vm.RestoreSelectedAsync();
     }
 
+    // The clipboard hangs off the window, so the view fetches it and the board view model does the rest (it owns
+    // the toast for a failure) — same split as OnOpenSource/OnOpenImage handing OpenAsync the TopLevel's launcher.
+    private async void OnCopyImage(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm) await vm.CopySelectedImageAsync(TopLevel.GetTopLevel(this)?.Clipboard);
+    }
+
     private void OnOpenSource(object? sender, RoutedEventArgs e) => _ = OpenAsync(Detail?.Model.SourceUrl);
     private void OnOpenImage(object? sender, RoutedEventArgs e) => _ = OpenAsync(Detail?.Model.AbsolutePath);
 

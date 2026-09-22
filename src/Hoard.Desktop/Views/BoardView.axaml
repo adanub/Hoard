@@ -186,6 +186,15 @@
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <StackPanel Spacing="6" Margin="0,6,0,0">
+                                                            <!-- Copies the image itself (full resolution), not the
+                                                                 file path, so it pastes into any other app. The
+                                                                 label is the view model's: it reads "Copied" for a
+                                                                 moment afterwards. -->
+                                                            <Button Theme="{StaticResource HoardButton}" Classes="secondary"
+                                                                    Content="{Binding CopyLabel}"
+                                                                    HorizontalAlignment="Stretch" Click="OnCopyImage"
+                                                                    IsEnabled="{Binding !IsCopying}"
+                                                                    IsVisible="{Binding CanCopyImage}"/>
                                                             <Button Theme="{StaticResource HoardButton}" Classes="secondary" Content="Open source on Pinterest"
                                                                     HorizontalAlignment="Stretch" Click="OnOpenSource"
                                                                     IsVisible="{Binding SourceUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
