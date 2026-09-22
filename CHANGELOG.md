@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/adanub/Hoard/compare/v1.2.0...v1.3.0) (2026-09-22)
+
+
+### Features
+
+* **board:** copy an image to the clipboard from the detail pane ([9fe058a](https://github.com/adanub/Hoard/commit/9fe058ab2aefcd60a4762a9ced0f71884ce773b5))
+* **board:** show the full-resolution image in the detail pane ([f6aab98](https://github.com/adanub/Hoard/commit/f6aab981727516c11bc41d5590f88f365d0deac9))
+
 ## [1.2.0](https://github.com/adanub/Hoard/compare/v1.1.2...v1.2.0) (2026-08-22)
 
 
