@@ -7,15 +7,27 @@ name: Release
 #     patch, feat!/BREAKING CHANGE → major) and opens or refreshes the release PR with the version bump
 #     + CHANGELOG.md. Nothing release-related runs on ordinary pushes — the PR only needs to be current
 #     once, right before it's merged, so refreshing it per-push would just spend runner minutes.
-#  2. Merging that PR IS the release. The merge's push to main is recognised by its commit message
-#     (job-level `if`, below); release-please tags vX.Y.Z + creates the GitHub Release, and the build
-#     matrix packages the Windows x64 and Apple Silicon apps and uploads them (with checksums + build
-#     provenance) to it — all automatically. Every other push to main skips at the `if`, which costs
-#     zero runner minutes (a skipped job never starts a runner; only a grey "skipped" run entry
-#     appears in the Actions tab).
-#  CAVEAT the trigger depends on: the merge must keep its default commit message (auto-generated
-#  "Merge pull request … from …/release-please--branches--main", or the PR title for a squash). If the
-#  message is hand-edited so neither marker survives, the release leg won't fire for that merge.
+#  2. Merging that PR IS the release. This workflow does not watch main directly — it runs AFTER CI
+#     finishes on main, and releases only when that run both succeeded and was the release merge
+#     (conclusion + commit-message test in the `release` job's `if`). So the test suite is the gate,
+#     and it costs nothing extra: it is the run CI was always going to do for that commit, and the
+#     tag simply waits for its verdict. release-please then tags vX.Y.Z + creates the GitHub Release,
+#     and the build matrix packages the Windows x64 and Apple Silicon apps and uploads them (with
+#     checksums + build provenance) to it. Every other CI run on main lands here and skips at the
+#     `if`, which costs zero runner minutes (a skipped job never starts a runner; only a grey
+#     "skipped" run entry appears in the Actions tab).
+#  TWO CAVEATS the trigger depends on:
+#   - The merge must keep its default commit message (auto-generated "Merge pull request … from
+#     …/release-please--branches--main", or the PR title for a squash). If the message is hand-edited
+#     so neither marker survives, the release leg won't fire for that merge.
+#   - A red CI run means no release, by design, and there is NO manual override — so know the recovery
+#     before you need it. The release PR is already merged at that point, and fixing main lands a
+#     commit carrying neither marker, so no later CI run can ever satisfy the `if`: that merge's
+#     release is gone for good and its PR keeps the "autorelease: pending" label. Recovery is to land
+#     the fix and dispatch leg 1 again for a fresh release PR. Only a CANCELLED or infrastructure-
+#     failed run is recoverable in place, by re-running CI on that same commit (re-running it after a
+#     genuine test failure just re-tests the same broken tree). Both fail SAFE — no release, rather
+#     than a bad one.
 #
 # The build jobs chain off the release job (needs:) rather than triggering on the release event,
 # because events created with the workflow's own token never start other workflows.
@@ -24,7 +36,15 @@ name: Release
 # no PR refresh, no release — so packaging changes can be tested without touching versioning.
 
 on:
-  push:
+  # Downstream of CI rather than parallel to it — that IS the gate. A push trigger here would race
+  # CI on the same commit and reach the tag first, which is exactly what made this workflow able to
+  # publish untested code. workflow_run fires once CI is finished and carries its conclusion and head
+  # commit, so no polling, no second test run, no duplicated build minutes.
+  # LOAD-BEARING: "CI" below is ci.yml's `name:`, matched as a string. Renaming that workflow stops
+  # every release silently — nothing errors, the trigger just never fires again.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -68,14 +88,32 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-release: true
 
-  # Automatic leg: fires only for the push that merges the release PR (see the message test), finds the
-  # merged PR by its "autorelease: pending" label, and turns it into the vX.Y.Z tag + GitHub Release.
+  # Automatic leg: fires only for a SUCCESSFUL CI run on the merge of the release PR, finds the merged
+  # PR by its "autorelease: pending" label, and turns it into the vX.Y.Z tag + GitHub Release.
   # skip-github-pull-request means it never touches the PR itself.
+  #
+  # Every clause of this `if` is part of the gate, and there is exactly one copy of each:
+  #  - event == 'push' + head_repository — the CI run was a push to OUR main. This is not belt and
+  #    braces: `branches: [main]` on the trigger matches the run's HEAD_BRANCH, and ci.yml also runs
+  #    `on: pull_request` with no branch filter, so CI for a fork PR whose branch happens to be named
+  #    "main" arrives here too. Its author controls both its outcome and its commit message, which is
+  #    the whole rest of the condition — and this job runs in OUR context, with contents/PR/issues
+  #    write and RELEASE_PLEASE_TOKEN. Without these two clauses an outsider could tag a release from
+  #    a main whose tests never passed, defeating the gate this workflow exists to be. (Nothing here
+  #    checks out the fork, so no untrusted code would run; the damage is the bypass itself.)
+  #  - conclusion == 'success' — the test suite passed on this exact commit. Anything else (failure,
+  #    cancelled, timed_out, skipped) is not 'success', so the release simply doesn't happen.
+  #  - the commit-message markers — this CI run was the release merge, not an ordinary push to main.
+  # Neither release-please job (this one and release-pr) checks out the repo — both work over the API,
+  # as does gh — so nothing here depends on which commit workflow_run resolves github.sha to. The build
+  # matrix below does check out, at the tag, explicitly.
   release:
     if: >-
-      github.event_name == 'push' &&
-      (contains(github.event.head_commit.message, 'release-please--branches--main') ||
-       startsWith(github.event.head_commit.message, 'chore(main): release'))
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success' &&
+      (contains(github.event.workflow_run.head_commit.message, 'release-please--branches--main') ||
+       startsWith(github.event.workflow_run.head_commit.message, 'chore(main): release'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

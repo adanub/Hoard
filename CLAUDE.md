@@ -43,7 +43,14 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
 - **CI** (`.github/workflows/ci.yml`) builds + runs the full test suite on every PR and push to `main`
   (ubuntu), so tests must stay platform-neutral — validate against fixed cross-platform rules (e.g.
   `HoardProject.ValidateName` applies the Windows-invalid filename set on every OS), never
-  `Path.GetInvalidFileNameChars()`-style current-OS behaviour.
+  `Path.GetInvalidFileNameChars()`-style current-OS behaviour. **A CI run on `main` is also the release
+  gate** — release.yml is triggered by this workflow completing, not by the push (see below) — with two
+  consequences. The concurrency group is keyed `${{ github.head_ref || github.sha }}`, so PR runs
+  supersede each other while every `main` commit runs in a group of its own: a run that never reaches
+  `success` drops a release silently, and `cancel-in-progress: false` does **not** prevent that (GitHub
+  cancels a group's previously PENDING run whenever a newer one queues, regardless of the flag — group
+  isolation is the only real fix). And **anything a release must not ship without belongs in THIS
+  workflow**, since its conclusion is the only thing the release consults.
 - **Versioning is automated from Conventional Commits; MERGING THE RELEASE PR IS THE RELEASE**
   (`.github/workflows/release.yml`). One manual lever per release, pulled in two steps, split with
   release-please's own `skip-github-release` / `skip-github-pull-request`:
@@ -56,7 +63,23 @@ pwsh tools/fetch-gallery-dl.ps1                           # FORCE-refresh the bu
   2. **Merging that PR ships it.** The merge's push to `main` is recognised by commit message — a job-level
      `if` matching "release-please--branches--main" or a "chore(main): release" prefix, so the
      auto-generated merge AND squash messages both fire it while every other push skips at zero runner
-     cost. release-please tags the merge + creates the GitHub Release, then the build matrix uploads
+     cost. **The release leg is triggered by CI FINISHING on `main`, not by the push itself**
+     (`workflow_run`, `types: [completed]`, `workflows: [CI]`) — which is what makes the test suite a
+     gate rather than a bystander: the `if` releases only when `workflow_run.conclusion == 'success'`
+     AND the markers match, so a red `main` cannot be tagged. It costs no extra runner time because it
+     consumes the run CI was doing anyway; a `push` trigger here would race that run and reach the tag
+     first, which is exactly how this workflow could once publish untested code. Three strings are
+     load-bearing and silent when broken: the two markers, and **`workflows: [CI]`, which is ci.yml's
+     `name:`** — renaming that workflow stops every release with nothing to see in the logs. The `if`
+     also pins the run's ORIGIN (`workflow_run.event == 'push'` ＋ `head_repository.full_name ==
+     github.repository`), and dropping either re-opens a real bypass: `branches: [main]` filters on the
+     run's *head branch*, and CI also runs `on: pull_request` unfiltered, so a fork PR from a branch
+     named `main` reaches this trigger with its author controlling both the conclusion and the commit
+     message. Failed and cancelled CI both fail safe (no release), but they recover differently: a
+     cancelled run is re-runnable in place, while a genuine failure ends that merge's release for good
+     (the fix commit carries no marker, so nothing can satisfy the `if` again) and needs leg 1
+     dispatched for a fresh release PR — there is no manual override.
+     release-please tags the merge + creates the GitHub Release, then the build matrix uploads
      self-contained apps (win-x64 zip; osx-arm64 ad-hoc-signed `.app` zip, template at
      `tools/packaging/macos/Info.plist`) with SHA-256 checksums and build-provenance attestations
      (attestations only work on a public repo). **Keep the default merge message** — hand-editing it so

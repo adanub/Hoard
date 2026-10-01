@@ -10,9 +10,18 @@ on:
 permissions:
   contents: read
 
-# Supersede in-flight runs of the same branch/PR.
+# Supersede in-flight runs of the same PR — only the latest push to a PR is interesting. Everything
+# else (a push to main, a dispatch) gets a group of its OWN, keyed by commit, so main runs never
+# cancel or queue behind one another. That is load-bearing: release.yml chains off a main run's
+# conclusion, and a run that never reaches 'success' drops the release silently.
+#
+# Isolating the group is the fix here; `cancel-in-progress: false` is NOT, and was the first attempt.
+# It only protects a run already IN PROGRESS — GitHub cancels the previously PENDING run of a group
+# whenever a newer one queues into it, whatever that flag says. With one shared main group, three
+# merges in quick succession could therefore cancel the middle one while it sat pending, and if that
+# was the release merge the release would vanish with no failure anywhere to explain it.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.sha }}
   cancel-in-progress: true
 
 env:
